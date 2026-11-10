@@ -1,0 +1,5 @@
+**/nppBackup/
+**/__pycache__/
+/.venv/
+/build/
+/artifacts/
