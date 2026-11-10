@@ -1,0 +1,7 @@
+{
+  "name": "G1RMCPWorldLifecycleProbe",
+  "title": "G1R MCP World Lifecycle Probe",
+  "author": "G1R MCP",
+  "description": "Owned PostInitialize counter and explicit current-map reload probe with BlackScreen; no save operations.",
+  "modVersion": "1.0.0"
+}

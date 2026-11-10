@@ -1,0 +1,1 @@
+{"name":"G1RMCPPODReadProbe","title":"G1R MCP POD Read Probe","author":"G1R MCP","description":"Isolated array and FVector/FRotator reads on an owned UObject; gameplay mechanics are not used.","modVersion":"1.0.0"}

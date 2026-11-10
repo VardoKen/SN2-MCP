@@ -1,0 +1,1 @@
+{"name":"G1RMCPObjectArrayInputProbe","title":"G1R MCP Object Array Input Probe","author":"G1R MCP","description":"Isolated const TArray<UObject> reference input on an owned UObject with an element count and a probe counter.","modVersion":"1.0.0"}

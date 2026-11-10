@@ -1,0 +1,7 @@
+{
+  "name": "G1RMCPPatchProbe",
+  "title": "G1R MCP ScriptPatch Probe",
+  "author": "G1R MCP",
+  "description": "Isolated UObject with a constant value; patch application order requires verification.",
+  "modVersion": "1.0.0"
+}

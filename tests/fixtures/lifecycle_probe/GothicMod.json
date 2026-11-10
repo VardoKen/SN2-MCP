@@ -1,0 +1,7 @@
+{
+  "name": "G1RMCPLifecycleProbe",
+  "title": "G1R MCP Lifecycle Probe",
+  "author": "G1R MCP",
+  "description": "Initialize counter for the owned tool without gameplay changes.",
+  "modVersion": "1.0.0"
+}

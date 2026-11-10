@@ -1,14 +1,14 @@
 # Subnautica 2 MCP
 
-Independent code repository for the Subnautica 2 native runtime MCP bridge in Unreal Game Runtime MCP.
+Independent code repository containing the existing G1R MCP code as the working base for future Subnautica 2 adaptation. The Python frontend, native implementation, tests and Gothic fixtures, tools, helper package, build metadata and dependency lock were copied from G1R MCP. The destination retains its own Git history.
 
-Preparation is complete: current game evidence, G1R implementation/reuse analysis, proposed runtime tool contract, and concrete technical package with sequential acceptance gates are documented centrally. Implementation has not started and requires a separate operator assignment. New bridge implementation begins at `0.1.0`; preparation has no product version.
+The code currently retains G1R identifiers, target paths, Gothic-specific integration and historical Python `1.0.0-dev.116` / native `1.0.0-dev.115` metadata. It has not yet been adapted or accepted for Subnautica 2. The first assigned adaptation will establish the Subnautica implementation version `0.1.0`.
 
-Detailed documentation and work tracking belong to the central repository:
+Detailed documentation belongs to the central repository:
 
-- [Bridge preparation and state](../docs/bridges/subnautica-2/README.md).
-- [Future implementation proposal](../docs/bridges/subnautica-2/implementation-plan.md).
-- [Project rules](../AGENTS.md).
-- [Development workflow](../docs/development.md).
+- [Bridge state and copied baseline](../docs/bridges/subnautica-2/README.md).
+- [Adaptation plan](../docs/bridges/subnautica-2/implementation-plan.md).
+- [Source analysis and reuse map](../docs/bridges/subnautica-2/g1r-reuse-map.md).
+- [Game evidence](../docs/bridges/subnautica-2/baseline-and-evidence.md).
 
-The intended product is a dedicated native Subnautica 2 bridge using suitable G1R mechanisms as references. Common Unreal functionality may be reused/extracted within assigned development; discovery, UE5.6.1 ABI, loading, Tick/lifecycle and gameplay contracts need target validation. The first future step is the proposal's I0 target-binding checkpoint. No Gothic bridge copy, code scaffolding or installed-game change was made during preparation.
+Future development adapts this copy in this repository. No separate shared-code repository/package or G1R refactoring is part of the selected approach. Game launch, loading, installation and runtime adaptation have not been performed by preparation.

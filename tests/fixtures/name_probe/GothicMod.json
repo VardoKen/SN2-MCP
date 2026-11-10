@@ -1,0 +1,7 @@
+{
+  "name": "G1RMCPNameProbe",
+  "title": "G1R MCP Name Probe",
+  "author": "G1R MCP",
+  "description": "Isolated FName return-value and unchanged-property probe without game calls.",
+  "modVersion": "1.0.0"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "G1RMCPObjectProbe",
+  "title": "G1R MCP Object Probe",
+  "author": "G1R MCP",
+  "description": "Isolated object argument, return-value, and property probes without gameplay behavior.",
+  "modVersion": "1.0.0"
+}

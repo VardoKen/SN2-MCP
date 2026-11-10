@@ -1,5 +1,6 @@
 **/nppBackup/
-**/__pycache__/
-/.venv/
-/build/
 /artifacts/
+/build/
+/.venv/
+**/__pycache__/
+/*.egg-info/

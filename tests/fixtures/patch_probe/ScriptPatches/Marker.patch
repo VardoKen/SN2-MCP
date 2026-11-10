@@ -1,0 +1,11 @@
+diff --git a/Script/G1RMCPPatchProbe.as b/Script/G1RMCPPatchProbe.as
+--- a/Script/G1RMCPPatchProbe.as
++++ b/Script/G1RMCPPatchProbe.as
+@@ -5,6 +5,6 @@ class UG1RMCPPatchProbe : UObject
+     UFUNCTION(BlueprintCallable)
+     int ReadPatchMarker()
+     {
+-        return 10;
++        return 11;
+     }
+ }

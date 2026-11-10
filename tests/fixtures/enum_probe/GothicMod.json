@@ -1,0 +1,1 @@
+{"name":"G1RMCPEnumProbe","title":"G1R MCP Enum Probe","author":"G1R MCP","description":"Isolated numeric enum calls on an owned UObject with execution and cleanup checks.","modVersion":"1.0.0"}

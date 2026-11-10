@@ -1,0 +1,1 @@
+{"name":"G1RMCPStringInputProbe","title":"G1R MCP String Input Probe","author":"G1R MCP","description":"Isolated const FString reference inputs on an owned UObject with length, return-value, concatenation, and counter probes.","modVersion":"1.0.0"}

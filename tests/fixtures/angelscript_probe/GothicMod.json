@@ -1,0 +1,7 @@
+{
+  "name": "G1RMCPProbe",
+  "title": "G1R MCP Compilation Probe",
+  "author": "G1R MCP",
+  "description": "Isolated probe object without gameplay behavior.",
+  "modVersion": "1.0.0"
+}

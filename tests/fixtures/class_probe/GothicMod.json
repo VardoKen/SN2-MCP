@@ -1,0 +1,7 @@
+{
+  "name": "G1RMCPClassProbe",
+  "title": "G1R MCP Class Probe",
+  "author": "G1R MCP",
+  "description": "Isolated class argument, return-value, and property probes without gameplay behavior.",
+  "modVersion": "1.0.0"
+}

@@ -1,0 +1,1 @@
+{"name":"G1RMCPTypedInputProbe","title":"G1R MCP Typed Input Probe","author":"G1R MCP","description":"Isolated TArray<int>, TArray<FName> and int/float64/bool POD structure probe; does not access the game world.","modVersion":"1.0.0"}
