@@ -1,4 +1,4 @@
-#include <g1r_mcp/string_arguments.hpp>
+#include <sn2_mcp/string_arguments.hpp>
 
 #include <iostream>
 #include <limits>
@@ -12,7 +12,7 @@ int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action>void reject(Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()=="invalid_argument","Неверный код отказа строки");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Ошибка строки должна явно исключать исполнение");return;
@@ -25,7 +25,7 @@ std::string bytes(std::initializer_list<unsigned char> values) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         require(string_arguments::encode(json(""))==u"","Пустая строка должна сохраняться");
         require(string_arguments::encode(json("ASCII 123\n\t"))==u"ASCII 123\n\t","ASCII и управляющие символы кроме NUL должны сохраняться");

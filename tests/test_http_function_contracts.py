@@ -8,8 +8,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -49,7 +49,7 @@ class HTTPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        transport="streamable-http")
             factory.assert_called_once_with(port=native.port)
@@ -94,17 +94,17 @@ class HTTPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
                     first_session = await initialize(first, "first-contract-client")
                     second_session = await initialize(second, "second-contract-client")
                     self.assertNotEqual(first_session, second_session)
-                    listed = await call(first, first_session, "g1r_object_functions", {
+                    listed = await call(first, first_session, "sn2_object_functions", {
                         "handle": handle, "function_query": "ReadMarker"})
                     self.assertFalse(listed.get("isError", False), listed)
                     self.assertEqual(listed["structuredContent"], signature)
                     shared_token = listed["structuredContent"]["items"][0]["signature_token"]
-                    result = await call(second, second_session, "g1r_invoke", {
+                    result = await call(second, second_session, "sn2_invoke", {
                         "handle": handle, "function": "ReadMarker", "expected_signature_token": shared_token})
                     self.assertFalse(result.get("isError", False), result)
                     self.assertEqual(result["structuredContent"], called)
                     self.assertEqual(native.connections, 1)
-                    unknown = await call(first, first_session, "g1r_invoke", {
+                    unknown = await call(first, first_session, "sn2_invoke", {
                         "handle": handle, "function": "ReadMarker", "expected_signature_token": shared_token})
                     self.assertTrue(unknown["isError"])
                     payload = next(block["text"] for block in unknown["content"] if block["type"] == "text")
@@ -113,7 +113,7 @@ class HTTPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["effect"], no_effect)
                     self.assertEqual(error["request_id"], native.requests[2]["id"])
-                    after = await call(second, second_session, "g1r_native_status", {})
+                    after = await call(second, second_session, "sn2_native_status", {})
                     self.assertFalse(after.get("isError", False), after)
                     self.assertEqual(after["structuredContent"], status)
             self.assertEqual(native.connections, 1)

@@ -1,4 +1,4 @@
-#include <g1r_mcp/object_array_input_lifetime.hpp>
+#include <sn2_mcp/object_array_input_lifetime.hpp>
 
 #include <array>
 #include <iostream>
@@ -8,13 +8,13 @@
 #include <vector>
 
 namespace {
-using g1r_mcp::ArrayHeader;
-using g1r_mcp::object_array_input_lifetime::Ledger;
+using sn2_mcp::ArrayHeader;
+using sn2_mcp::object_array_input_lifetime::Ledger;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action> void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ учёта объектных массивов");
         require(error.details()==nlohmann::json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Чистый helper не должен приписывать исполнение игровому вызову");return;
@@ -29,7 +29,7 @@ void no_free(Ledger& ledger) {
 }
 
 int main() {
-    using namespace g1r_mcp::object_array_input_lifetime;
+    using namespace sn2_mcp::object_array_input_lifetime;
     static_assert(!std::is_copy_constructible_v<Ledger> && !std::is_copy_assignable_v<Ledger>);
     static_assert(!std::is_move_constructible_v<Ledger> && !std::is_move_assignable_v<Ledger>);
     static_assert(sizeof(std::uintptr_t)==8);

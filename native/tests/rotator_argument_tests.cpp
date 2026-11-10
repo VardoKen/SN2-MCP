@@ -1,4 +1,4 @@
-#include <g1r_mcp/rotator_arguments.hpp>
+#include <sn2_mcp/rotator_arguments.hpp>
 
 #include <algorithm>
 #include <array>
@@ -12,12 +12,12 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::rotator_arguments::Layout;
+using sn2_mcp::rotator_arguments::Layout;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action> void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ аргумента FRotator");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Проверка собственного POD не исполняет игровой вызов");return;
@@ -27,15 +27,15 @@ template<class Action> void reject(const char* code,Action&& action) {
 Layout canonical() {return {24,8,false,{{"Pitch",0,{"DoubleProperty",8,1}},
     {"Yaw",8,{"DoubleProperty",8,1}},{"Roll",16,{"DoubleProperty",8,1}}}};}
 double at(const std::array<std::byte,24>& bytes,int offset) {double value{};std::memcpy(&value,bytes.data()+offset,sizeof(value));return value;}
-g1r_mcp::rotator_arguments::Snapshot snapshot() {
-    g1r_mcp::rotator_arguments::Snapshot result;
+sn2_mcp::rotator_arguments::Snapshot snapshot() {
+    sn2_mcp::rotator_arguments::Snapshot result;
     result.path="/Script/CoreUObject.Rotator";result.struct_name="Rotator";
     result.element_size=24;result.array_dim=1;result.layout=canonical();return result;
 }
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const auto layout=canonical();const json ordinary={{"Pitch",725.25},{"Yaw",-1080.5},{"Roll",540.125}};
         const auto encoded=rotator_arguments::encode(layout,ordinary);

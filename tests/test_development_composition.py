@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from g1r_mcp.development import CommandResult, DevelopmentError, DevelopmentService
-from g1r_mcp.workspace import WorkspaceError
+from sn2_mcp.development import CommandResult, DevelopmentError, DevelopmentService
+from sn2_mcp.workspace import WorkspaceError
 
 
 class DevelopmentCompositionTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class DevelopmentCompositionTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.repository = self.root / "repository"
         (self.repository / "tools").mkdir(parents=True)
-        for name in ("game_process_state.ps1", "start_g1r_development.ps1", "stop_g1r_development.ps1"):
+        for name in ("game_process_state.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1"):
             (self.repository / "tools" / name).write_text("# isolated executor only\n", encoding="utf-8")
         self.workspace = self.root / "workspace"
         self.modkit = self.root / "modkit"
@@ -56,13 +56,13 @@ class DevelopmentCompositionTests(unittest.TestCase):
         script = Path(arguments[arguments.index("-File") + 1]).name
         if script == "game_process_state.ps1":
             result = {"processes": self.processes}
-        elif script == "start_g1r_development.ps1":
+        elif script == "start_sn2_development.ps1":
             names = arguments[arguments.index("-ModsCsv") + 1].split(",")
             result = {"state": "launch_requested", "package_name": None, "mods": names,
                       "mods_directory": arguments[arguments.index("-ModsDirectory") + 1]}
             if self.receipt_transform is not None:
                 result = self.receipt_transform(result)
-        elif script == "stop_g1r_development.ps1":
+        elif script == "stop_sn2_development.ps1":
             result = {"state": "stopped", "process": self.identity}
         else:
             self.fail("Неожиданный процессный инструмент: " + script)
@@ -85,7 +85,7 @@ class DevelopmentCompositionTests(unittest.TestCase):
 
     def launch_calls(self):
         return [arguments for arguments, _ in self.calls
-                if Path(arguments[arguments.index("-File") + 1]).name == "start_g1r_development.ps1"]
+                if Path(arguments[arguments.index("-File") + 1]).name == "start_sn2_development.ps1"]
 
     def test_recipe_is_read_only_and_aggregate_hash_covers_each_package_and_launch_options(self):
         before = self.snapshot(self.workspace)

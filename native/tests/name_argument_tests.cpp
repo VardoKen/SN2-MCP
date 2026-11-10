@@ -1,4 +1,4 @@
-#include <g1r_mcp/name_argument.hpp>
+#include <sn2_mcp/name_argument.hpp>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -8,7 +8,7 @@ int checks=0;
 void require(bool condition,const char* message){++checks;if(!condition)throw std::runtime_error(message);}
 template<class Operation>void rejects(const char* code,Operation operation,
     const nlohmann::json& details={{"executed",false},{"may_have_executed",false},{"do_not_retry",false}}) {
-    try {operation();}catch(const g1r_mcp::HandlerError& error){
+    try {operation();}catch(const sn2_mcp::HandlerError& error){
         require(error.code()==code,"Неверный код отказа FName");
         require(error.details()==details,"Отказ FName должен сохранять точные сведения об отсутствии исполнения");
         return;
@@ -17,7 +17,7 @@ template<class Operation>void rejects(const char* code,Operation operation,
 }
 }
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     using nlohmann::json;
     try {
         const json good={{"name_from",{{"handle","obj-7"},{"property_name","StoredEntry"}}}};

@@ -63,10 +63,10 @@ class ColorFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments), expected_error))
-        if name == "g1r_native_status": return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects": return {"items": [self.native if arguments["class_query"] == probe.NATIVE_CLASS else self.target], "truncated": False}
-        if name == "g1r_object_functions": return self.functions(arguments["function_query"])
-        if name != "g1r_invoke": raise AssertionError((name, arguments))
+        if name == "sn2_native_status": return {"ready": True, "session_id": "native-owner"}
+        if name == "sn2_find_objects": return {"items": [self.native if arguments["class_query"] == probe.NATIVE_CLASS else self.target], "truncated": False}
+        if name == "sn2_object_functions": return self.functions(arguments["function_query"])
+        if name != "sn2_invoke": raise AssertionError((name, arguments))
         method, supplied = arguments["function"], arguments["arguments"]
         if arguments["expected_signature_token"] != self.tokens[method]: raise AssertionError("wrong token")
         if expected_error:
@@ -105,7 +105,7 @@ class LinearColorProbeTests(unittest.TestCase):
         self.assertEqual(fixture.resets, 1)
         self.assertEqual(fixture.count, 0)
         self.assertEqual(set(report["reflected_functions"]), set(probe.METHODS))
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"} for name, _, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"} for name, _, _ in fixture.calls))
 
     def test_scalar_return_width_is_live_reflection(self):
         report = asyncio.run(probe.exercise(ColorFixture(scalar_width=4).call))
@@ -147,13 +147,13 @@ class LinearColorProbeTests(unittest.TestCase):
         fixture = ColorFixture()
         async def call(name, arguments, *, expected_error=None):
             result = await fixture.call(name, arguments, expected_error=expected_error)
-            if name == "g1r_object_functions" and arguments["function_query"] == "LinearColor_ToNewOpacity":
+            if name == "sn2_object_functions" and arguments["function_query"] == "LinearColor_ToNewOpacity":
                 result["items"][0]["parameters"][0].update(flags=0x182, out=True, const=True, passing="const_reference")
             return result
         report = asyncio.run(probe.exercise(call))
         self.assertTrue(report["native_math"]["MakeColor"]["tested"])
         self.assertEqual(report["native_math"]["LinearColor_ToNewOpacity"]["status"], "unsupported_not_tested")
-        self.assertFalse(any(name == "g1r_invoke" and args["function"] == "LinearColor_ToNewOpacity" for name, args, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" and args["function"] == "LinearColor_ToNewOpacity" for name, args, _ in fixture.calls))
         self.assertEqual(fixture.resets, 1)
 
     def test_unknown_refusal_stops_without_counter_or_reset(self):
@@ -177,13 +177,13 @@ class LinearColorProbeTests(unittest.TestCase):
         async def scenario(method):
             fixture = ColorFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == method:
+                if name == "sn2_invoke" and arguments["function"] == method:
                     await fixture.call(name, arguments)
                     raise probe.ProbeError("game_timeout", "Результат неизвестен")
                 return await fixture.call(name, arguments, expected_error=expected_error)
             with self.assertRaises(probe.ProbeError): await probe.exercise(call)
             self.assertEqual(fixture.resets, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == method for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == method for name, args, _ in fixture.calls), 1)
         for method in ("EchoColor", "MakeColor"):
             with self.subTest(method=method): asyncio.run(scenario(method))
 
@@ -192,9 +192,9 @@ class LinearColorProbeTests(unittest.TestCase):
             fixture = ColorFixture()
             started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "ReadColorR":
+                if name == "sn2_invoke" and arguments["function"] == "ReadColorR":
                     await fixture.call(name, arguments); raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe": started.set(); await release.wait()
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe": started.set(); await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
             task = asyncio.create_task(probe.exercise(call))
             await asyncio.wait_for(started.wait(), 2)
@@ -202,7 +202,7 @@ class LinearColorProbeTests(unittest.TestCase):
             self.assertFalse(task.done()); release.set()
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(fixture.resets, 1)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "ReadColorR" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "ReadColorR" for name, args, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
 

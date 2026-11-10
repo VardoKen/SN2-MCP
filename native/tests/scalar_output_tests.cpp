@@ -1,4 +1,4 @@
-#include <g1r_mcp/scalar_outputs.hpp>
+#include <sn2_mcp/scalar_outputs.hpp>
 
 #include <array>
 #include <bit>
@@ -13,7 +13,7 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::scalar_outputs::Layout;
+using sn2_mcp::scalar_outputs::Layout;
 int checks{};
 void require(bool good,const char* message) {
     ++checks;
@@ -21,7 +21,7 @@ void require(bool good,const char* message) {
 }
 template<class Action>void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный код отказа скалярного out");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Ошибка чистого декодера должна явно исключать исполнение");
@@ -34,7 +34,7 @@ template<class T>json copied(const Layout& layout,T value) {
     storage.fill(std::byte{0xa5});
     std::memcpy(storage.data()+1,&value,sizeof(value));
     const auto before=storage;
-    const auto decoded=g1r_mcp::scalar_outputs::decode(layout,std::span(storage).subspan(1,sizeof(value)));
+    const auto decoded=sn2_mcp::scalar_outputs::decode(layout,std::span(storage).subspan(1,sizeof(value)));
     require(storage==before,"Decode должен читать собственную копию без изменения окружающих байтов");
     return decoded;
 }
@@ -43,7 +43,7 @@ Layout boolean(std::uint8_t mask) {return {"BoolProperty",1,1,1,0,mask,mask};}
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const auto int32=numeric("IntProperty",4),int64=numeric("Int64Property",8);
         const auto uint32=numeric("UInt32Property",4),uint64=numeric("UInt64Property",8);

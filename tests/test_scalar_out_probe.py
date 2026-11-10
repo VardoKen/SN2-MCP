@@ -53,13 +53,13 @@ class ScalarOutFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments), expected_error))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.target], "truncated": False}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return self.functions(arguments["function_query"])
-        if name != "g1r_invoke":
+        if name != "sn2_invoke":
             raise AssertionError((name, arguments))
         method = arguments["function"]
         if arguments["expected_signature_token"] != self.tokens[method]:
@@ -126,10 +126,10 @@ class ScalarOutProbeTests(unittest.TestCase):
         for name in probe.METHODS:
             self.assertEqual(report["reflected_functions"][name], fixture.functions(name))
         mutations = [arguments["arguments"] for name, arguments, expected in fixture.calls
-                     if name == "g1r_invoke" and arguments["function"] == "GetOutputs" and expected is None]
+                     if name == "sn2_invoke" and arguments["function"] == "GetOutputs" and expected is None]
         self.assertEqual(list(mutations[0]), list(probe.VALUES))
         self.assertEqual(list(mutations[1]), list(reversed(probe.VALUES)))
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"}
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"}
                              for name, _, _ in fixture.calls))
 
     def test_float_keyword_width_is_live_reflection_dependent(self):
@@ -143,7 +143,7 @@ class ScalarOutProbeTests(unittest.TestCase):
         with self.assertRaises(probe.ProbeError):
             asyncio.run(probe.exercise(fixture.call))
         self.assertEqual(fixture.resets, 0)
-        self.assertFalse(any(name == "g1r_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls))
         for alteration in ("out", "reference", "const", "direction", "marker", "width", "array", "count",
                            "overlap", "bounds", "duplicate", "flags", "metadata"):
             listing = ScalarOutFixture().functions("GetOutputs")
@@ -197,7 +197,7 @@ class ScalarOutProbeTests(unittest.TestCase):
         async def scenario(code):
             fixture = ScalarOutFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "GetOutputs":
+                if name == "sn2_invoke" and arguments["function"] == "GetOutputs":
                     await fixture.call(name, arguments)
                     raise probe.ProbeError(code, "Результат исходного вызова неизвестен")
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -207,7 +207,7 @@ class ScalarOutProbeTests(unittest.TestCase):
             self.assertEqual(fixture.resets, 0)
             self.assertTrue(any("Scalar out cleanup was skipped after an uncertain call or unavailable connection" in note
                                 for note in caught.exception.__notes__))
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls), 1)
         for code in probe.UNKNOWN_GAME:
             with self.subTest(code=code): asyncio.run(scenario(code))
 
@@ -215,14 +215,14 @@ class ScalarOutProbeTests(unittest.TestCase):
         async def scenario():
             fixture = ScalarOutFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "GetOutputs":
+                if name == "sn2_invoke" and arguments["function"] == "GetOutputs":
                     await fixture.call(name, arguments)
                     raise probe.ProbeError("game_result_error", "Выполненный результат невалиден")
                 return await fixture.call(name, arguments, expected_error=expected_error)
             with self.assertRaises(probe.ProbeError) as caught: await probe.exercise(call)
             self.assertEqual(caught.exception.code, "game_result_error")
             self.assertEqual(fixture.resets, 1)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
     def test_exact_bool_layout_and_optional_raw_flags(self):
@@ -249,7 +249,7 @@ class ScalarOutProbeTests(unittest.TestCase):
             async def call_tool(self, name, arguments):
                 error = {"code": "invalid_argument", "may_have_executed": False, "effect": {"executed": False}}
                 return SimpleNamespace(is_error=True, content=[SimpleNamespace(type="text", text=__import__("json").dumps(error))])
-        result = asyncio.run(probe.make_caller(Session())("g1r_invoke", {}, expected_error="invalid_argument"))
+        result = asyncio.run(probe.make_caller(Session())("sn2_invoke", {}, expected_error="invalid_argument"))
         probe.check_rejection(result, "GetOutputs", {"OutBool": None})
         for change in ({"executed": True}, {"effect": {}}, {"effect": {"executed": None}},
                        {"effect": {"executed": False, "may_have_executed": True}}):
@@ -265,11 +265,11 @@ class ScalarOutProbeTests(unittest.TestCase):
             arguments = {"function": "GetOutputs", "arguments": supplied,
                          "expected_signature_token": fixture.tokens["GetOutputs"]}
             with self.subTest(expected=expected):
-                result = asyncio.run(fixture.call("g1r_invoke", arguments, expected_error=expected))
+                result = asyncio.run(fixture.call("sn2_invoke", arguments, expected_error=expected))
                 probe.check_rejection(result, "GetOutputs", supplied, expected)
                 wrong = "missing_argument" if expected == "invalid_argument" else "invalid_argument"
                 with self.assertRaises(AssertionError):
-                    asyncio.run(fixture.call("g1r_invoke", arguments, expected_error=wrong))
+                    asyncio.run(fixture.call("sn2_invoke", arguments, expected_error=wrong))
                 with self.assertRaises(probe.ProbeError):
                     probe.check_rejection(result, "GetOutputs", supplied, wrong)
 
@@ -278,10 +278,10 @@ class ScalarOutProbeTests(unittest.TestCase):
             fixture = ScalarOutFixture()
             reset_started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "GetOutputs" and not expected_error:
+                if name == "sn2_invoke" and arguments["function"] == "GetOutputs" and not expected_error:
                     await fixture.call(name, arguments)
                     raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     reset_started.set()
                     await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -296,7 +296,7 @@ class ScalarOutProbeTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(fixture.resets, 1)
             self.assertEqual(fixture.count, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "GetOutputs" for name, args, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
 

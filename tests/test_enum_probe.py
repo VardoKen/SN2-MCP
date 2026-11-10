@@ -75,22 +75,22 @@ class EnumCallFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments)))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "session-fixture"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             target = dict(self.target)
             if self.wrong_target: target["path"] = "/Script/Other.Default__" + live.HOST
             return {"items": [target], "truncated": False}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             result = functions()
             if self.wrong_signature:
                 next(method for method in result["items"] if method["name"] == "EchoMode")["parameters"][0]["reference"] = True
             return result
-        if name == "g1r_snapshot":
+        if name == "sn2_snapshot":
             return self.snapshot()
-        if name == "g1r_compare_snapshots":
+        if name == "sn2_compare_snapshots":
             return {"comparable": True, "unknown_count": 0, "coverage": {"complete": True}, "truncated": False}
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = arguments["function"]
             if expected_error is not None:
                 if self.invalid_executed: self.count += 1
@@ -146,12 +146,12 @@ class EnumProbeTests(unittest.TestCase):
         fixture = EnumCallFixture()
         original_call = fixture.call
         async def old_call(name, arguments, *, expected_error=None):
-            if name == "g1r_object_functions":
+            if name == "sn2_object_functions":
                 return old_response
             return await original_call(name, arguments, expected_error=expected_error)
         with self.assertRaises(live.ProbeError):
             asyncio.run(live.exercise(old_call))
-        self.assertFalse(any(name == "g1r_invoke" for name, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" for name, _ in fixture.calls))
 
     def test_wrong_signature_roles_type_width_or_ref_are_rejected(self):
         for change in ("reference", "array", "type", "size", "offset", "input_out"):
@@ -185,11 +185,11 @@ class EnumProbeTests(unittest.TestCase):
         self.assertEqual(report["declared_values"], [0, 1, 7])
         self.assertIn("invalid_args_rejected_before_execution_calls_count_unchanged", report["checks"])
         self.assertEqual(report["cleanup"], ["ResetProbe_and_confirmed_zero_snapshot"])
-        invoked = [arguments["function"] for name, arguments in fixture.calls if name == "g1r_invoke"]
+        invoked = [arguments["function"] for name, arguments in fixture.calls if name == "sn2_invoke"]
         self.assertEqual(invoked[0], "ReadMarker")
         self.assertEqual(invoked[-1], "ResetProbe")
         self.assertEqual(invoked.count("ResetProbe"), 1)
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_native_load"} for name, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_native_load"} for name, _ in fixture.calls))
 
     def test_return_mismatch_still_restores_both_fields(self):
         fixture = EnumCallFixture(wrong_return=True)
@@ -217,7 +217,7 @@ class EnumProbeTests(unittest.TestCase):
                 fixture = EnumCallFixture(**options)
                 with self.assertRaises(live.ProbeError):
                     asyncio.run(live.exercise(fixture.call))
-                self.assertFalse(any(name == "g1r_invoke" for name, _ in fixture.calls))
+                self.assertFalse(any(name == "sn2_invoke" for name, _ in fixture.calls))
 
     def test_wrong_source_defaults_fail_before_any_reset_or_mutating_enum_call(self):
         fixture = EnumCallFixture()
@@ -227,7 +227,7 @@ class EnumProbeTests(unittest.TestCase):
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(caught.exception.code, "probe_initial_state")
         self.assertEqual((fixture.mode, fixture.count), (1, 3))
-        invoked = [arguments["function"] for name, arguments in fixture.calls if name == "g1r_invoke"]
+        invoked = [arguments["function"] for name, arguments in fixture.calls if name == "sn2_invoke"]
         self.assertEqual(invoked, ["ReadMarker"])
 
 

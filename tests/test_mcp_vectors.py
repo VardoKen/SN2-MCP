@@ -65,24 +65,23 @@ class MCPVectorTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoVector",
+                    response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoVector",
                                                       "arguments": {"Input": point}, "expected_signature_token": "sig-20"})
                     self.assertFalse(response.is_error, response.content)
                     self.assertEqual(response.structured_content, returned)
                     self.assertEqual(response.structured_content["result"], point)
-                    response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "WriteVector",
+                    response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "WriteVector",
                         "arguments": {"Input": point, "Output": output_selector}, "expected_signature_token": "sig-21"})
                     self.assertFalse(response.is_error, response.content)
                     self.assertEqual(response.structured_content, written)
                     self.assertEqual(response.structured_content["out_parameters"]["Output"], projected)
                     self.assertEqual(native.requests[1]["params"]["arguments"], {"Input": point, "Output": output_selector})
                     for offset, value in enumerate(invalid_points):
-                        response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoVector",
+                        response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoVector",
                             "arguments": {"Input": value}, "expected_signature_token": "sig-20"})
                         self.assertTrue(response.is_error, response.content)
                         message = next(block.text for block in response.content if block.type == "text")
@@ -92,7 +91,7 @@ class MCPVectorTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], native.requests[2 + offset]["id"])
                         self.assertEqual(native.requests[2 + offset]["params"]["arguments"]["Input"], value)
-                    response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoVector",
+                    response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoVector",
                         "arguments": {"Input": point}, "expected_signature_token": "sig-20"})
                     self.assertTrue(response.is_error, response.content)
                     message = next(block.text for block in response.content if block.type == "text")
@@ -101,7 +100,7 @@ class MCPVectorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], unknown_effect)
                     self.assertIs(error["may_have_executed"], True)
                     self.assertEqual(error["request_id"], native.requests[6]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

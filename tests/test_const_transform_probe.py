@@ -56,10 +56,10 @@ class ConstTransformFixture(TransformFixture):
         return result
 
     async def call(self, name, arguments, *, expected_error=None):
-        if name == "g1r_find_objects" and arguments["class_query"] == probe.NATIVE_CLASS:
+        if name == "sn2_find_objects" and arguments["class_query"] == probe.NATIVE_CLASS:
             self.calls.append((name, copy.deepcopy(arguments), expected_error))
             return {"items": [self.native_target], "truncated": False}
-        if name == "g1r_invoke" and arguments["function"] == probe.NATIVE_METHOD:
+        if name == "sn2_invoke" and arguments["function"] == probe.NATIVE_METHOD:
             self.calls.append((name, copy.deepcopy(arguments), expected_error))
             if arguments["handle"] != "obj-2" or arguments["expected_signature_token"] != self.tokens[probe.NATIVE_METHOD]:
                 raise AssertionError("native target/token")
@@ -69,7 +69,7 @@ class ConstTransformFixture(TransformFixture):
             result = {axis: point[axis] * transform["Scale3D"][axis] + transform["Translation"][axis] for axis in ("X", "Y", "Z")}
             if self.bad_native: result["X"] += 1
             return {"executed": True, "return_type": "StructProperty", "result": result, "result_metadata": self.vector_metadata()}
-        if name == "g1r_invoke" and arguments["function"] == "AcceptConstTransform":
+        if name == "sn2_invoke" and arguments["function"] == "AcceptConstTransform":
             rewritten = {**arguments, "function": "AcceptTransform"}
             self.tokens["AcceptTransform"] = self.tokens["AcceptConstTransform"]
             try: result = await super().call(name, rewritten, expected_error=expected_error)
@@ -77,7 +77,7 @@ class ConstTransformFixture(TransformFixture):
                 self.tokens.pop("AcceptTransform")
                 if self.calls: self.calls[-1] = (name, copy.deepcopy(arguments), expected_error)
             return result
-        if name == "g1r_invoke" and arguments["function"] == "ReadMarker":
+        if name == "sn2_invoke" and arguments["function"] == "ReadMarker":
             self.calls.append((name, copy.deepcopy(arguments), expected_error))
             return {"executed": True, "return_type": "IntProperty", "result": 0 if self.bad_marker else probe.MARKER}
         return await super().call(name, arguments, expected_error=expected_error)
@@ -111,14 +111,14 @@ class ConstTransformProbeTests(unittest.TestCase):
             fixture = ConstTransformFixture(input_flags=flags)
             with self.subTest(flags=flags), self.assertRaises(probe.ProbeError): asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(fixture.resets, 0)
-            self.assertFalse(any(name == "g1r_invoke" and args["function"] == "AcceptConstTransform" for name, args, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_invoke" and args["function"] == "AcceptConstTransform" for name, args, _ in fixture.calls))
 
     def test_native_signature_mismatch_never_invokes_math(self):
         for kwargs in ({"native_transform_flags": 0x82}, {"native_vector_flags": 0x180}, {"bad_native_target": True}):
             fixture = ConstTransformFixture(**kwargs)
             with self.subTest(kwargs=kwargs), self.assertRaises(probe.ProbeError): asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(fixture.resets, 1)
-            self.assertFalse(any(name == "g1r_invoke" and args["function"] == probe.NATIVE_METHOD for name, args, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_invoke" and args["function"] == probe.NATIVE_METHOD for name, args, _ in fixture.calls))
 
     def test_native_metadata_parameters_and_boundaries_are_strict(self):
         for alteration in ("count", "overlap", "misalignment", "transformpath", "vectorwidth", "flags", "returnref", "marker", "namealias"):
@@ -149,14 +149,14 @@ class ConstTransformProbeTests(unittest.TestCase):
         async def scenario(code):
             fixture = ConstTransformFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == probe.NATIVE_METHOD:
+                if name == "sn2_invoke" and arguments["function"] == probe.NATIVE_METHOD:
                     await fixture.call(name, arguments)
                     raise probe.ProbeError(code, "Результат неизвестен")
                 return await fixture.call(name, arguments, expected_error=expected_error)
             with self.assertRaises(probe.ProbeError) as caught: await probe.exercise(call)
             self.assertEqual(caught.exception.code, code)
             self.assertEqual(fixture.resets, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == probe.NATIVE_METHOD for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == probe.NATIVE_METHOD for name, args, _ in fixture.calls), 1)
         for code in ("game_timeout", "game_call_fault", "native_disconnected"):
             with self.subTest(code=code): asyncio.run(scenario(code))
 

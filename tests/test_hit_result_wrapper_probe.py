@@ -63,10 +63,10 @@ class WrapperFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments), expected_error))
-        if name == "g1r_native_status": return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects": return {"items": [self.target, self.instance], "truncated": False}
-        if name == "g1r_object_functions": return self.functions(arguments["function_query"])
-        if name != "g1r_invoke": raise AssertionError(name)
+        if name == "sn2_native_status": return {"ready": True, "session_id": "native-owner"}
+        if name == "sn2_find_objects": return {"items": [self.target, self.instance], "truncated": False}
+        if name == "sn2_object_functions": return self.functions(arguments["function_query"])
+        if name != "sn2_invoke": raise AssertionError(name)
         method = arguments["function"]
         if arguments["handle"] != self.instance["handle"]: raise AssertionError("CDO must never be invoked")
         if arguments["expected_signature_token"] != self.tokens[method]: raise AssertionError("wrong token")
@@ -108,7 +108,7 @@ class HitResultWrapperProbeTests(unittest.TestCase):
         self.assertEqual(report["completed_mutating_calls"], 1)
         self.assertEqual(report["rejections"], [])
         self.assertEqual(fixture.resets, 1)
-        self.assertFalse(any(name == "g1r_invoke" and args["function"] == "TraceImpactPoint" for name, args, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" and args["function"] == "TraceImpactPoint" for name, args, _ in fixture.calls))
 
     def test_true_trace_finite_impact_does_not_assume_false_or_zero(self):
         report = asyncio.run(probe.exercise(WrapperFixture(hit=True).call))
@@ -121,11 +121,11 @@ class HitResultWrapperProbeTests(unittest.TestCase):
             fixture = WrapperFixture()
             async def call(name, arguments, *, expected_error=None):
                 result = await fixture.call(name, arguments, expected_error=expected_error)
-                if name == "g1r_find_objects":
+                if name == "sn2_find_objects":
                     result["items"] = [fixture.target] + ([] if altered is None else [altered])
                 return result
             with self.subTest(altered=altered), self.assertRaises(probe.ProbeError): asyncio.run(probe.exercise(call))
-            self.assertFalse(any(name == "g1r_invoke" for name, _, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_invoke" for name, _, _ in fixture.calls))
 
     def test_signature_actor_inner_class_and_out_contract_are_strict(self):
         for change in ("class", "outconst", "outmarker", "overlap", "rawhit", "booldim", "booloffset"):
@@ -163,12 +163,12 @@ class HitResultWrapperProbeTests(unittest.TestCase):
         async def scenario(code):
             fixture = WrapperFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "TraceImpactPoint":
+                if name == "sn2_invoke" and arguments["function"] == "TraceImpactPoint":
                     await fixture.call(name, arguments); raise probe.ProbeError(code, "Результат неизвестен")
                 return await fixture.call(name, arguments, expected_error=expected_error)
             with self.assertRaises(probe.ProbeError): await probe.exercise(call)
             self.assertEqual(fixture.resets, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "TraceImpactPoint" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "TraceImpactPoint" for name, args, _ in fixture.calls), 1)
         for code in ("game_timeout", "game_result_error", "game_call_fault"):
             with self.subTest(code=code): asyncio.run(scenario(code))
 
@@ -176,16 +176,16 @@ class HitResultWrapperProbeTests(unittest.TestCase):
         async def scenario():
             fixture = WrapperFixture(); started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "ReadDefaultImpactPoint":
+                if name == "sn2_invoke" and arguments["function"] == "ReadDefaultImpactPoint":
                     await fixture.call(name, arguments); raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe": started.set(); await release.wait()
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe": started.set(); await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
             task = asyncio.create_task(probe.exercise(call)); await asyncio.wait_for(started.wait(), 2)
             task.cancel(); await asyncio.sleep(0); task.cancel(); await asyncio.sleep(0)
             self.assertFalse(task.done()); release.set()
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(fixture.resets, 1)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "ReadDefaultImpactPoint" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "ReadDefaultImpactPoint" for name, args, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
 

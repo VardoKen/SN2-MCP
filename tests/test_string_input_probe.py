@@ -46,10 +46,10 @@ class StringFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments), expected_error))
-        if name == "g1r_native_status": return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects": return {"items": [self.target], "truncated": False}
-        if name == "g1r_object_functions": return self.functions(arguments["function_query"])
-        if name != "g1r_invoke": raise AssertionError((name, arguments))
+        if name == "sn2_native_status": return {"ready": True, "session_id": "native-owner"}
+        if name == "sn2_find_objects": return {"items": [self.target], "truncated": False}
+        if name == "sn2_object_functions": return self.functions(arguments["function_query"])
+        if name != "sn2_invoke": raise AssertionError((name, arguments))
         method, supplied = arguments["function"], arguments["arguments"]
         if arguments["expected_signature_token"] != self.tokens[method]: raise AssertionError("wrong token")
         if expected_error:
@@ -95,7 +95,7 @@ class StringInputProbeTests(unittest.TestCase):
         self.assertEqual(fixture.resets, 1)
         self.assertEqual(set(report["reflected_functions"]), set(probe.METHODS))
         self.assertEqual(report["native_string"], "not_tested")
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"} for name, _, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"} for name, _, _ in fixture.calls))
 
     def test_const_ref_without_out_is_valid(self):
         report = asyncio.run(probe.exercise(StringFixture(input_flags=0x08000082).call))
@@ -106,7 +106,7 @@ class StringInputProbeTests(unittest.TestCase):
             fixture = StringFixture(input_flags=flags)
             with self.subTest(flags=flags), self.assertRaises(probe.ProbeError): asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(fixture.resets, 0)
-            self.assertFalse(any(name == "g1r_invoke" and args["function"] == "ReadInputLength" for name, args, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_invoke" and args["function"] == "ReadInputLength" for name, args, _ in fixture.calls))
 
     def test_exact_signature_names_constraints_offsets_types_and_flags(self):
         for alteration in ("width", "array", "passing", "direction", "constraints", "flags", "overlap", "name", "returnref", "count"):
@@ -147,7 +147,7 @@ class StringInputProbeTests(unittest.TestCase):
         fixture = StringFixture()
         arguments = {"function": "ReadInputLength", "arguments": {"Input": "😀" * 16384},
                      "expected_signature_token": fixture.tokens["ReadInputLength"]}
-        with self.assertRaises(AssertionError): asyncio.run(fixture.call("g1r_invoke", arguments, expected_error="missing_argument"))
+        with self.assertRaises(AssertionError): asyncio.run(fixture.call("sn2_invoke", arguments, expected_error="missing_argument"))
 
     def test_primary_failure_keeps_reflection_and_cleanup_failure(self):
         fixture = StringFixture(bad_echo=True, bad_reset=True)
@@ -162,14 +162,14 @@ class StringInputProbeTests(unittest.TestCase):
         async def scenario(code):
             fixture = StringFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "ReadInputLength":
+                if name == "sn2_invoke" and arguments["function"] == "ReadInputLength":
                     await fixture.call(name, arguments)
                     raise probe.ProbeError(code, "Результат или владение неизвестны")
                 return await fixture.call(name, arguments, expected_error=expected_error)
             with self.assertRaises(probe.ProbeError) as caught: await probe.exercise(call)
             self.assertEqual(caught.exception.code, code)
             self.assertEqual(fixture.resets, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "ReadInputLength" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "ReadInputLength" for name, args, _ in fixture.calls), 1)
         for code in (*probe.UNKNOWN_GAME, "game_result_error", "string_ownership_unknown", "string_input_quarantined", "string_inputs_quarantined"):
             with self.subTest(code=code): asyncio.run(scenario(code))
 
@@ -178,10 +178,10 @@ class StringInputProbeTests(unittest.TestCase):
             fixture = StringFixture()
             started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "ReadInputLength":
+                if name == "sn2_invoke" and arguments["function"] == "ReadInputLength":
                     await fixture.call(name, arguments)
                     raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     started.set()
                     await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -195,7 +195,7 @@ class StringInputProbeTests(unittest.TestCase):
             release.set()
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(fixture.resets, 1)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "ReadInputLength" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "ReadInputLength" for name, args, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
 

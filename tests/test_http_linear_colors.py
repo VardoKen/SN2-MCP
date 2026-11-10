@@ -9,8 +9,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -83,7 +83,7 @@ class HTTPLinearColorTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        transport="streamable-http")
             factory.assert_called_once_with(port=native.port)
@@ -129,7 +129,7 @@ class HTTPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                     first_session = await initialize(first, "color-listing-client")
                     second_session = await initialize(second, "color-invoke-client")
                     self.assertNotEqual(first_session, second_session)
-                    listed = await call(first, first_session, "g1r_object_functions", {
+                    listed = await call(first, first_session, "sn2_object_functions", {
                         "handle": handle, "function_query": "EchoColor"})
                     self.assertFalse(listed.get("isError", False), listed)
                     self.assertEqual(listed["structuredContent"], reflection)
@@ -148,7 +148,7 @@ class HTTPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                     for color, expected_result in zip(colors, results):
                         parameters = invoke_parameters(color)
                         parameters["expected_signature_token"] = shared_token
-                        invoked = await call(second, second_session, "g1r_invoke", parameters)
+                        invoked = await call(second, second_session, "sn2_invoke", parameters)
                         self.assertFalse(invoked.get("isError", False), invoked)
                         self.assertEqual(invoked["structuredContent"], expected_result)
                         self.assertEqual(invoked["structuredContent"]["result"], color)
@@ -156,7 +156,7 @@ class HTTPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(invoked["structuredContent"]["result_metadata"], metadata)
                         self.assertIs(invoked["structuredContent"]["executed"], True)
                     for index, color in enumerate(malformed_colors, 3):
-                        denied = await call(first, first_session, "g1r_invoke", invoke_parameters(color))
+                        denied = await call(first, first_session, "sn2_invoke", invoke_parameters(color))
                         self.assertTrue(denied["isError"])
                         message = next(block["text"] for block in denied["content"]
                                        if block["type"] == "text")
@@ -165,7 +165,7 @@ class HTTPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(error["effect"], no_effect)
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], native.requests[index]["id"])
-                    checked = await call(second, second_session, "g1r_native_status", {})
+                    checked = await call(second, second_session, "sn2_native_status", {})
                     self.assertFalse(checked.get("isError", False), checked)
                     self.assertEqual(checked["structuredContent"], status)
             self.assertEqual(native.connections, 1)

@@ -1,4 +1,4 @@
-#include "g1r_mcp/process_identity.hpp"
+#include "sn2_mcp/process_identity.hpp"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -10,7 +10,7 @@ void require(bool condition, const char* message) {
 }
 void rejects(std::wstring_view text) {
     bool refused{};
-    try { (void)g1r::loader::parse_creation_filetime(text); }
+    try { (void)sn2::loader::parse_creation_filetime(text); }
     catch (const std::runtime_error& error) { refused = std::string(error.what()) == "invalid_creation_filetime"; }
     require(refused, "invalid FILETIME accepted");
 }
@@ -18,7 +18,7 @@ void rejects(std::wstring_view text) {
 
 int main() {
     try {
-        using namespace g1r::loader;
+        using namespace sn2::loader;
         require(parse_creation_filetime(L"1") == 1, "minimum FILETIME");
         require(parse_creation_filetime(L"134378677904730371") == 134378677904730371ULL, "actual FILETIME decimal");
         require(parse_creation_filetime(L"18446744073709551615") == std::numeric_limits<std::uint64_t>::max(), "maximum FILETIME");

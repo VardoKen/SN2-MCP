@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from g1r_mcp.sources import SourceCatalog, SourceError
+from sn2_mcp.sources import SourceCatalog, SourceError
 
 
 class SourceCatalogTests(unittest.TestCase):
@@ -46,7 +46,7 @@ class SourceCatalogTests(unittest.TestCase):
                 self.catalog().read_file_exact(value)
 
     def test_exact_source_preserves_minimal_patch_lines(self):
-        from g1r_mcp.patches import ScriptPatchBuilder
+        from sn2_mcp.patches import ScriptPatchBuilder
         variants = (b"int A = 1;\nint B = 2;\n", b"int A = 1;\r\nint B = 2;\r\n",
                     b"\xef\xbb\xbfint A = 1;\nint B = 2;\n", b"int A = 1;\nint B = 2;")
         for raw in variants:

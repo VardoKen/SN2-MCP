@@ -1,6 +1,6 @@
-#include <g1r_mcp/cleanup_once.hpp>
-#include <g1r_mcp/object_array_input_lifetime.hpp>
-#include <g1r_mcp/string_input_lifetime.hpp>
+#include <sn2_mcp/cleanup_once.hpp>
+#include <sn2_mcp/object_array_input_lifetime.hpp>
+#include <sn2_mcp/string_input_lifetime.hpp>
 
 #include <array>
 #include <concepts>
@@ -10,8 +10,8 @@
 #include <vector>
 
 namespace {
-namespace strings=g1r_mcp::string_input_lifetime;
-namespace arrays=g1r_mcp::object_array_input_lifetime;
+namespace strings=sn2_mcp::string_input_lifetime;
+namespace arrays=sn2_mcp::object_array_input_lifetime;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Result> bool same(const Result& left,const Result& right) {
@@ -23,8 +23,8 @@ struct NoThrowAction {strings::Cleanup operator()() noexcept {return {};}};
 struct ThrowingAction {strings::Cleanup operator()() {return {};}};
 struct WrongResultAction {arrays::Cleanup operator()() noexcept {return {};}};
 struct NotCallable {};
-using StringOnce=g1r_mcp::CleanupOnce<strings::Cleanup>;
-using ArrayOnce=g1r_mcp::CleanupOnce<arrays::Cleanup>;
+using StringOnce=sn2_mcp::CleanupOnce<strings::Cleanup>;
+using ArrayOnce=sn2_mcp::CleanupOnce<arrays::Cleanup>;
 static_assert(CanRun<StringOnce,NoThrowAction>);
 static_assert(!CanRun<StringOnce,ThrowingAction>);
 static_assert(!CanRun<StringOnce,WrongResultAction>);
@@ -37,7 +37,7 @@ static_assert(!std::is_copy_constructible_v<ArrayOnce> && !std::is_move_construc
 enum class Failure {none,false_result,exception};
 template<class Ledger,class Result,class Setup>
 void cleanup_case(Setup&& setup,Failure failure,std::size_t fail_after,std::size_t total_allocations,std::size_t retained_bytes) {
-    Ledger ledger;setup(ledger);g1r_mcp::CleanupOnce<Result> once;
+    Ledger ledger;setup(ledger);sn2_mcp::CleanupOnce<Result> once;
     require(!once.called(),"CleanupOnce не должен считаться исполненным до первого действия");
     int actions{},free_calls{};bool called_inside{};
     auto release=[&]() noexcept -> Result {
@@ -65,7 +65,7 @@ void cleanup_case(Setup&& setup,Failure failure,std::size_t fail_after,std::size
 }
 
 template<class Ledger,class Result,class Setup> void uncertain_case(Setup&& setup,std::size_t count,std::size_t bytes) {
-    Ledger ledger;setup(ledger);ledger.mark_uncertain();g1r_mcp::CleanupOnce<Result> once;int actions{},free_calls{};
+    Ledger ledger;setup(ledger);ledger.mark_uncertain();sn2_mcp::CleanupOnce<Result> once;int actions{},free_calls{};
     auto release=[&]() noexcept -> Result {++actions;return ledger.release([&](std::uintptr_t){++free_calls;return true;});};
     const auto first=once.run(release);const auto second=once.run(release);
     require(!first.attempted && !first.confirmed && first.uncertain && first.released_count==0,"Неизвестное владение сохраняет точный отказ без попытки Free");

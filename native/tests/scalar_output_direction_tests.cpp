@@ -1,4 +1,4 @@
-#include <g1r_mcp/parameter_direction.hpp>
+#include <sn2_mcp/parameter_direction.hpp>
 
 #include <cstdint>
 #include <iostream>
@@ -8,8 +8,8 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::HandlerError;
-namespace direction = g1r_mcp::parameter_direction;
+using sn2_mcp::HandlerError;
+namespace direction = sn2_mcp::parameter_direction;
 int checks{};
 
 void require(bool condition,const char* message) {

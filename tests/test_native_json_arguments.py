@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from g1r_mcp.native_client import NativeClient, NativeError
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient, NativeError
+from sn2_mcp.server import create_server
 from tests.test_native_client import FakeServer, frame, request, response
 
 
@@ -30,7 +30,7 @@ class NativeJSONArgumentTests(unittest.TestCase):
             cyclic,
         ]
         identifiers = set()
-        with NativeClient() as client, patch("g1r_mcp.native_client.socket.socket") as opened:
+        with NativeClient() as client, patch("sn2_mcp.native_client.socket.socket") as opened:
             for arguments in inputs:
                 with self.subTest(type=type(arguments.get("Input")).__name__):
                     with self.assertRaises(NativeError) as caught:
@@ -79,7 +79,7 @@ class NativeJSONToolTests(unittest.IsolatedAsyncioTestCase):
             async with server.settings.lifespan(server):
                 with patch.object(NativeClient, "_connect") as opened:
                     with self.assertRaises(ToolError) as caught:
-                        await server.call_tool("g1r_invoke", {"handle": "obj-fixture", "function": "EchoVector",
+                        await server.call_tool("sn2_invoke", {"handle": "obj-fixture", "function": "EchoVector",
                             "arguments": {"Input": {"X": math.nan, "Y": 0, "Z": 0}}})
                     message = str(caught.exception)
                     error = json.loads(message[message.index("{"):])

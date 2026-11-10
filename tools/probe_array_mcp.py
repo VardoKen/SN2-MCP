@@ -104,21 +104,21 @@ async def exercise(call) -> dict:
     cleanup_required = False
     failure = None
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Ready Tick and current session are not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
+        found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
                            "exact_path": "/Script/Angelscript.Default__" + HOST, "limit": 2})
         if (not isinstance(found.get("items"), list) or len(found["items"]) != 1 or found.get("truncated") is not False):
             raise ProbeError("probe_object_absent", "Owned POD CDO was not found uniquely")
         target = check_target(found["items"][0])
-        functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 50})
+        functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 50})
         for method in METHODS:
             check_signature(functions, method)
 
         async def invoke(method: str, arguments: dict | None = None):
-            result = await call("g1r_invoke", {"handle": target["handle"], "function": method, "arguments": arguments or {}})
+            result = await call("sn2_invoke", {"handle": target["handle"], "function": method, "arguments": arguments or {}})
             output = METHODS[method][1]
             if (result.get("executed") is not True or "result" not in result or
                     (output is None and result["result"] is not None) or
@@ -128,7 +128,7 @@ async def exercise(call) -> dict:
             return result["result"]
 
         async def read_page(property_name, *, total, offset=0, limit=64, element_type="IntProperty", element_size=4):
-            page = await call("g1r_read_array", {"handle": target["handle"], "property_name": property_name,
+            page = await call("sn2_read_array", {"handle": target["handle"], "property_name": property_name,
                              "offset": offset, "limit": limit})
             return check_page(page, target, session_id, property_name, offset=offset, limit=limit,
                               total=total, element_type=element_type, element_size=element_size)
@@ -190,7 +190,7 @@ async def exercise(call) -> dict:
 
 async def run_probe(args: argparse.Namespace) -> dict:
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)],
         cwd=str(REPOSITORY_ROOT), env={"PYTHONUTF8": "1"})
     async with stdio_client(parameters) as (incoming, outgoing):

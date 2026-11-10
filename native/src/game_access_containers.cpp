@@ -1,17 +1,30 @@
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/game_memory.hpp"
-#include "g1r_mcp/array_page.hpp"
-#include "g1r_mcp/scalar_struct_values.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/game_memory.hpp"
+#include "sn2_mcp/array_page.hpp"
+#include "sn2_mcp/scalar_struct_values.hpp"
+#include "sn2_mcp/cleanup_once.hpp"
 #include <array>
 #include <limits>
 #include <set>
 #include <vector>
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 using json=nlohmann::json;
 using game_memory::read;
 namespace {
-// UE 5.4.1 FScriptSet/FScriptMap share sparse storage and a default inline bit allocator.
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+bool fixture_allocate(std::uintptr_t address,std::size_t bytes,std::uint32_t alignment,void** result) noexcept {
+    __try{*result=reinterpret_cast<void*(__fastcall*)(void*,std::size_t,std::uint32_t)>(address)(nullptr,bytes,alignment);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+bool fixture_free(std::uintptr_t address,void* pointer) noexcept {
+    __try{reinterpret_cast<void(__fastcall*)(void*)>(address)(pointer);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+#endif
+// Ordinary target sparse storage is corroborated by current Set/Map property
+// initialization and destruction routines (CL131439). Memory-image maps use
+// another composition and are rejected through their reflected MapFlags.
 struct ContainerHeader {
     uintptr_t data{};
     int32_t max_index{},capacity{};
@@ -129,6 +142,25 @@ json GameAccess::read_object_set_return(uintptr_t field,uintptr_t address,const 
 }
 json GameAccess::read_set(const json& params) {return read_container(params,false);}
 json GameAccess::read_map(const json& params) {return read_container(params,true);}
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+json GameAccess::development_sparse_fixture(const json& params) {
+    if(!bindings_.realloc.available() || !bindings_.free.available())
+        throw HandlerError("fixture_allocator_unavailable","The target fixture requires discovered engine Realloc and Free");
+    auto fixture=params;
+    fixture["_isolated_sparse_fixture"]=true;
+    const auto names_before=name_constructions_started_.load();
+    try{return read_container(fixture,params.value("map",false));}
+    catch(const HandlerError& error) {
+        auto details=error.details();details["fixture"]=true;
+        if(name_constructions_started_.load()!=names_before)details["name_pool_may_have_changed"]=true;
+        throw HandlerError(error.code(),error.what(),std::move(details));
+    }catch(...) {
+        throw HandlerError("fixture_failed","The isolated sparse fixture did not complete",
+            {{"executed",false},{"may_have_executed",false},{"fixture",true},
+             {"name_pool_may_have_changed",name_constructions_started_.load()!=names_before}});
+    }
+}
+#endif
 json GameAccess::read_container(const json& params,bool map) {
     if(!params.is_object() || !params.contains("handle") || !params.at("handle").is_string()
        || !params.contains("property_name") || !params.at("property_name").is_string())
@@ -218,7 +250,60 @@ json GameAccess::read_container(const json& params,bool map) {
     const auto metadata=capture();const auto object_address=reinterpret_cast<uintptr_t>(object);
     if(object_address>std::numeric_limits<uintptr_t>::max()-static_cast<uintptr_t>(metadata.field.component.offset)-sizeof(ContainerHeader))
         throw HandlerError("invalid_container_header","The container header address overflows");
-    const auto header_address=object_address+static_cast<uintptr_t>(metadata.field.component.offset);
+    auto header_address=object_address+static_cast<uintptr_t>(metadata.field.component.offset);
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+    const bool fixture=params.value("_isolated_sparse_fixture",false);
+    ContainerHeader isolated;
+    void* fixture_memory{};CleanupOnce<bool> fixture_cleanup;
+    auto release_fixture=[&] {
+        return fixture_cleanup.run([&]() noexcept {return !fixture_memory || fixture_free(base_+bindings_.free.rva,fixture_memory);});
+    };
+    if(fixture) {
+        const auto bytes=static_cast<std::size_t>(metadata.layout.stride)*4;
+        if(!fixture_allocate(base_+bindings_.realloc.rva,bytes,static_cast<std::uint32_t>(metadata.layout.alignment),&fixture_memory))
+            throw HandlerError("fixture_allocator_fault","The target allocator raised an exception; allocation effect is unknown",
+                {{"executed",false},{"may_have_executed",false},{"do_not_retry",true},{"fixture_allocation_effect_unknown",true}});
+        if(!fixture_memory)throw HandlerError("fixture_allocation_failed","The target allocator did not return fixture storage");
+        try {
+            const std::vector<std::byte> zero(bytes);
+            if(!game_memory::copy(fixture_memory,zero.data(),zero.size()))
+                throw HandlerError("invalid_fixture_memory","The target allocator returned unavailable fixture storage");
+            isolated.data=reinterpret_cast<std::uintptr_t>(fixture_memory);isolated.max_index=4;isolated.capacity=4;
+            isolated.inline_bitmap[0]=0x0d;isolated.num_bits=4;isolated.max_bits=128;isolated.first_free=1;isolated.free_count=1;
+            void* reference{};
+            if(map && params.contains("value_handle") && !params.at("value_handle").is_null()) {
+                reference=resolve(params.at("value_handle").get<std::string>());
+                const auto declared=reinterpret_cast<void*>(metadata.auxiliary.at("declared").at("pointer").get<std::uintptr_t>());
+                if(!is_compatible_object(reference,declared))
+                    throw HandlerError("incompatible_fixture_reference","The fixture reference does not match reflected map ValueProp");
+            }
+            std::size_t ordinal{};
+            for(const auto sparse:{0,2,3}) {
+                const auto packed=encode_name_text({{"name","SN2MCPFixture"+std::to_string(ordinal++)}});
+                const auto address=isolated.data+static_cast<std::size_t>(sparse)*metadata.layout.stride;
+                if(!game_memory::copy(reinterpret_cast<void*>(address),&packed,sizeof(packed)))
+                    throw HandlerError("invalid_fixture_memory","The fixture element storage is unavailable");
+                if(map) {
+                    const auto pointer=sparse==2?std::uintptr_t{}:reinterpret_cast<std::uintptr_t>(reference);
+                    if(!game_memory::copy(reinterpret_cast<void*>(address+metadata.value_offset),&pointer,sizeof(pointer)))
+                        throw HandlerError("invalid_fixture_memory","The fixture reference storage is unavailable");
+                }
+            }
+            header_address=reinterpret_cast<std::uintptr_t>(&isolated);
+        }catch(const HandlerError& error) {
+            const bool released=release_fixture();auto details=error.details();
+            details["fixture_cleanup_confirmed"]=released;
+            if(!released)details["do_not_retry"]=true;
+            throw HandlerError(error.code(),error.what(),std::move(details));
+        }catch(...) {
+            if(!release_fixture())throw HandlerError("fixture_cleanup_unconfirmed","The failed fixture allocation could not be released",
+                {{"executed",false},{"may_have_executed",false},{"do_not_retry",true},{"fixture_cleanup_confirmed",false}});
+            throw HandlerError("fixture_preparation_failed","The fixture failed during neutral value preparation",
+                {{"executed",false},{"may_have_executed",false},{"fixture_cleanup_confirmed",true}});
+        }
+    }
+    try {
+#endif
     const auto page=copy_container_page(header_address,metadata.layout,offset,limit);
     const auto& header=page.header;const auto& bitmap=page.bitmap;const auto& occupied=page.occupied;
     const auto& copied=page.copied;const auto total_count=page.total_count,count=page.count;
@@ -258,6 +343,32 @@ json GameAccess::read_container(const json& params,bool map) {
         result["key"]=public_field(metadata.key);result["value"]=public_field(metadata.value);
         result["value"]["declared_type"]=metadata.auxiliary.at("declared_type");result["value_offset"]=metadata.value_offset;
     } else result["element"]=public_field(metadata.key);
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+    if(fixture) {
+        const bool released=release_fixture();
+        result.update({{"source","development_fixture"},{"fixture",{{"live_object_modified",false},
+            {"storage","engine_allocated_isolated_sparse_header"},{"occupied_sparse_slots",{0,2,3}},
+            {"free_sparse_slots",{1}},{"cleanup_confirmed",released},{"name_pool_may_have_changed",true}}}});
+        if(!released)throw HandlerError("fixture_cleanup_unconfirmed","The fixture allocation could not be released",
+            {{"executed",false},{"may_have_executed",false},{"fixture_cleanup_confirmed",false}});
+    }
     return result;
+    }catch(const HandlerError& error) {
+        if(!fixture)throw;
+        auto details=error.details();const bool released=release_fixture();
+        details["fixture_cleanup_confirmed"]=released;
+        if(!released)details["do_not_retry"]=true;
+        throw HandlerError(error.code(),error.what(),std::move(details));
+    }catch(...) {
+        if(fixture) {
+            const bool released=release_fixture();
+            throw HandlerError("fixture_failed","The isolated fixture did not complete",
+                {{"executed",false},{"may_have_executed",false},{"do_not_retry",!released},{"fixture_cleanup_confirmed",released}});
+        }
+        throw;
+    }
+#else
+    return result;
+#endif
 }
-} // namespace g1r_mcp
+} // namespace sn2_mcp

@@ -1,4 +1,4 @@
-#include <g1r_mcp/scalar_arguments.hpp>
+#include <sn2_mcp/scalar_arguments.hpp>
 
 #include <array>
 #include <cstring>
@@ -18,7 +18,7 @@ void require(bool good,const char* message) {
 }
 template<class Action>void reject(Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()=="invalid_argument","Неверный код отказа целого аргумента");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Отказ должен явно исключать исполнение");
@@ -38,7 +38,7 @@ template<class T>void exact_bytes(T value) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         static_assert(std::is_same_v<decltype(int64_argument(json{})),std::int64_t>);
         static_assert(std::is_same_v<decltype(uint64_argument(json{})),std::uint64_t>);

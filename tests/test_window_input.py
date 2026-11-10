@@ -4,8 +4,8 @@ import ctypes
 from ctypes import wintypes
 import unittest
 
-from g1r_mcp.process_observer import ObservationError
-from g1r_mcp.window_input import MAPVK_VK_TO_VSC_EX, WM_KEYDOWN, WM_KEYUP, WindowInputError, queue_key
+from sn2_mcp.process_observer import ObservationError
+from sn2_mcp.window_input import MAPVK_VK_TO_VSC_EX, WM_KEYDOWN, WM_KEYUP, WindowInputError, queue_key
 
 
 IDENTITY = {"pid": 123, "creation_time": "2026-11-01T10:00:00.1234567Z",

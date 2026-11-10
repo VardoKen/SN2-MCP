@@ -128,27 +128,27 @@ async def exercise(call) -> dict:
     cleanup_allowed = False
     failure = None
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Ready Tick and the current session were not confirmed")
-        found = await call("g1r_find_objects", {"query": "", "class_query": HOST, "exact_path": "/Script/Angelscript.Default__" + HOST, "limit": 2})
+        found = await call("sn2_find_objects", {"query": "", "class_query": HOST, "exact_path": "/Script/Angelscript.Default__" + HOST, "limit": 2})
         items = found.get("items")
         if not isinstance(items, list) or len(items) != 1 or found.get("truncated") is not False:
             raise ProbeError("probe_object_absent", "The owned enum CDO was not uniquely found")
         target = check_target(items[0])
-        functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 20})
+        functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 20})
         signatures = {method: check_signature(functions, method) for method in METHODS}
 
         async def invoke(method: str, value=...):
             args = {} if value is ... else {"Input": value}
-            result = await call("g1r_invoke", {"handle": target["handle"], "function": method, "arguments": args})
+            result = await call("sn2_invoke", {"handle": target["handle"], "function": method, "arguments": args})
             if result.get("executed") is not True:
                 raise ProbeError("probe_not_executed", "The owned probe method did not confirm execution")
             return result
 
         async def snapshot():
-            result = await call("g1r_snapshot", {"targets": [{"handle": target["handle"], "properties": PROPERTIES}]})
+            result = await call("sn2_snapshot", {"targets": [{"handle": target["handle"], "properties": PROPERTIES}]})
             return result, snapshot_values(result, target, session_id)
 
         marker = await invoke("ReadMarker")
@@ -174,7 +174,7 @@ async def exercise(call) -> dict:
             if stored[:2] != (value, new[1] + 1):
                 raise ProbeError("probe_store_value", "StoreMode did not confirm one execution and the selected value")
             check_enum_result(await invoke("ReadMode"), value, signatures["ReadMode"], underlying)
-            comparison = await call("g1r_compare_snapshots", {"before": before, "after": stored_snapshot})
+            comparison = await call("sn2_compare_snapshots", {"before": before, "after": stored_snapshot})
             if (comparison.get("comparable") is not True or type(comparison.get("unknown_count")) is not int or
                     comparison["unknown_count"] != 0 or comparison.get("coverage", {}).get("complete") is not True or
                     comparison.get("truncated") is not False):
@@ -188,13 +188,13 @@ async def exercise(call) -> dict:
                             (1.0, "invalid_argument"), (None, "invalid_argument"), ("First", "invalid_argument"),
                             ({"value": 1}, "invalid_argument")]:
             _, before = await snapshot()
-            result = await call("g1r_invoke", {"handle": target["handle"], "function": "EchoMode", "arguments": {"Input": value}}, expected_error=code)
+            result = await call("sn2_invoke", {"handle": target["handle"], "function": "EchoMode", "arguments": {"Input": value}}, expected_error=code)
             _, after = await snapshot()
             if before != after or result.get("may_have_executed") is not False:
                 raise ProbeError("probe_rejection_executed", "The rejected enum argument changed CallsCount or StoredMode")
             rejections.append(code)
         _, before = await snapshot()
-        await call("g1r_invoke", {"handle": target["handle"], "function": "EchoMode",
+        await call("sn2_invoke", {"handle": target["handle"], "function": "EchoMode",
                                   "arguments": {"Input": 1, "Unexpected": 7}}, expected_error="unknown_argument")
         _, after = await snapshot()
         if before != after:
@@ -211,10 +211,10 @@ async def exercise(call) -> dict:
         async def finish_cleanup():
             if not cleanup_allowed:
                 return
-            result = await call("g1r_invoke", {"handle": target["handle"], "function": "ResetProbe", "arguments": {}})
+            result = await call("sn2_invoke", {"handle": target["handle"], "function": "ResetProbe", "arguments": {}})
             if result.get("executed") is not True:
                 raise ProbeError("probe_cleanup_unconfirmed", "ResetProbe execution was not confirmed")
-            cleaned = await call("g1r_snapshot", {"targets": [{"handle": target["handle"], "properties": PROPERTIES}]})
+            cleaned = await call("sn2_snapshot", {"targets": [{"handle": target["handle"], "properties": PROPERTIES}]})
             if snapshot_values(cleaned, target, session_id)[:2] != (0, 0):
                 raise ProbeError("probe_cleanup_unconfirmed", "StoredMode/CallsCount did not return to their original values")
             report["cleanup"].append("ResetProbe_and_confirmed_zero_snapshot")
@@ -228,7 +228,7 @@ async def exercise(call) -> dict:
 
 
 async def run_probe(args) -> dict:
-    parameters = StdioServerParameters(command=sys.executable, args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+    parameters = StdioServerParameters(command=sys.executable, args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
         "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT), env={"PYTHONUTF8": "1"})
     async with stdio_client(parameters) as (incoming, outgoing):
         async with ClientSession(incoming, outgoing) as client:

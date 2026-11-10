@@ -131,7 +131,7 @@ class CompileProbeTests(unittest.TestCase):
         self.assertEqual(list(self.workspace.iterdir()), [])
 
     def test_replaced_stage_script_link_preserves_external_file(self):
-        from g1r_mcp.workspace import WorkspaceError
+        from sn2_mcp.workspace import WorkspaceError
         import contextlib
         external = self.repository / "external"
         external.mkdir()
@@ -142,7 +142,7 @@ class CompileProbeTests(unittest.TestCase):
 
         @contextlib.contextmanager
         def replace_before_guard(path, boundary):
-            if path.name == "Script" and ".g1r-mcp-probe-" in str(path) and not swapped:
+            if path.name == "Script" and ".sn2-mcp-probe-" in str(path) and not swapped:
                 path.rmdir()
                 try:
                     path.symlink_to(external, target_is_directory=True)

@@ -7,7 +7,7 @@ from pathlib import Path
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from test_mcp_native import FakeNativeServer
+from tests.test_mcp_native import FakeNativeServer
 
 
 class MCPFunctionQueryTests(unittest.IsolatedAsyncioTestCase):
@@ -38,32 +38,31 @@ class MCPFunctionQueryTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             parameters = StdioServerParameters(
                 command=sys.executable,
-                args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                      "--workspace-root", str(workspace), "--native-port", str(native.port)],
+                args=["-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)],
             )
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    tool = tools["g1r_object_functions"]
+                    tool = tools["sn2_object_functions"]
                     self.assertTrue(tool.annotations.read_only_hint)
                     self.assertEqual(tool.input_schema["properties"]["function_query"]["default"], "")
-                    first = await client.call_tool("g1r_object_functions", {"handle": "obj-1", "limit": 200})
+                    first = await client.call_tool("sn2_object_functions", {"handle": "obj-1", "limit": 200})
                     self.assertFalse(first.is_error)
                     self.assertEqual(first.structured_content, legacy)
                     self.assertTrue(first.structured_content["truncated"])
-                    found = await client.call_tool("g1r_object_functions",
+                    found = await client.call_tool("sn2_object_functions",
                                                    {"handle": "obj-1", "limit": 2, "function_query": "target"})
                     self.assertFalse(found.is_error)
                     self.assertEqual(found.structured_content, filtered)
                     self.assertEqual([item["owner"] for item in found.structured_content["items"]], ["Derived", "Base"])
                     self.assertTrue(found.structured_content["items"][1]["parameters_truncated"])
-                    scan = await client.call_tool("g1r_object_functions",
+                    scan = await client.call_tool("sn2_object_functions",
                                                   {"handle": "obj-1", "limit": 2, "function_query": "Missing"})
                     self.assertFalse(scan.is_error)
                     self.assertEqual(scan.structured_content, incomplete)
                     self.assertFalse(scan.structured_content["scan_complete"])
-                    failed = await client.call_tool("g1r_object_functions",
+                    failed = await client.call_tool("sn2_object_functions",
                                                     {"handle": "obj-1", "limit": 2, "function_query": "x" * 513})
                     self.assertTrue(failed.is_error)
             self.assertEqual(source.read_text(encoding="utf-8"), "class UProbe {}\n")

@@ -1,4 +1,4 @@
-#include <g1r_mcp/selected_property_query.hpp>
+#include <sn2_mcp/selected_property_query.hpp>
 
 #include <iostream>
 #include <stdexcept>
@@ -14,7 +14,7 @@ void require(bool condition,const char* message) {
 template<class Operation>
 void rejects(Operation operation) {
     try {operation();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()=="invalid_property_names","Неверный код отказа списка свойств");
         require(error.details()==nlohmann::json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Неверный список должен отвергаться до исполнения");
@@ -26,7 +26,7 @@ void rejects(Operation operation) {
 
 int main() {
     using nlohmann::json;
-    namespace query=g1r_mcp::selected_property_query;
+    namespace query=sn2_mcp::selected_property_query;
     try {
         const json requested=json::array({"StoredNone","StoredEntry","MissingForProbe","CallsCount"});
         int calls=0;

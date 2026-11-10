@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("vector_preparation_test", ROOT / "tools/prepare_vector_probe.py")
 prepare = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prepare)
-from g1r_mcp.packages import PackageError
+from sn2_mcp.packages import PackageError
 
 
 class VectorPreparationTests(unittest.TestCase):

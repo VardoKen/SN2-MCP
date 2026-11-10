@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from g1r_mcp.server import create_server
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -32,8 +32,8 @@ import json
 from pathlib import Path
 import sys
 from unittest.mock import patch
-from g1r_mcp.development import DevelopmentError
-from g1r_mcp.server import create_server
+from sn2_mcp.development import DevelopmentError
+from sn2_mcp.server import create_server
 
 identities = json.loads(sys.argv[4])
 class FixtureDevelopment:
@@ -54,7 +54,7 @@ class FixtureDevelopment:
         self.current = identities[1]
         return {'state': 'launch_requested', 'process': self.current, 'outcome_unknown': False}
 service = FixtureDevelopment()
-with patch('g1r_mcp.server.DevelopmentService', return_value=service):
+with patch('sn2_mcp.server.DevelopmentService', return_value=service):
     server = create_server(Path(sys.argv[1]), Path(sys.argv[2]), native_port=int(sys.argv[3]))
     server.run(transport='stdio')
 """
@@ -91,12 +91,12 @@ class MCPNativeRestartTests(unittest.IsolatedAsyncioTestCase):
                 async with stdio_client(parameters) as (incoming, outgoing):
                     async with ClientSession(incoming, outgoing) as client:
                         await client.initialize()
-                        initial = await client.call_tool("g1r_native_status", {})
+                        initial = await client.call_tool("sn2_native_status", {})
                         self.assertFalse(initial.is_error, initial.content)
                         self.assertEqual(initial.structured_content, first_status)
                         for pid, expected_code, expected_unknown in (
                                 (999, "process_changed", False), (998, "operation_timeout", True)):
-                            refused = await client.call_tool("g1r_development_stop", {
+                            refused = await client.call_tool("sn2_development_stop", {
                                 "expected_process": {**identities[0], "pid": pid}})
                             self.assertTrue(refused.is_error, refused.content)
                             text = next(block.text for block in refused.content if block.type == "text")
@@ -104,10 +104,10 @@ class MCPNativeRestartTests(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(error["code"], expected_code)
                             self.assertIs(error["outcome_unknown"], expected_unknown)
                             self.assertEqual(error["retry"], "only_explicit_new_request")
-                            retained = await client.call_tool("g1r_native_status", {})
+                            retained = await client.call_tool("sn2_native_status", {})
                             self.assertFalse(retained.is_error, retained.content)
                             self.assertEqual(retained.structured_content, first_status)
-                        stopped = await client.call_tool("g1r_development_stop", {
+                        stopped = await client.call_tool("sn2_development_stop", {
                             "expected_process": identities[0]})
                         self.assertFalse(stopped.is_error, stopped.content)
                         self.assertIs(stopped.structured_content["outcome_unknown"], False)
@@ -120,14 +120,14 @@ class MCPNativeRestartTests(unittest.IsolatedAsyncioTestCase):
                             {"op": "status", "params": {}, "result": second_status},
                         ], port=first.port)
                         second.__enter__()
-                        launched = await client.call_tool("g1r_development_start", {
+                        launched = await client.call_tool("sn2_development_start", {
                             "relative_package": "Probe", "expected_manifest_sha256": "a" * 64})
                         self.assertFalse(launched.is_error, launched.content)
                         self.assertEqual(launched.structured_content["process"], identities[1])
-                        restarted = await client.call_tool("g1r_native_status", {})
+                        restarted = await client.call_tool("sn2_native_status", {})
                         self.assertFalse(restarted.is_error, restarted.content)
                         self.assertEqual(restarted.structured_content, second_status)
-                        stale = await client.call_tool("g1r_invoke", {
+                        stale = await client.call_tool("sn2_invoke", {
                             "handle": "obj-first-owner", "function": "ReadMarker"})
                         self.assertTrue(stale.is_error, stale.content)
                         text = next(block.text for block in stale.content if block.type == "text")
@@ -135,10 +135,10 @@ class MCPNativeRestartTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(error["code"], "stale_handle")
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], second.requests[1]["id"])
-                        following = await client.call_tool("g1r_native_status", {})
+                        following = await client.call_tool("sn2_native_status", {})
                         self.assertFalse(following.is_error, following.content)
                         self.assertEqual(following.structured_content, second_status)
-                        final_stop = await client.call_tool("g1r_development_stop", {
+                        final_stop = await client.call_tool("sn2_development_stop", {
                             "expected_process": identities[1]})
                         self.assertFalse(final_stop.is_error, final_stop.content)
                 self.assertEqual(first.connections, 1)
@@ -162,8 +162,8 @@ class MCPNativeRestartTests(unittest.IsolatedAsyncioTestCase):
             old_native = Mock()
             new_native = Mock()
             service = Mock()
-            with patch("g1r_mcp.server.NativeClient", side_effect=[old_native, new_native]) as factory, \
-                    patch("g1r_mcp.server.DevelopmentService", return_value=service):
+            with patch("sn2_mcp.server.NativeClient", side_effect=[old_native, new_native]) as factory, \
+                    patch("sn2_mcp.server.DevelopmentService", return_value=service):
                 server = create_server(modkit, workspace, native_port=28123)
                 for result in (
                         {**confirmed, "outcome_unknown": True},
@@ -174,11 +174,11 @@ class MCPNativeRestartTests(unittest.IsolatedAsyncioTestCase):
                         {**confirmed, "tool_result": {"state": "stopped", "process": {**process, "pid": 124}}},
                         {**confirmed, "tool_result": {"state": "unknown", "process": process}}):
                     service.stop.return_value = result
-                    await server.call_tool("g1r_development_stop", {"expected_process": process})
+                    await server.call_tool("sn2_development_stop", {"expected_process": process})
                     old_native.close.assert_not_called()
                     self.assertEqual(factory.call_count, 1)
                 service.stop.return_value = confirmed
-                await server.call_tool("g1r_development_stop", {"expected_process": {**process, "extra": "ignored_by_identity"}})
+                await server.call_tool("sn2_development_stop", {"expected_process": {**process, "extra": "ignored_by_identity"}})
                 old_native.close.assert_called_once_with()
                 self.assertEqual(factory.call_args_list, [unittest.mock.call(port=28123)] * 2)
                 new_native.close.assert_not_called()

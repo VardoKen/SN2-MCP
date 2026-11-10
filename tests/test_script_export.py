@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from g1r_mcp import package_export as export
+from sn2_mcp import package_export as export
 
 
 class ScriptExportTests(unittest.TestCase):

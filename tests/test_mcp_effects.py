@@ -49,13 +49,12 @@ class MCPEffectTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     for index, (code, details, uncertain) in enumerate(cases):
-                        response = await client.call_tool("g1r_invoke", params)
+                        response = await client.call_tool("sn2_invoke", params)
                         self.assertTrue(response.is_error, response.content)
                         text = next(block.text for block in response.content if block.type == "text")
                         error = json.loads(text[text.index("{"):])
@@ -63,7 +62,7 @@ class MCPEffectTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(error["may_have_executed"], uncertain, details)
                         self.assertEqual(error["effect"], details)
                         self.assertEqual(error["request_id"], native.requests[index * 2]["id"])
-                        status = await client.call_tool("g1r_native_status", {})
+                        status = await client.call_tool("sn2_native_status", {})
                         self.assertFalse(status.is_error, status.content)
                         self.assertEqual(status.structured_content["tick_count"], index + 1)
             # После каждого отказа следует только явно запрошенный статус.

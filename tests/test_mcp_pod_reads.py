@@ -45,16 +45,15 @@ class MCPPODReadTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    response = await client.call_tool("g1r_read_array", {
+                    response = await client.call_tool("sn2_read_array", {
                         "handle": "obj-pod", "property_name": "LargeNumbers", "offset": offset, "limit": limit})
                     self.assertFalse(response.is_error, response.content)
                     self.assertEqual(response.structured_content, page)
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)
@@ -125,51 +124,46 @@ class MCPPODReadTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 64)
-                    struct_schema = tools["g1r_read_struct"].input_schema
+                    self.assertEqual(len(tools), 22)
+                    struct_schema = tools["sn2_read_struct"].input_schema
                     self.assertEqual(set(struct_schema["properties"]), {"handle", "property_name", "timeout_seconds"})
                     self.assertEqual(set(struct_schema["required"]), {"handle", "property_name"})
-                    array_schema = tools["g1r_read_array"].input_schema
+                    array_schema = tools["sn2_read_array"].input_schema
                     self.assertEqual(set(array_schema["properties"]), {"handle", "property_name", "offset", "limit", "timeout_seconds"})
                     self.assertEqual(set(array_schema["required"]), {"handle", "property_name"})
                     self.assertEqual(array_schema["properties"]["offset"]["default"], 0)
                     self.assertEqual(array_schema["properties"]["limit"]["default"], 64)
-                    capabilities = await client.call_tool("g1r_capabilities", {})
+                    capabilities = await client.call_tool("sn2_capabilities", {})
                     self.assertFalse(capabilities.is_error, capabilities.content)
-                    contract = capabilities.structured_content["struct_values"]
-                    self.assertEqual(contract["component_fields"], ["name", "type", "element_size", "offset", "array_dim", "supported", "value", "enum", "error", "struct_path", "total_count", "element_struct_path", "components", "items", "partial"])
-                    self.assertEqual(contract["component_count"], "reflected")
-                    self.assertEqual(contract["properties_size"], "reflected")
-                    self.assertTrue(contract["own_fields_only"])
-                    self.assertFalse(contract["current_checked"])
-                    array_contract = capabilities.structured_content["array_values"]
-                    self.assertEqual(array_contract["struct_value_shape"], "object")
-                    self.assertEqual(array_contract["struct_metadata_field"], "element_struct")
-                    self.assertEqual(array_contract["struct_metadata_fields"], list(struct_array["element_struct"]))
-                    self.assertFalse(array_contract["multiple_pages_atomic"])
-                    self.assertFalse(array_contract["current_checked"])
-                    for name in ("g1r_read_array", "g1r_read_struct"):
+                    self.assertEqual(capabilities.structured_content["accepted_types"], {})
+                    self.assertEqual(capabilities.structured_content["capabilities"]["target_abi"]["state"], "unverified")
+                    contracts = {entry["name"]: entry for entry in capabilities.structured_content["tool_contracts"]}
+                    for name in ("sn2_read_array", "sn2_read_struct"):
+                        contract = contracts[name]
+                        self.assertIn("current_game_tick", contract["context"]["requires"])
+                        self.assertEqual(contract["source"]["verification_kind"], "source")
+                        self.assertFalse(contract["availability"]["checked"])
+                    for name in ("sn2_read_array", "sn2_read_struct"):
                         annotations = tools[name].annotations
                         self.assertTrue(annotations.read_only_hint)
                         self.assertFalse(annotations.destructive_hint)
                         self.assertTrue(annotations.idempotent_hint)
                     for tool, params, expected in (
-                        ("g1r_read_array", {"handle": "obj-pod", "property_name": "Numbers", "offset": 200, "limit": 200}, page),
-                        ("g1r_read_array", {"handle": "obj-pod", "property_name": "EmptyNames"}, empty),
-                        ("g1r_read_array", {"handle": "obj-pod", "property_name": "Positions2D", "offset": 2, "limit": 2}, struct_array),
-                        ("g1r_read_struct", {"handle": "obj-pod", "property_name": "StoredVector"}, struct),
-                        ("g1r_read_struct", {"handle": "obj-pod", "property_name": "StoredVector2D"}, vector2d),
+                        ("sn2_read_array", {"handle": "obj-pod", "property_name": "Numbers", "offset": 200, "limit": 200}, page),
+                        ("sn2_read_array", {"handle": "obj-pod", "property_name": "EmptyNames"}, empty),
+                        ("sn2_read_array", {"handle": "obj-pod", "property_name": "Positions2D", "offset": 2, "limit": 2}, struct_array),
+                        ("sn2_read_struct", {"handle": "obj-pod", "property_name": "StoredVector"}, struct),
+                        ("sn2_read_struct", {"handle": "obj-pod", "property_name": "StoredVector2D"}, vector2d),
                     ):
                         response = await client.call_tool(tool, params)
                         self.assertFalse(response.is_error, response.content)
                         self.assertEqual(response.structured_content, expected)
-                    denied = await client.call_tool("g1r_read_struct", {"handle": "obj-pod", "property_name": "NestedTransform"})
+                    denied = await client.call_tool("sn2_read_struct", {"handle": "obj-pod", "property_name": "NestedTransform"})
                     self.assertTrue(denied.is_error, denied.content)
                     text = next(block.text for block in denied.content if block.type == "text")
                     error = json.loads(text[text.index("{"):])
@@ -177,7 +171,7 @@ class MCPPODReadTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["effect"], no_effect)
                     self.assertEqual(error["request_id"], native.requests[5]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

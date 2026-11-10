@@ -120,7 +120,7 @@ async def exercise(call):
     report = {"checks": [], "calls": [], "rejections": [], "cleanup": [], "reflected_functions": {},
               "native_math": {}, "game_launched": False, "dll_loaded": False, "const_ref": "not_tested", "color_out": "not_tested"}
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Tick and the native session were not confirmed")
@@ -128,7 +128,7 @@ async def exercise(call):
         async def find(native=False):
             host = NATIVE_CLASS if native else HOST
             path = NATIVE_PATH if native else "/Script/Angelscript.Default__" + HOST
-            result = await call("g1r_find_objects", {"query": "Default__" + host, "class_query": host, "exact_path": path, "limit": 2})
+            result = await call("sn2_find_objects", {"query": "Default__" + host, "class_query": host, "exact_path": path, "limit": 2})
             if result.get("truncated") is not False or not isinstance(result.get("items"), list) or len(result["items"]) != 1:
                 raise ProbeError("probe_object_absent", "The exact LinearColor/math CDO was not uniquely found")
             item = result["items"][0]
@@ -140,7 +140,7 @@ async def exercise(call):
         target = await find()
         handle, methods, tokens = target["handle"], {}, {}
         for name in METHODS:
-            listing = await call("g1r_object_functions", {"handle": handle, "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": handle, "function_query": name, "limit": 10})
             report["reflected_functions"][name] = listing
             methods[name], tokens[name] = check_signature(listing, name)
         if len(set(tokens.values())) != len(tokens): raise ProbeError("probe_signature_token_alias", "Different LinearColor methods received the same token")
@@ -148,7 +148,7 @@ async def exercise(call):
         async def invoke(name, arguments=None, *, expected_error=None):
             supplied = {} if arguments is None else arguments
             json.dumps(supplied, allow_nan=False)
-            return await call("g1r_invoke", {"handle": handle, "function": name, "arguments": supplied,
+            return await call("sn2_invoke", {"handle": handle, "function": name, "arguments": supplied,
                               "expected_signature_token": tokens[name]}, expected_error=expected_error)
 
         def scalar(result, kind, value):
@@ -204,7 +204,7 @@ async def exercise(call):
         native = await find(native=True)
         native_methods = {}
         for name in NATIVE_METHODS:
-            listing = await call("g1r_object_functions", {"handle": native["handle"], "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": native["handle"], "function_query": name, "limit": 10})
             report["native_math"][name] = {"reflected_functions": listing, "tested": False}
             try:
                 native_methods[name] = check_signature(listing, name, native=True)
@@ -221,14 +221,14 @@ async def exercise(call):
             if set(by_axis) != set(STORED):
                 report["native_math"]["MakeColor"].update(status="unsupported_not_tested", reason="Native MakeColor did not confirm R/G/B/A input names")
             else:
-                result = await call("g1r_invoke", {"handle": native["handle"], "function": "MakeColor", "arguments": STORED, "expected_signature_token": token})
+                result = await call("sn2_invoke", {"handle": native["handle"], "function": "MakeColor", "arguments": STORED, "expected_signature_token": token})
                 color_result(result, STORED)
                 report["native_math"]["MakeColor"].update(tested=True, result=result["result"], signature_token=token)
         if "LinearColor_ToNewOpacity" in native_methods:
             method, token = native_methods["LinearColor_ToNewOpacity"]
             color_field = next(field for field in method["parameters"] if field["return"] is False and field["type"] == "StructProperty")
             alpha_field = next(field for field in method["parameters"] if field["return"] is False and field["type"] != "StructProperty")
-            result = await call("g1r_invoke", {"handle": native["handle"], "function": "LinearColor_ToNewOpacity",
+            result = await call("sn2_invoke", {"handle": native["handle"], "function": "LinearColor_ToNewOpacity",
                 "arguments": {color_field["name"]: STORED, alpha_field["name"]: 0.75}, "expected_signature_token": token})
             color_result(result, {**STORED, "A": 0.75})
             report["native_math"]["LinearColor_ToNewOpacity"].update(tested=True, result=result["result"], signature_token=token)

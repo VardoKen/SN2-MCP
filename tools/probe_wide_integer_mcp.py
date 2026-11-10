@@ -117,11 +117,11 @@ async def exercise(call) -> dict:
     report = {"checks": [], "successes": {}, "rejections": {}, "cleanup": [],
               "game_launched": False, "dll_loaded": False}
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Ready game thread in the current native session is not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
+        found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
                                                 "path_query": "/Script/Angelscript.Default__" + HOST, "limit": 2})
         if (not isinstance(found.get("items"), list) or len(found["items"]) != 1
                 or found.get("truncated") is not False):
@@ -130,13 +130,13 @@ async def exercise(call) -> dict:
         handle = target["handle"]
         tokens = {}
         for method_name in METHODS:
-            functions = await call("g1r_object_functions", {"handle": handle, "function_query": method_name, "limit": 10})
+            functions = await call("sn2_object_functions", {"handle": handle, "function_query": method_name, "limit": 10})
             _, tokens[method_name] = check_signature(functions, method_name)
         if len(set(tokens.values())) != len(tokens):
             raise ProbeError("probe_signature_token_alias", "Different owned methods received the same token")
 
         async def invoke(method_name, value=None, *, expected_error=None):
-            return await call("g1r_invoke", {"handle": handle, "function": method_name,
+            return await call("sn2_invoke", {"handle": handle, "function": method_name,
                               "arguments": {"Input": value} if METHODS[method_name][0] else {},
                               "expected_signature_token": tokens[method_name]}, expected_error=expected_error)
 
@@ -191,7 +191,7 @@ async def run(args) -> dict:
                 initialized = await session.initialize()
                 return {"server_version": initialized.server_info.version, **await exercise(make_caller(session))}
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)],
         cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):

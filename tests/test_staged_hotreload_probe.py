@@ -29,19 +29,19 @@ class HotReloadFixture(HelpersFixture):
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments), expected_error))
-        if name == "g1r_development_processes":
+        if name == "sn2_development_processes":
             return {"processes": [self.process], "launch_observation": {"launch_id": "new" if self.change_owner and self.writes else "launch25",
                 "stage": "process_running", "outcome_unknown": False, "process": self.process, "development_staging": {
                     "relative_directory": "artifacts/development-sessions/session123", "edit_target": "staged_copy_only", "packages": [{
                         "role": "companion", "package_name": probe.HOST, "source_package_path": probe.SOURCE_PACKAGE, "relative_package": self.package}]}}}
-        if name == "g1r_native_status": return {"ready": True, "session_id": "native25", "process_id": 25}
-        if name == "g1r_find_objects": return {"items": [self.helper_cdo, self.helper], "truncated": False}
-        if name == "g1r_read_package_file_exact":
+        if name == "sn2_native_status": return {"ready": True, "session_id": "native25", "process_id": 25}
+        if name == "sn2_find_objects": return {"items": [self.helper_cdo, self.helper], "truncated": False}
+        if name == "sn2_read_package_file_exact":
             source = arguments["relative_path"] == probe.SOURCE_PACKAGE
             text = self.source if source else self.staged
             return {"package_path": arguments["relative_path"], "file_path": probe.FILE, "text": text,
                 "text_mode": "exact", "truncated": False, "bytes": len(text.encode()), "sha256": hashlib.sha256(text.encode()).hexdigest()}
-        if name == "g1r_write_package_file":
+        if name == "sn2_write_package_file":
             if arguments["relative_path"] != self.package: raise AssertionError("source edit forbidden")
             if arguments["expected_sha256"] != hashlib.sha256(self.staged.encode()).hexdigest(): raise probe.ProbeError("write_conflict", "CAS conflict")
             self.staged = arguments["content"]
@@ -49,11 +49,11 @@ class HotReloadFixture(HelpersFixture):
             if not self.no_reload: self.runtime = probe.VERSION_BODY.search(self.staged).group(2)
             if self.mutate_source: self.source += "// foreignchange\n"
             return {"written": True, "sha256": hashlib.sha256(self.staged.encode()).hexdigest()}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             result = self.helper_functions(arguments["function_query"])
             result["items"][0]["signature_token"] = "sig-" + str(100 + len(self.writes) + self.version_reads)
             return result
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             if arguments["function"] != "GetHelperVersion" or arguments["handle"] != self.helper["handle"]: raise AssertionError("unexpected invoke")
             self.version_reads += 1
             if self.external_edit and self.writes: self.staged += "// foreignedit\n"
@@ -76,7 +76,7 @@ class StagedHotReloadProbeTests(unittest.TestCase):
         self.assertEqual(report["observations"][-1]["result"], "1.0.0-dev.26")
         self.assertEqual(report["source_sha256"], report["source_after_sha256"])
         self.assertTrue(report["restore_attempted"])
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"} for name, _, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"} for name, _, _ in fixture.calls))
 
     def test_no_runtime_reload_restores_once_and_retains_primary(self):
         fixture = HotReloadFixture(no_reload=True)
@@ -100,7 +100,7 @@ class StagedHotReloadProbeTests(unittest.TestCase):
     def test_restore_failure_contains_full_probe_report(self):
         fixture = HotReloadFixture()
         async def call(name, arguments, **kwargs):
-            if name == "g1r_write_package_file" and fixture.writes:
+            if name == "sn2_write_package_file" and fixture.writes:
                 raise probe.ProbeError("restore_failure", "restore unavailable")
             return await fixture.call(name, arguments, **kwargs)
         with self.assertRaises(probe.ProbeError) as caught:
@@ -115,7 +115,7 @@ class StagedHotReloadProbeTests(unittest.TestCase):
         fixture = HotReloadFixture()
         async def call(name, arguments, **kwargs):
             result = await fixture.call(name, arguments, **kwargs)
-            if name == "g1r_write_package_file" and len(fixture.writes) == 1:
+            if name == "sn2_write_package_file" and len(fixture.writes) == 1:
                 return {"written": False}
             return result
         with self.assertRaises(probe.ProbeError) as caught:
@@ -133,7 +133,7 @@ class StagedHotReloadProbeTests(unittest.TestCase):
     def test_compiler_templates_are_ignored_and_current_helper_is_refreshed(self):
         fixture = HotReloadFixture()
         async def call(name, arguments, **kwargs):
-            if name == "g1r_find_objects" and fixture.writes:
+            if name == "sn2_find_objects" and fixture.writes:
                 fixture.helper = {**fixture.helper, "handle": "obj-helper-reloaded"}
                 result = await fixture.call(name, arguments, **kwargs)
                 result["items"].insert(0, {"handle": "obj-template", "class": probe.HOST,
@@ -147,7 +147,7 @@ class StagedHotReloadProbeTests(unittest.TestCase):
     def test_missing_helper_after_edit_still_restores_file(self):
         fixture = HotReloadFixture()
         async def call(name, arguments, **kwargs):
-            if name == "g1r_find_objects" and fixture.writes:
+            if name == "sn2_find_objects" and fixture.writes:
                 return {"items": [fixture.helper_cdo], "truncated": False}
             return await fixture.call(name, arguments, **kwargs)
         with self.assertRaises(probe.ProbeError) as caught:

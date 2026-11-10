@@ -75,10 +75,10 @@ class TransformFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments), expected_error))
-        if name == "g1r_native_status": return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects": return {"items": [self.target], "truncated": False}
-        if name == "g1r_object_functions": return self.functions(arguments["function_query"])
-        if name != "g1r_invoke": raise AssertionError((name, arguments))
+        if name == "sn2_native_status": return {"ready": True, "session_id": "native-owner"}
+        if name == "sn2_find_objects": return {"items": [self.target], "truncated": False}
+        if name == "sn2_object_functions": return self.functions(arguments["function_query"])
+        if name != "sn2_invoke": raise AssertionError((name, arguments))
         method = arguments["function"]
         if arguments["expected_signature_token"] != self.tokens[method]: raise AssertionError("wrong token")
         if expected_error:
@@ -130,7 +130,7 @@ class TransformProbeTests(unittest.TestCase):
         self.assertIn("semantic equivalence", report["rotation_verification"])
         self.assertEqual(report["euler_tolerance_degrees"], 1e-4)
         self.assertEqual(report["transform_return"], "not_tested")
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"} for name, _, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"} for name, _, _ in fixture.calls))
 
     def test_canonical_nested_metadata_is_strict(self):
         for alteration in ("rootpath", "rootsize", "rootalignment", "missingmember", "duplicatemember", "offset", "width", "array",
@@ -193,7 +193,7 @@ class TransformProbeTests(unittest.TestCase):
             value = {**probe.IDENTITY, "Rotation": quat}
             self.assertFalse(fixture.valid_transform(value))
             arguments = {"function": "AcceptTransform", "arguments": {"Input": value}, "expected_signature_token": fixture.tokens["AcceptTransform"]}
-            with self.assertRaises(AssertionError): asyncio.run(fixture.call("g1r_invoke", arguments, expected_error="missing_argument"))
+            with self.assertRaises(AssertionError): asyncio.run(fixture.call("sn2_invoke", arguments, expected_error="missing_argument"))
 
     def test_euler_tolerance_and_exact_component_type_checks(self):
         probe.check_euler({"X": 0.00005, "Y": 90.00005, "Z": -0.00005}, {"X": 0, "Y": 90, "Z": 0})
@@ -214,14 +214,14 @@ class TransformProbeTests(unittest.TestCase):
         async def scenario(code):
             fixture = TransformFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "AcceptTransform":
+                if name == "sn2_invoke" and arguments["function"] == "AcceptTransform":
                     await fixture.call(name, arguments)
                     raise probe.ProbeError(code, "Результат неизвестен")
                 return await fixture.call(name, arguments, expected_error=expected_error)
             with self.assertRaises(probe.ProbeError) as caught: await probe.exercise(call)
             self.assertEqual(caught.exception.code, code)
             self.assertEqual(fixture.resets, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "AcceptTransform" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "AcceptTransform" for name, args, _ in fixture.calls), 1)
         for code in probe.UNKNOWN_GAME:
             with self.subTest(code=code): asyncio.run(scenario(code))
 
@@ -230,10 +230,10 @@ class TransformProbeTests(unittest.TestCase):
             fixture = TransformFixture()
             started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "AcceptTransform":
+                if name == "sn2_invoke" and arguments["function"] == "AcceptTransform":
                     await fixture.call(name, arguments)
                     raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     started.set()
                     await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -248,7 +248,7 @@ class TransformProbeTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(fixture.resets, 1)
             self.assertEqual(fixture.stored, probe.IDENTITY)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "AcceptTransform" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "AcceptTransform" for name, args, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
 

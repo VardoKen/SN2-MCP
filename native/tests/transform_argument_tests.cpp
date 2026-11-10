@@ -1,4 +1,4 @@
-#include <g1r_mcp/transform_arguments.hpp>
+#include <sn2_mcp/transform_arguments.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -10,12 +10,12 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::transform_layout::Layout;
+using sn2_mcp::transform_layout::Layout;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action>void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ аргумента Transform");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Ошибка Transform должна явно исключать исполнение");return;
@@ -35,11 +35,11 @@ json value() {
             {"Translation",{{"X",1.25},{"Y",-2.5},{"Z",3.75}}},
             {"Scale3D",{{"X",1.0},{"Y",2.0},{"Z",-3.0}}}};
 }
-double number(const g1r_mcp::transform_arguments::EncodedTransform& encoded,int offset) {
+double number(const sn2_mcp::transform_arguments::EncodedTransform& encoded,int offset) {
     double result{};std::memcpy(&result,encoded.bytes.data()+offset,sizeof(result));return result;
 }
 void copied_correctly(const Layout& layout,const json& source) {
-    const auto encoded=g1r_mcp::transform_arguments::encode(layout,source);
+    const auto encoded=sn2_mcp::transform_arguments::encode(layout,source);
     require(encoded.size==96,"Transform должен занимать ровно 96 байтов");
     for(const auto& component:layout.rotation.components)
         require(number(encoded,component.offset)==source["Rotation"][component.name].get<double>(),
@@ -56,7 +56,7 @@ void copied_correctly(const Layout& layout,const json& source) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const auto canonical=layout();const auto identity=value();copied_correctly(canonical,identity);
         auto integers=identity;integers["Rotation"]={{"X",0},{"Y",0},{"Z",0},{"W",1}};

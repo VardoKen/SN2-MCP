@@ -45,9 +45,9 @@ class LifecycleCalls:
 
     async def call(self, name, args):
         self.calls.append((name, args))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             class_name = args["class_query"]
             if class_name == live.TOOL:
                 self.samples += 1
@@ -57,18 +57,18 @@ class LifecycleCalls:
             return {"items": items, "truncated": False}
         target = next(item for item in self.targets.values() if item["handle"] == args.get("handle", args.get("targets", [{}])[0].get("handle")))
         config = live.CLASSES[target["class"]]
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return {"truncated": False, "scan_complete": True,
                     "items": [{"name": method, "parameter_size": 4, "parameters_truncated": False, "parameters": [
                 {"name": "ReturnValue", "return": True, "reference": False, "array_dim": 1, "type": "IntProperty", "element_size": 4, "offset": 0}]}
                 for method in ("ReadMarker", *config["fields"].values())]}
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = args["function"]
             if method not in live.READ_METHODS:
                 raise AssertionError("Lifecycle callback вызван вручную")
             value = config["marker"] if method == "ReadMarker" else self.counts(target)[next(field for field, reader in config["fields"].items() if reader == method)]
             return {"executed": True, "result": value}
-        if name == "g1r_snapshot":
+        if name == "sn2_snapshot":
             properties = [{"name": field, "type": "IntProperty", "supported": True, "value": value}
                           for field, value in self.counts(target).items()]
             if self.missing_value:
@@ -107,7 +107,7 @@ class LifecycleProbeTests(unittest.TestCase):
         self.assertEqual(report["world"]["status"], "not_tested")
         self.assertFalse(report["world"]["ready_for_play_confirmed"])
         self.assertFalse(report["callbacks_invoked_manually"])
-        self.assertTrue(all(args["function"] in live.READ_METHODS for name, args in fixture.calls if name == "g1r_invoke"))
+        self.assertTrue(all(args["function"] in live.READ_METHODS for name, args in fixture.calls if name == "sn2_invoke"))
 
     def test_only_cdo_or_zero_live_counter_never_claims_completed(self):
         for fixture in (LifecycleCalls(tool_exists=False), LifecycleCalls(trigger_after=99)):
@@ -135,7 +135,7 @@ class LifecycleProbeTests(unittest.TestCase):
         original_call = fixture.call
 
         async def race_call(name, arguments):
-            if name == "g1r_invoke" and arguments["function"] == "ReadInitializeCount":
+            if name == "sn2_invoke" and arguments["function"] == "ReadInitializeCount":
                 target = next(item for item in fixture.targets.values() if item["handle"] == arguments["handle"])
                 if not target["name"].startswith("Default__"):
                     fixture.trigger_after = 1
@@ -152,11 +152,11 @@ class LifecycleProbeTests(unittest.TestCase):
 
             async def incomplete(name, arguments):
                 result = await original_call(name, arguments)
-                if mode == "scan_complete" and name == "g1r_object_functions":
+                if mode == "scan_complete" and name == "sn2_object_functions":
                     result.pop("scan_complete")
-                if mode == "array_dim" and name == "g1r_object_functions":
+                if mode == "array_dim" and name == "sn2_object_functions":
                     result["items"][0]["parameters"][0].pop("array_dim")
-                if mode == "object_partial" and name == "g1r_snapshot":
+                if mode == "object_partial" and name == "sn2_snapshot":
                     result["objects"][0].pop("partial")
                 return result
 

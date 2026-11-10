@@ -5,7 +5,7 @@ import json
 import sys
 import time
 
-from g1r_mcp.native_client import NativeClient, NativeError
+from sn2_mcp.native_client import NativeClient, NativeError
 
 
 def main():

@@ -1,4 +1,4 @@
-#include <g1r_mcp/as_exception_capture.hpp>
+#include <sn2_mcp/as_exception_capture.hpp>
 #include <Windows.h>
 
 #include <iostream>
@@ -12,7 +12,7 @@ void require(bool good,const char* message) {++checks;if(!good)throw std::runtim
 
 void record_text(const std::string& text) {
     const auto begin=reinterpret_cast<std::uintptr_t>(text.c_str());
-    g1r_mcp::as_exception_capture::record(text.c_str(),[&](std::uintptr_t address,char& value) {
+    sn2_mcp::as_exception_capture::record(text.c_str(),[&](std::uintptr_t address,char& value) {
         if(address<begin || address>begin+text.size())return false;
         value=*reinterpret_cast<const char*>(address);return true;
     });
@@ -20,7 +20,7 @@ void record_text(const std::string& text) {
 
 constexpr DWORD logger_fault_code=0xe1474343;
 __declspec(noinline) void raise_logger_fault() {
-    g1r_mcp::as_exception_capture::LoggerScope logger;
+    sn2_mcp::as_exception_capture::LoggerScope logger;
     RaiseException(logger_fault_code,0,0,nullptr);
 }
 
@@ -33,7 +33,7 @@ __declspec(noinline) bool catch_logger_fault() noexcept {
 }
 
 int main() {
-    using namespace g1r_mcp::as_exception_capture;
+    using namespace sn2_mcp::as_exception_capture;
     static_assert(!std::is_copy_constructible_v<Scope> && !std::is_copy_assignable_v<Scope>);
     static_assert(!std::is_copy_constructible_v<LoggerScope> && !std::is_copy_assignable_v<LoggerScope>);
     try {

@@ -9,7 +9,7 @@ import unittest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from test_mcp_observations import SessionNativeFixture, watch_metadata
+from tests.test_mcp_observations import SessionNativeFixture, watch_metadata
 
 
 SESSION = "fixture-session-1"
@@ -62,8 +62,7 @@ class MCPObjectTests(unittest.IsolatedAsyncioTestCase):
         workspace.mkdir()
         return StdioServerParameters(
             command=sys.executable,
-            args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                  "--workspace-root", str(workspace), "--native-port", str(port)],
+            args=["-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(port)],
         )
 
     async def call_ok(self, client, name, parameters, expected):
@@ -119,34 +118,34 @@ class MCPObjectTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(self.parameters(Path(directory), native.port)) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    functions = await self.call_ok(client, "g1r_object_functions", {"handle": "obj-1"}, signature)
+                    functions = await self.call_ok(client, "sn2_object_functions", {"handle": "obj-1"}, signature)
                     method = functions["items"][0]
                     self.assertEqual(method["parameter_size"], 8)
                     self.assertEqual(method["parameters"][1]["offset"] + method["parameters"][1]["element_size"], 16)
-                    await self.call_ok(client, "g1r_invoke", echo_params, invoked("EchoObject", reference))
-                    await self.call_ok(client, "g1r_invoke", null_params, invoked("EchoObject", None))
-                    before = await self.call_ok(client, "g1r_snapshot", {"targets": targets}, initial)
-                    after = await self.call_ok(client, "g1r_snapshot", {"targets": targets}, selected)
-                    unchanged = await self.call_ok(client, "g1r_snapshot", {"targets": targets}, stable)
+                    await self.call_ok(client, "sn2_invoke", echo_params, invoked("EchoObject", reference))
+                    await self.call_ok(client, "sn2_invoke", null_params, invoked("EchoObject", None))
+                    before = await self.call_ok(client, "sn2_snapshot", {"targets": targets}, initial)
+                    after = await self.call_ok(client, "sn2_snapshot", {"targets": targets}, selected)
+                    unchanged = await self.call_ok(client, "sn2_snapshot", {"targets": targets}, stable)
                     originals = copy.deepcopy((before, after, unchanged))
-                    difference = await client.call_tool("g1r_compare_snapshots", {"before": before, "after": after})
+                    difference = await client.call_tool("sn2_snapshot_compare", {"before": before, "after": after})
                     self.assertFalse(difference.is_error, difference.content)
                     self.assertEqual(difference.structured_content["value_changes"], 1)
                     self.assertEqual(difference.structured_content["type_changes"], 0)
                     self.assertEqual(difference.structured_content["unknown_count"], 0)
                     self.assertFalse(difference.structured_content["equal_selected_values"])
-                    same = await client.call_tool("g1r_compare_snapshots", {"before": after, "after": unchanged})
+                    same = await client.call_tool("sn2_snapshot_compare", {"before": after, "after": unchanged})
                     self.assertFalse(same.is_error, same.content)
                     self.assertEqual(same.structured_content["items"], [])
                     self.assertTrue(same.structured_content["equal_selected_values"])
                     self.assertEqual((before, after, unchanged), originals)
-                    await self.call_ok(client, "g1r_watch_start", watch_params, started)
-                    events = await self.call_ok(client, "g1r_watch_read", {"watch_id": "watch-1"}, running)
+                    await self.call_ok(client, "sn2_watch_start", watch_params, started)
+                    events = await self.call_ok(client, "sn2_watch_read", {"watch_id": "watch-1"}, running)
                     self.assertEqual([event["kind"] for event in events["events"]], ["baseline", "changed", "changed"])
                     values = [event["snapshot"]["objects"][0]["properties"][0]["value"] for event in events["events"]]
                     self.assertEqual(values, [None, reference, None])
-                    await self.call_ok(client, "g1r_watch_stop", {"watch_id": "watch-1"}, stopped)
-                    await self.call_ok(client, "g1r_watch_forget", {"watch_id": "watch-1"}, forgotten)
+                    await self.call_ok(client, "sn2_watch_stop", {"watch_id": "watch-1"}, stopped)
+                    await self.call_ok(client, "sn2_watch_forget", {"watch_id": "watch-1"}, forgotten)
             self.assertEqual(native.connections, 1)
             self.assertEqual(len(native.requests), 10)  # Сравнение копий не создаёт игровых команд.
             self.assertEqual(len({request["id"] for request in native.requests}), 10)
@@ -171,14 +170,14 @@ class MCPObjectTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(self.parameters(Path(directory), native.port)) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    rejected = await self.call_error(client, "g1r_invoke", incompatible, "incompatible_object_argument")
+                    rejected = await self.call_error(client, "sn2_invoke", incompatible, "incompatible_object_argument")
                     self.assertEqual(rejected["request_id"], native.requests[0]["id"])
-                    await self.call_ok(client, "g1r_invoke", compatible, invoked("EchoTypedObject", reference))
-                    lost = await self.call_error(client, "g1r_invoke", compatible, "native_disconnected")
+                    await self.call_ok(client, "sn2_invoke", compatible, invoked("EchoTypedObject", reference))
+                    lost = await self.call_error(client, "sn2_invoke", compatible, "native_disconnected")
                     self.assertTrue(lost["may_have_executed"])
                     self.assertEqual(lost["request_id"], native.requests[2]["id"])
-                    await self.call_ok(client, "g1r_native_status", {}, status)
-                    stale = await self.call_error(client, "g1r_invoke", old, "stale_handle")
+                    await self.call_ok(client, "sn2_native_status", {}, status)
+                    stale = await self.call_error(client, "sn2_invoke", old, "stale_handle")
                     self.assertEqual(stale["request_id"], native.requests[4]["id"])
             self.assertEqual(native.connections, 2)
             self.assertEqual([request["op"] for request in native.requests], ["invoke", "invoke", "invoke", "status", "invoke"])

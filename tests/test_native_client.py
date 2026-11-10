@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from g1r_mcp.native_client import MAX_FRAME_BYTES, NativeClient, NativeError
+from sn2_mcp.native_client import MAX_FRAME_BYTES, NativeClient, NativeError
 
 
 def receive(stream, count):
@@ -337,7 +337,7 @@ class NativeClientTests(unittest.TestCase):
             self.assertEqual(server.accepted, 1)
 
     def test_connection_refused_is_not_execution(self):
-        with NativeClient(timeout=0.3) as client, patch("g1r_mcp.native_client.socket.socket") as opened:
+        with NativeClient(timeout=0.3) as client, patch("sn2_mcp.native_client.socket.socket") as opened:
             opened.return_value.connect.side_effect = ConnectionRefusedError()
             with self.assertRaises(NativeError) as caught:
                 client.status()
@@ -346,7 +346,7 @@ class NativeClientTests(unittest.TestCase):
             opened.return_value.sendall.assert_not_called()
 
     def test_connect_timeout_has_no_execution_or_send(self):
-        with NativeClient(timeout=0.1) as client, patch("g1r_mcp.native_client.socket.socket") as opened:
+        with NativeClient(timeout=0.1) as client, patch("sn2_mcp.native_client.socket.socket") as opened:
             opened.return_value.connect.side_effect = socket.timeout()
             with self.assertRaises(NativeError) as caught:
                 client.status()
@@ -360,7 +360,7 @@ class NativeClientTests(unittest.TestCase):
                        {"port": 80}, {"timeout": float("inf")}, {"timeout": False}):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 NativeClient(**values)
-        with NativeClient(timeout=6) as client, patch("g1r_mcp.native_client.socket.socket") as opened:
+        with NativeClient(timeout=6) as client, patch("sn2_mcp.native_client.socket.socket") as opened:
             self.assertEqual(client.timeout, 6)
             for operation, params in (("", {}), ("\ud800", {}), ("x", [])):
                 with self.subTest(operation=operation[:10]), self.assertRaises(ValueError):

@@ -62,15 +62,15 @@ class ObjectProbeCallFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, arguments))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "fixture-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.targets[arguments["class_query"]]]}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return {"items": [signature(method) for method in live.SIGNATURES]}
-        if name == "g1r_snapshot":
+        if name == "sn2_snapshot":
             return self.snapshot()
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method, args = arguments["function"], arguments["arguments"]
             called_target = next(item for item in self.targets.values() if item["handle"] == arguments["handle"])
             if method == "ReadMarker":
@@ -95,19 +95,19 @@ class ObjectProbeCallFixture:
                 if self.watch:
                     self.changed = self.snapshot()
                 return {"executed": True, "result": None}
-        if name == "g1r_watch_start":
+        if name == "sn2_watch_start":
             self.watch = True
             self.baseline = self.snapshot()
             return {"watch_id": "watch-1"}
-        if name == "g1r_watch_read":
+        if name == "sn2_watch_read":
             return {"dropped_events": 0, "gap": False, "last_seq": 2, "events": [
                 {"kind": "baseline", "snapshot": self.baseline}, {"kind": "changed", "snapshot": self.changed}]}
-        if name == "g1r_compare_snapshots":
+        if name == "sn2_compare_snapshots":
             return {"value_changes": 2}
-        if name == "g1r_watch_stop":
+        if name == "sn2_watch_stop":
             self.watch = False
             return {"cleanup_complete": True, "state": "stopped"}
-        if name == "g1r_watch_forget":
+        if name == "sn2_watch_forget":
             return {"forgotten": True, "cleanup_complete": True}
         raise AssertionError((name, arguments))
 
@@ -224,9 +224,9 @@ class ObjectProbeTests(unittest.TestCase):
         self.assertEqual(fixture.fields, {"StoredObject": None, "StoredTypedObject": None})
         self.assertFalse(fixture.watch)
         self.assertEqual(report["class_mismatch"]["code"], "incompatible_object_argument")
-        self.assertEqual(report["cleanup"], ["StoreObject", "StoreTypedObject", "restored_null_snapshot", "g1r_watch_stop", "g1r_watch_forget"])
+        self.assertEqual(report["cleanup"], ["StoreObject", "StoreTypedObject", "restored_null_snapshot", "sn2_watch_stop", "sn2_watch_forget"])
         self.assertIn("object_properties_snapshots_watch_change_and_stability", report["checks"])
-        mismatch = [arguments for name, arguments in fixture.calls if name == "g1r_invoke"
+        mismatch = [arguments for name, arguments in fixture.calls if name == "sn2_invoke"
                     and arguments["function"] == "EchoTypedObject"
                     and arguments["arguments"].get("Input") == {"handle": "obj-3"}]
         self.assertEqual(len(mismatch), 1)
@@ -237,7 +237,7 @@ class ObjectProbeTests(unittest.TestCase):
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(captured.exception.code, "isolated_failure")
         self.assertEqual(fixture.fields, {"StoredObject": None, "StoredTypedObject": None})
-        echo_calls = [arguments for name, arguments in fixture.calls if name == "g1r_invoke" and arguments["function"] == "EchoObject"]
+        echo_calls = [arguments for name, arguments in fixture.calls if name == "sn2_invoke" and arguments["function"] == "EchoObject"]
         self.assertEqual(len(echo_calls), 1)
         cleanup_calls = fixture.calls[-3:-1]
         self.assertEqual([arguments["function"] for name, arguments in cleanup_calls], ["StoreObject", "StoreTypedObject"])
@@ -250,23 +250,23 @@ class ObjectProbeTests(unittest.TestCase):
             async def call(name, arguments, **keywords):
                 nonlocal stopping
                 result = await fixture.call(name, arguments, **keywords)
-                if name == "g1r_compare_snapshots":
+                if name == "sn2_compare_snapshots":
                     stopping = True
                 if stopping:
-                    if mode == "setter" and name == "g1r_invoke" and arguments["function"] == "StoreObject":
+                    if mode == "setter" and name == "sn2_invoke" and arguments["function"] == "StoreObject":
                         return {"executed": False}
-                    if mode == "stop" and name == "g1r_watch_stop":
+                    if mode == "stop" and name == "sn2_watch_stop":
                         return {"cleanup_complete": True, "state": "running"}
-                    if mode == "forget" and name == "g1r_watch_forget":
+                    if mode == "forget" and name == "sn2_watch_forget":
                         return {"cleanup_complete": True, "forgotten": False}
-                    if mode == "snapshot" and name == "g1r_snapshot":
+                    if mode == "snapshot" and name == "sn2_snapshot":
                         result["objects"][0]["properties"][0].pop("value")
                 return result
 
             with self.subTest(mode=mode), self.assertRaises(live.ProbeError) as captured:
                 asyncio.run(live.exercise(call))
             self.assertEqual(captured.exception.code, "probe_cleanup_failed")
-            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["g1r_watch_stop", "g1r_watch_forget"])
+            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["sn2_watch_stop", "sn2_watch_forget"])
 
     def test_repeated_cancellation_during_cleanup_keeps_all_steps(self):
         async def scenario():
@@ -277,9 +277,9 @@ class ObjectProbeTests(unittest.TestCase):
             async def call(name, arguments, **keywords):
                 nonlocal stopping
                 result = await fixture.call(name, arguments, **keywords)
-                if name == "g1r_compare_snapshots":
+                if name == "sn2_compare_snapshots":
                     stopping = True
-                elif stopping and name == "g1r_invoke" and arguments["function"] == "StoreObject":
+                elif stopping and name == "sn2_invoke" and arguments["function"] == "StoreObject":
                     started.set()
                     await release.wait()
                 return result
@@ -294,7 +294,7 @@ class ObjectProbeTests(unittest.TestCase):
                 await task
             self.assertFalse(fixture.watch)
             self.assertEqual(fixture.fields, {name: None for name in live.PROPERTIES})
-            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["g1r_watch_stop", "g1r_watch_forget"])
+            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["sn2_watch_stop", "sn2_watch_forget"])
 
         asyncio.run(scenario())
 

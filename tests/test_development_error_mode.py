@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from g1r_mcp.development import CommandResult, DevelopmentError, DevelopmentService
-from g1r_mcp.server import create_server
+from sn2_mcp.development import CommandResult, DevelopmentError, DevelopmentService
+from sn2_mcp.server import create_server
 
 
 def digest(payload):
@@ -24,7 +24,7 @@ class ErrorModeFixture:
         self.root = Path(temporary.name)
         self.repository = self.root / "repository"
         (self.repository / "tools").mkdir(parents=True)
-        for name in ("game_process_state.ps1", "start_g1r_development.ps1"):
+        for name in ("game_process_state.ps1", "start_sn2_development.ps1"):
             (self.repository / "tools" / name).write_text("# executor fixture\n", encoding="utf-8")
         self.workspace = self.root / "workspace"
         self.modkit = self.root / "modkit"
@@ -51,7 +51,7 @@ class ErrorModeFixture:
         script = Path(arguments[arguments.index("-File") + 1]).name
         if script == "game_process_state.ps1":
             return CommandResult(0, json.dumps({"processes": []}))
-        if script == "start_g1r_development.ps1":
+        if script == "start_sn2_development.ps1":
             if "-ModsCsv" in arguments:
                 names = arguments[arguments.index("-ModsCsv") + 1].split(",")
                 result = {"state": "launch_requested", "package_name": None, "mods": names,
@@ -63,7 +63,7 @@ class ErrorModeFixture:
 
     def start_calls(self):
         return [call for call in self.calls
-                if Path(call[call.index("-File") + 1]).name == "start_g1r_development.ps1"]
+                if Path(call[call.index("-File") + 1]).name == "start_sn2_development.ps1"]
 
     def legacy_single_digest(self, manifest):
         return digest({key: manifest[key] for key in (
@@ -156,7 +156,7 @@ class MCPDevelopmentErrorModeTests(ErrorModeFixture, unittest.IsolatedAsyncioTes
     def setUp(self):
         super().setUp()
         self._asyncioRunner.get_loop().slow_callback_duration = 2.0
-        factory = patch("g1r_mcp.server.DevelopmentService", return_value=self.service)
+        factory = patch("sn2_mcp.server.DevelopmentService", return_value=self.service)
         factory.start()
         self.addCleanup(factory.stop)
         self.server = create_server(self.modkit, self.workspace, game_root=self.game)
@@ -170,19 +170,19 @@ class MCPDevelopmentErrorModeTests(ErrorModeFixture, unittest.IsolatedAsyncioTes
         for flag in (False, True):
             arguments = {"relative_package": self.main_path, "companion_packages": [self.helper_path],
                          "show_script_errors": flag}
-            recipe = await self.tool("g1r_development_recipe", arguments)
+            recipe = await self.tool("sn2_development_recipe", arguments)
             self.assertEqual(recipe["manifest"]["launch_options"].get("show_script_errors", False), flag)
-            started = await self.tool("g1r_development_start", {
+            started = await self.tool("sn2_development_start", {
                 **arguments, "expected_manifest_sha256": recipe["manifest"]["manifest_sha256"]})
             self.assertEqual(self.start_calls()[-1].count("-ShowScriptErrors"), int(flag))
             self.assertIs(started["launch_observation"]["compiler_exit_on_error"], not flag)
 
     async def test_tools_strict_bool_rejects_coercion_before_executor(self):
         for value in (0, 1, "true", "false", None, [], {}):
-            for tool in ("g1r_development_recipe", "g1r_development_start"):
+            for tool in ("sn2_development_recipe", "sn2_development_start"):
                 with self.subTest(tool=tool, value=value):
                     arguments = {"relative_package": self.main_path, "show_script_errors": value}
-                    if tool == "g1r_development_start":
+                    if tool == "sn2_development_start":
                         arguments["expected_manifest_sha256"] = "a" * 64
                     calls_before = list(self.calls)
                     with self.assertRaises(ToolError):
@@ -191,13 +191,13 @@ class MCPDevelopmentErrorModeTests(ErrorModeFixture, unittest.IsolatedAsyncioTes
         self.assertFalse((self.workspace / "artifacts").exists())
 
     async def test_true_mode_compiler_report_accepts_recipe_hash_and_binds_source(self):
-        recipe = await self.tool("g1r_development_recipe", {
+        recipe = await self.tool("sn2_development_recipe", {
             "relative_package": self.main_path, "show_script_errors": True})
         manifest = recipe["manifest"]
         source = next(item for item in manifest["files"] if item["path"] == "Script/Entry.as")
         (self.workspace / "compiler-report.txt").write_text(
             "Script/Entry.as (3:2) : Error: isolated diagnostic", encoding="utf-8")
-        result = await self.tool("g1r_compile_diagnostics", {
+        result = await self.tool("sn2_compile_diagnostics", {
             "relative_package": self.main_path, "expected_manifest_sha256": manifest["manifest_sha256"],
             "report_path": "compiler-report.txt", "show_script_errors": True})
         self.assertIs(manifest["launch_options"]["show_script_errors"], True)

@@ -146,23 +146,23 @@ async def exercise(call) -> dict:
     writable_target = None
     active_error = None
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         if not status.get("ready"):
             raise ProbeError("game_not_ready", "The native game queue is not ready")
         session_id = status.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise ProbeError("probe_owner_unknown", "The native session owner was not confirmed")
         for class_name in PROBE_CLASSES:
-            found = await call("g1r_find_objects", {"query": f"Default__{class_name}", "class_query": class_name, "limit": 50})
+            found = await call("sn2_find_objects", {"query": f"Default__{class_name}", "class_query": class_name, "limit": 50})
             exact = [item for item in found.get("items", []) if item.get("name") == f"Default__{class_name}"]
             if len(exact) != 1:
                 raise ProbeError("probe_object_absent", "The exact owned probe CDO was not found")
             target = check_target(exact[0], class_name)
             targets[class_name] = target
-            functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 100})
+            functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 100})
             methods = ["ReadMarker"] if class_name == "G1RMCPOtherObjectProbe" else list(SIGNATURES)
             signature_sets[class_name] = {method: check_signature(functions, method) for method in methods}
-            marker = await call("g1r_invoke", {"handle": target["handle"], "function": "ReadMarker", "arguments": {}})
+            marker = await call("sn2_invoke", {"handle": target["handle"], "function": "ReadMarker", "arguments": {}})
             check_marker(marker, class_name)
         report["checks"].append("three_exact_cdos_signatures_markers")
         base, derived, other = (targets[name] for name in PROBE_CLASSES)
@@ -170,12 +170,12 @@ async def exercise(call) -> dict:
 
         async def invoke(method, value=...):
             arguments = {} if value is ... else {"Input": value}
-            return await call("g1r_invoke", {"handle": base["handle"], "function": method, "arguments": arguments})
+            return await call("sn2_invoke", {"handle": base["handle"], "function": method, "arguments": arguments})
 
         # Baseline normalization is confined to the exact fixture CDO whose signatures were checked.
         await invoke("StoreObject", None)
         await invoke("StoreTypedObject", None)
-        before = await call("g1r_snapshot", {"targets": [{"handle": base["handle"], "properties": PROPERTIES}]})
+        before = await call("sn2_snapshot", {"targets": [{"handle": base["handle"], "properties": PROPERTIES}]})
         if any(value is not None for value in snapshot_values(before, base).values()):
             raise ProbeError("probe_initial_state", "Probe fields did not return to null")
         self_result = await invoke("ReadSelf")
@@ -188,25 +188,25 @@ async def exercise(call) -> dict:
             result = await invoke("IsNullObject", value)
             if result.get("executed") is not True or result.get("result") is not expected:
                 raise ProbeError("probe_null_predicate", "The null check returned an invalid result")
-        mismatch = await call("g1r_invoke", {"handle": base["handle"], "function": "EchoTypedObject",
+        mismatch = await call("sn2_invoke", {"handle": base["handle"], "function": "EchoTypedObject",
                                               "arguments": {"Input": {"handle": other["handle"]}}},
                               expected_error="incompatible_object_argument")
         report["class_mismatch"] = mismatch
         report["checks"].append("object_returns_echo_null_derived_class_mismatch")
 
-        watch = await call("g1r_watch_start", {"handle": base["handle"], "properties": PROPERTIES,
+        watch = await call("sn2_watch_start", {"handle": base["handle"], "properties": PROPERTIES,
                                                 "duration_ms": 5000, "interval_ms": 50, "capacity": 16})
         watch_id = watch["watch_id"]
         await invoke("StoreObject", {"handle": other["handle"]})
         await invoke("StoreTypedObject", {"handle": derived["handle"]})
-        after = await call("g1r_snapshot", {"targets": [{"handle": base["handle"], "properties": PROPERTIES}]})
+        after = await call("sn2_snapshot", {"targets": [{"handle": base["handle"], "properties": PROPERTIES}]})
         values = snapshot_values(after, base)
         for name, target in (("StoredObject", other), ("StoredTypedObject", derived)):
             check_object_result({"executed": True, "result": values[name]}, target)
         deadline = time.monotonic() + 2
         observed = None
         while time.monotonic() < deadline:
-            events = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+            events = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
             if events.get("dropped_events") != 0 or events.get("gap") is True:
                 raise ProbeError("probe_watch_loss", "The short check lost events")
             changed = [event for event in events.get("events", []) if event.get("kind") == "changed"]
@@ -217,10 +217,10 @@ async def exercise(call) -> dict:
         if observed is None:
             raise ProbeError("probe_watch_change_absent", "Observation did not confirm new object fields")
         await asyncio.sleep(0.2)
-        stable = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+        stable = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
         if stable.get("last_seq") != observed.get("last_seq"):
             raise ProbeError("probe_false_object_change", "An unchanged object produced false watch events")
-        diff = await call("g1r_compare_snapshots", {"before": before, "after": after, "limit": 100})
+        diff = await call("sn2_compare_snapshots", {"before": before, "after": after, "limit": 100})
         if diff.get("value_changes") != 2:
             raise ProbeError("probe_snapshot_diff", "Comparison did not detect two object changes")
         report["checks"].append("object_properties_snapshots_watch_change_and_stability")
@@ -237,26 +237,26 @@ async def exercise(call) -> dict:
             if writable_target is not None:
                 for method in ("StoreObject", "StoreTypedObject"):
                     try:
-                        result = await call("g1r_invoke", {"handle": writable_target["handle"], "function": method, "arguments": {"Input": None}})
+                        result = await call("sn2_invoke", {"handle": writable_target["handle"], "function": method, "arguments": {"Input": None}})
                         if result.get("executed") is not True:
                             raise ProbeError("probe_cleanup_unconfirmed", "Field cleanup did not confirm execution")
                         report["cleanup"].append(method)
                     except BaseException as error:
                         failures.append(f"{method}: {getattr(error, 'code', 'failed')}")
                 try:
-                    restored = await call("g1r_snapshot", {"targets": [{"handle": writable_target["handle"], "properties": PROPERTIES}]})
+                    restored = await call("sn2_snapshot", {"targets": [{"handle": writable_target["handle"], "properties": PROPERTIES}]})
                     if any(value is not None for value in snapshot_values(restored, writable_target, session_id).values()):
                         raise ProbeError("probe_restore_mismatch", "Probe fields are not null after cleanup")
                     report["cleanup"].append("restored_null_snapshot")
                 except BaseException as error:
                     failures.append(f"restore_snapshot: {getattr(error, 'code', 'failed')}")
             if watch_id is not None:
-                for name in ("g1r_watch_stop", "g1r_watch_forget"):
+                for name in ("sn2_watch_stop", "sn2_watch_forget"):
                     try:
                         result = await call(name, {"watch_id": watch_id})
                         if (result.get("cleanup_complete") is not True
-                                or name == "g1r_watch_forget" and result.get("forgotten") is not True
-                                or name == "g1r_watch_stop" and result.get("state") not in {"stopped", "completed", "failed"}):
+                                or name == "sn2_watch_forget" and result.get("forgotten") is not True
+                                or name == "sn2_watch_stop" and result.get("state") not in {"stopped", "completed", "failed"}):
                             raise ProbeError("probe_cleanup_unconfirmed", "Releasing observation was not confirmed")
                         report["cleanup"].append(name)
                     except BaseException as error:
@@ -294,7 +294,7 @@ def _caller(client):
 
 
 async def run_probe(args: argparse.Namespace) -> dict:
-    parameters = StdioServerParameters(command=sys.executable, args=["-m", "g1r_mcp.server",
+    parameters = StdioServerParameters(command=sys.executable, args=["-m", "sn2_mcp.server",
         "--modkit-root", str(args.modkit_root), "--workspace-root", str(args.workspace_root),
         "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):
@@ -306,8 +306,8 @@ async def run_probe(args: argparse.Namespace) -> dict:
         async with ClientSession(incoming, outgoing) as client:
             await client.initialize()
             call = _caller(client)
-            await call("g1r_native_status", {})
-            stale = await call("g1r_invoke", {"handle": report["previous_handle"], "function": "ReadMarker", "arguments": {}},
+            await call("sn2_native_status", {})
+            stale = await call("sn2_invoke", {"handle": report["previous_handle"], "function": "ReadMarker", "arguments": {}},
                                expected_error="stale_handle")
             report["new_session_rejection"] = stale
     report.pop("previous_handle", None)

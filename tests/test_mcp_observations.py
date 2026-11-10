@@ -172,8 +172,7 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
         workspace = root / "workspace"
         workspace.mkdir()
         return StdioServerParameters(command=sys.executable,
-            args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                  "--workspace-root", str(workspace), "--native-port", str(port)])
+            args=["-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(port)])
 
     async def call_ok(self, client, name, params, expected):
         answer = await client.call_tool(name, params)
@@ -209,8 +208,8 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(self.parameters(root, native.port)) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    before = await self.call_ok(client, "g1r_snapshot", {"targets": targets}, baseline)
-                    after = await self.call_ok(client, "g1r_snapshot", {"targets": targets}, changed)
+                    before = await self.call_ok(client, "sn2_snapshot", {"targets": targets}, baseline)
+                    after = await self.call_ok(client, "sn2_snapshot", {"targets": targets}, changed)
                     self.assertEqual(len(before["objects"]), 17)
                     self.assertTrue(all(len(target["properties"]) == 33 for target in before["objects"]))
                     self.assertTrue(all(value is None for value in before["limits"].values()))
@@ -219,7 +218,7 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(json.dumps(before, ensure_ascii=False).encode("utf-8"),
                                      json.dumps(baseline, ensure_ascii=False).encode("utf-8"))
                     copies = copy.deepcopy((before, after))
-                    difference = await client.call_tool("g1r_compare_snapshots", {"before": before, "after": after, "limit": 561})
+                    difference = await client.call_tool("sn2_snapshot_compare", {"before": before, "after": after, "limit": 561})
                     self.assertFalse(difference.is_error, difference.content)
                     report = difference.structured_content
                     self.assertEqual(report["value_changes"], 561)
@@ -233,7 +232,7 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
                                      {(target["handle"], prop["name"]) for target in before["objects"] for prop in target["properties"]})
                     self.assertEqual((before, after), copies)
                     self.assertEqual(len(native.requests), 2)
-                    await self.call_ok(client, "g1r_native_status", {}, status)
+                    await self.call_ok(client, "sn2_native_status", {}, status)
             self.assertEqual(native.connections, 1)
             self.assertEqual([request["op"] for request in native.requests], ["snapshot", "snapshot", "status"])
             self.assertEqual(len({request["id"] for request in native.requests}), 3)
@@ -273,32 +272,26 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 64)
-                    for name in ("g1r_snapshot", "g1r_compare_snapshots", "g1r_watch_read"):
+                    self.assertEqual(len(tools), 22)
+                    for name in ("sn2_snapshot", "sn2_snapshot_compare", "sn2_watch_read"):
                         self.assertTrue(tools[name].annotations.read_only_hint)
-                    self.assertFalse(tools["g1r_watch_start"].annotations.read_only_hint)
-                    self.assertFalse(tools["g1r_watch_start"].annotations.idempotent_hint)
-                    self.assertTrue(tools["g1r_watch_stop"].annotations.idempotent_hint)
-                    self.assertFalse(tools["g1r_watch_forget"].annotations.read_only_hint)
-                    for name in ("g1r_development_recipe", "g1r_development_processes"):
-                        self.assertTrue(tools[name].annotations.read_only_hint)
-                    self.assertTrue(tools["g1r_build_script_patch"].annotations.read_only_hint)
-                    self.assertTrue(tools["g1r_read_source_exact"].annotations.read_only_hint)
-                    self.assertTrue(tools["g1r_read_package_file_exact"].annotations.read_only_hint)
-                    self.assertFalse(tools["g1r_create_package_directory"].annotations.read_only_hint)
-                    self.assertFalse(tools["g1r_create_package_directory"].annotations.destructive_hint)
-                    self.assertTrue(tools["g1r_create_package_directory"].annotations.idempotent_hint)
-                    for name in ("g1r_development_start", "g1r_development_stop", "g1r_native_load"):
-                        self.assertFalse(tools[name].annotations.read_only_hint)
-                        self.assertTrue(tools[name].annotations.open_world_hint)
-                        self.assertFalse(tools[name].annotations.idempotent_hint)
-                    self.assertTrue(tools["g1r_development_start"].annotations.destructive_hint)
-                    self.assertTrue(tools["g1r_development_stop"].annotations.destructive_hint)
-                    self.assertFalse(tools["g1r_native_load"].annotations.destructive_hint)
-                    before = await self.call_ok(client, "g1r_snapshot", {"targets": targets}, baseline)
-                    after = await self.call_ok(client, "g1r_snapshot", {"targets": targets}, changed)
+                    self.assertFalse(tools["sn2_watch_start"].annotations.read_only_hint)
+                    self.assertFalse(tools["sn2_watch_start"].annotations.idempotent_hint)
+                    self.assertTrue(tools["sn2_watch_stop"].annotations.idempotent_hint)
+                    self.assertFalse(tools["sn2_watch_forget"].annotations.read_only_hint)
+                    self.assertNotIn("sn2_development_recipe", tools)
+                    self.assertNotIn("sn2_build_script_patch", tools)
+                    self.assertNotIn("sn2_read_source_exact", tools)
+                    for name in ("sn2_create_package_directory", "sn2_development_start", "sn2_development_stop"):
+                        self.assertNotIn(name, tools)
+                    self.assertFalse(tools["sn2_native_load"].annotations.read_only_hint)
+                    self.assertTrue(tools["sn2_native_load"].annotations.open_world_hint)
+                    self.assertFalse(tools["sn2_native_load"].annotations.idempotent_hint)
+                    self.assertFalse(tools["sn2_native_load"].annotations.destructive_hint)
+                    before = await self.call_ok(client, "sn2_snapshot", {"targets": targets}, baseline)
+                    after = await self.call_ok(client, "sn2_snapshot", {"targets": targets}, changed)
                     copies = copy.deepcopy((before, after))
-                    difference = await client.call_tool("g1r_compare_snapshots", {"before": before, "after": after})
+                    difference = await client.call_tool("sn2_snapshot_compare", {"before": before, "after": after})
                     self.assertFalse(difference.is_error, difference.content)
                     result = difference.structured_content
                     self.assertEqual(result["value_changes"], 1)
@@ -306,15 +299,15 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(result["equal_selected_values"])
                     self.assertEqual(result["provenance"], "unverified")
                     self.assertEqual((before, after), copies)
-                    await self.call_ok(client, "g1r_watch_start", start_params, started)
+                    await self.call_ok(client, "sn2_watch_start", start_params, started)
                     try:
-                        await self.call_ok(client, "g1r_watch_read", {"watch_id": "watch-1"}, running)
+                        await self.call_ok(client, "sn2_watch_read", {"watch_id": "watch-1"}, running)
                     except BaseException:
                         self.assert_fixture_errors(native)
                         raise
-                    await self.call_ok(client, "g1r_watch_stop", {"watch_id": "watch-1"}, stopped)
-                    await self.call_ok(client, "g1r_watch_read", {"watch_id": "watch-1", "after_seq": 3, "limit": 10}, final)
-                    await self.call_ok(client, "g1r_watch_forget", {"watch_id": "watch-1"}, forgotten)
+                    await self.call_ok(client, "sn2_watch_stop", {"watch_id": "watch-1"}, stopped)
+                    await self.call_ok(client, "sn2_watch_read", {"watch_id": "watch-1", "after_seq": 3, "limit": 10}, final)
+                    await self.call_ok(client, "sn2_watch_forget", {"watch_id": "watch-1"}, forgotten)
             self.assertEqual(native.connections, 1)
             self.assertEqual(len(native.requests), 7)  # Сравнение выполняется на копиях без TCP.
             self.assertEqual(len({request["id"] for request in native.requests}), 7)
@@ -334,21 +327,21 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(self.parameters(Path(directory), native.port)) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    lost = await client.call_tool("g1r_watch_start", start_params)
+                    lost = await client.call_tool("sn2_watch_start", start_params)
                     self.assertTrue(lost.is_error)
                     text = next(block.text for block in lost.content if block.type == "text")
                     error = json.loads(text[text.index("{"):])
                     self.assertEqual(error["code"], "native_disconnected")
                     self.assertTrue(error["may_have_executed"])
                     self.assertEqual(error["request_id"], native.requests[0]["id"])
-                    await self.call_ok(client, "g1r_native_status", {}, status)
-                    stale = await client.call_tool("g1r_watch_read", {"watch_id": "watch-1"})
+                    await self.call_ok(client, "sn2_native_status", {}, status)
+                    stale = await client.call_tool("sn2_watch_read", {"watch_id": "watch-1"})
                     self.assert_fixture_errors(native)
                     self.assertTrue(stale.is_error)
                     self.assertIn("unknown_watch", repr(stale.content))
                     before = native_snapshot()
                     after = native_snapshot(session="fixture-session-2")
-                    comparison = await client.call_tool("g1r_compare_snapshots", {"before": before, "after": after})
+                    comparison = await client.call_tool("sn2_snapshot_compare", {"before": before, "after": after})
                     self.assertFalse(comparison.is_error, comparison.content)
                     self.assertFalse(comparison.structured_content["comparable"])
                     self.assertEqual(comparison.structured_content["reason"], "different_session")

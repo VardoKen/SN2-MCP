@@ -1,9 +1,9 @@
-#include <g1r_mcp/movieplayer_jobs.hpp>
-#include <g1r_mcp/transport.hpp>
+#include <sn2_mcp/movieplayer_jobs.hpp>
+#include <sn2_mcp/transport.hpp>
 #include <algorithm>
 #include <utility>
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 namespace {
 using Json = nlohmann::json;
 
@@ -276,4 +276,4 @@ void MoviePlayerJobs::sample_and_service(std::uint32_t thread_id, std::uint64_t 
     }
 }
 
-} // namespace g1r_mcp
+} // namespace sn2_mcp

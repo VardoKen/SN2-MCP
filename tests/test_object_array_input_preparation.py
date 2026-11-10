@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("object_array_input_preparation_test", ROOT / "tools/prepare_object_array_input_probe.py")
 prepare = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(prepare)
-from g1r_mcp.packages import PackageError
+from sn2_mcp.packages import PackageError
 
 
 class ObjectArrayInputPreparationTests(unittest.TestCase):

@@ -14,30 +14,30 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'start_shared_mcp.ps1') -RepositoryRoot $RepositoryRoot -Json:$Json
 
-function Invoke-G1RSharedStop {
+function Invoke-SN2SharedStop {
     param($Configuration)
-    $record = Read-G1RSharedManifest $Configuration
+    $record = Read-SN2SharedManifest $Configuration
     if ($null -eq $record) {
-        Assert-G1RSharedPort $Configuration @(Get-G1RSharedListeners $Configuration)
-        Assert-G1RSharedNoUntrackedProcess $Configuration
+        Assert-SN2SharedPort $Configuration @(Get-SN2SharedListeners $Configuration)
+        Assert-SN2SharedNoUntrackedProcess $Configuration
         return [pscustomobject]@{ state = 'already_stopped'; process = $null }
     }
-    $launcherLease = Open-G1RSharedLauncher $Configuration $record -ForTermination
+    $launcherLease = Open-SN2SharedLauncher $Configuration $record -ForTermination
     $lease = $null
     try {
-        $lease = Open-G1RSharedProcess $Configuration $record -ForTermination
+        $lease = Open-SN2SharedProcess $Configuration $record -ForTermination
         if ($null -eq $lease) {
-            Assert-G1RSharedPort $Configuration @(Get-G1RSharedListeners $Configuration)
+            Assert-SN2SharedPort $Configuration @(Get-SN2SharedListeners $Configuration)
             if ($null -ne $launcherLease) {
-                $null = Stop-G1RCheckedProcess -Lease $launcherLease -GraceMilliseconds 0 -ForceWaitMilliseconds 5000 -AllowForce
+                $null = Stop-SN2CheckedProcess -Lease $launcherLease -GraceMilliseconds 0 -ForceWaitMilliseconds 5000 -AllowForce
             }
             Remove-Item -LiteralPath $Configuration.manifest -Force
             return [pscustomobject]@{ state = 'already_exited'; process = $record }
         }
-        Assert-G1RSharedPort $Configuration @(Get-G1RSharedListeners $Configuration) $record.pid
-        $stopped = Stop-G1RCheckedProcess -Lease $lease -GraceMilliseconds 0 -ForceWaitMilliseconds 5000 -AllowForce
+        Assert-SN2SharedPort $Configuration @(Get-SN2SharedListeners $Configuration) $record.pid
+        $stopped = Stop-SN2CheckedProcess -Lease $lease -GraceMilliseconds 0 -ForceWaitMilliseconds 5000 -AllowForce
         if ($null -ne $launcherLease -and $record.launcher.pid -ne $record.pid) {
-            $null = Stop-G1RCheckedProcess -Lease $launcherLease -GraceMilliseconds 0 -ForceWaitMilliseconds 5000 -AllowForce
+            $null = Stop-SN2CheckedProcess -Lease $launcherLease -GraceMilliseconds 0 -ForceWaitMilliseconds 5000 -AllowForce
         }
         Remove-Item -LiteralPath $Configuration.manifest -Force
         return [pscustomobject]@{ state = $stopped.state; process = $record; stop_mode = $stopped.mode }
@@ -49,14 +49,14 @@ function Invoke-G1RSharedStop {
 
 if ($MyInvocation.InvocationName -ne '.') {
     try {
-        $configuration = Get-G1RSharedConfiguration $RepositoryRoot
-        $result = Invoke-G1RSharedLocked { Invoke-G1RSharedStop $configuration }
+        $configuration = Get-SN2SharedConfiguration $RepositoryRoot
+        $result = Invoke-SN2SharedLocked { Invoke-SN2SharedStop $configuration }
         if ($Json) { $result | ConvertTo-Json -Depth 6 } else { $result }
     } catch {
         $systemFailure = $_.Exception.GetBaseException()
         if ($_.Exception.Message -cmatch '^shared_[a-z_]+: ') {
             [Console]::Error.WriteLine($_.Exception.Message)
-        } elseif ($systemFailure.GetType().FullName -ceq 'G1RMCP.ProcessControl.ProcessControlException') {
+        } elseif ($systemFailure.GetType().FullName -ceq 'SN2MCP.ProcessControl.ProcessControlException') {
             [Console]::Error.WriteLine($systemFailure.Message)
         } else {
             $message = 'The shared MCP server stop operation failed (hresult={0})' -f $systemFailure.HResult

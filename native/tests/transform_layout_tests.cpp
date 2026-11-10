@@ -1,4 +1,4 @@
-#include <g1r_mcp/transform_layout.hpp>
+#include <sn2_mcp/transform_layout.hpp>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -9,12 +9,12 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::transform_layout::Layout;
+using sn2_mcp::transform_layout::Layout;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action>void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ отражённой раскладки Transform");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Отказ раскладки должен явно исключать исполнение");return;
@@ -29,14 +29,14 @@ Layout layout() {
             {24,8,false,{{"X","DoubleProperty",8,0,1},{"Y","DoubleProperty",8,8,1},{"Z","DoubleProperty",8,16,1}}},
             {24,8,false,{{"X","DoubleProperty",8,0,1},{"Y","DoubleProperty",8,8,1},{"Z","DoubleProperty",8,16,1}}}};
 }
-void validate(const Layout& input) {g1r_mcp::transform_layout::validate("/Script/CoreUObject.Transform","Transform",input);}
+void validate(const Layout& input) {sn2_mcp::transform_layout::validate("/Script/CoreUObject.Transform","Transform",input);}
 
 struct ReflectedMemory {
     static constexpr std::uintptr_t outer=0x1000,struct_class=0x2000,transform=0x3000,metaclass=0x4000,
         quat=0x5000,vector=0x6000,double_class=0x7000,members=0x8000,quat_fields=0x9000,vector_fields=0xa000;
     std::map<std::uintptr_t,std::array<std::byte,8>> storage;
     std::map<std::uintptr_t,int> reads;
-    std::map<std::uintptr_t,g1r_mcp::ObjectSerialIdentity> identities;
+    std::map<std::uintptr_t,sn2_mcp::ObjectSerialIdentity> identities;
     std::map<std::uintptr_t,std::string> paths;
     int class_checks{};
     template<class T>void set(std::uintptr_t address,T value) {
@@ -62,9 +62,9 @@ struct ReflectedMemory {
                 address==transform?10ULL:address==quat?11ULL:12ULL,0,9,40,0};
         }
         paths={{transform,"/Script/CoreUObject.Transform"},{quat,"/Script/CoreUObject.Quat"},{vector,"/Script/CoreUObject.Vector"}};
-        set(transform+0x50,members);set(transform+0x58,std::int32_t{96});set(transform+0x5c,std::int32_t{16});
-        set(quat+0x50,quat_fields);set(quat+0x58,std::int32_t{32});set(quat+0x5c,std::int32_t{16});
-        set(vector+0x50,vector_fields);set(vector+0x58,std::int32_t{24});set(vector+0x5c,std::int32_t{8});
+        set(transform+0x50,members);set(transform+0x58,std::int32_t{96});set(transform+0x5c,std::int32_t{0xA50000|(16)});
+        set(quat+0x50,quat_fields);set(quat+0x58,std::int32_t{32});set(quat+0x5c,std::int32_t{0xA50000|(16)});
+        set(vector+0x50,vector_fields);set(vector+0x58,std::int32_t{24});set(vector+0x5c,std::int32_t{0xA50000|(8)});
         field(members,struct_class,20,members+0x100,32,0,quat);
         field(members+0x100,struct_class,21,members+0x200,24,32,vector);
         field(members+0x200,struct_class,22,0,24,64,vector);
@@ -73,8 +73,8 @@ struct ReflectedMemory {
         for(int index=0;index<3;++index)field(vector_fields+index*0x100,double_class,30+index,
             index==2?0:vector_fields+(index+1)*0x100,8,index*8);
     }
-    g1r_mcp::transform_layout::Snapshot capture(int size=96,int dim=1) {
-        return g1r_mcp::transform_layout::capture(outer,size,dim,
+    sn2_mcp::transform_layout::Snapshot capture(int size=96,int dim=1) {
+        return sn2_mcp::transform_layout::capture(outer,size,dim,
             [this]<class T>(std::uintptr_t address){return read<T>(address);},
             [](std::uint64_t value)->std::string {
                 switch(value) {
@@ -92,7 +92,7 @@ struct ReflectedMemory {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const auto canonical=layout();validate(canonical);++checks;
         std::vector<int> order={0,1,2};

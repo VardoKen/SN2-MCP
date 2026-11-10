@@ -10,7 +10,7 @@ import unittest
 
 
 REPO = Path(__file__).resolve().parents[1]
-LAUNCHER = REPO / "tools" / "start_g1r_development.ps1"
+LAUNCHER = REPO / "tools" / "start_sn2_development.ps1"
 POWERSHELL = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
 
 

@@ -11,8 +11,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 sys.path.insert(0, str(REPOSITORY_ROOT / "tools"))
 
-from g1r_mcp.packages import PackageError
-from g1r_mcp.workspace import WorkspaceError
+from sn2_mcp.packages import PackageError
+from sn2_mcp.workspace import WorkspaceError
 
 PACKAGE_NAME = "G1RMCPNameProbe"
 SCRIPT_RELATIVE = "Script/G1RMCPNameProbe.as"
@@ -21,7 +21,7 @@ FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "name_probe"
 
 def prepare_probe(workspace_root: Path, *, repository_root: Path = REPOSITORY_ROOT) -> dict:
     # Reuse bounded preparation without changing another tool's globals.
-    spec = importlib.util.spec_from_file_location("_g1r_name_preparation", REPOSITORY_ROOT / "tools" / "prepare_class_probe.py")
+    spec = importlib.util.spec_from_file_location("_sn2_name_preparation", REPOSITORY_ROOT / "tools" / "prepare_class_probe.py")
     implementation = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(implementation)
     implementation.PACKAGE_NAME = PACKAGE_NAME

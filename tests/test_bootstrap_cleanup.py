@@ -11,7 +11,7 @@ import unittest
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-STOP_SCRIPT = REPOSITORY / "tools" / "stop_g1r_development.ps1"
+STOP_SCRIPT = REPOSITORY / "tools" / "stop_sn2_development.ps1"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 PARENT_CREATED = "2026-10-31T00:00:00.0000000Z"
 CHILD_CREATED = "2026-10-31T00:00:01.0000000Z"

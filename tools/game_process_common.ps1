@@ -10,7 +10,7 @@ Wrappers must separately restrict the allowed EXE to the selected game.
 
 Set-StrictMode -Version Latest
 
-if ($null -eq ('G1RMCP.ProcessControl.ProcessLease' -as [type])) {
+if ($null -eq ('SN2MCP.ProcessControl.ProcessLease' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -22,7 +22,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
-namespace G1RMCP.ProcessControl {
+namespace SN2MCP.ProcessControl {
     public sealed class ProcessControlException : Exception {
         public string Code { get; private set; }
         public bool OutcomeUnknown { get; private set; }
@@ -129,16 +129,38 @@ namespace G1RMCP.ProcessControl {
             catch { safe.Dispose(); throw; }
         }
 
-        public static ProcessLease OpenChecked(uint pid, string created, string executable, bool forTermination) {
+        public static string NormalizeCreationTime(string created) {
             DateTime parsed;
-            if (String.IsNullOrEmpty(created) || !DateTime.TryParseExact(created,
+            long fileTime;
+            if (!String.IsNullOrEmpty(created) && Int64.TryParse(created, NumberStyles.None,
+                CultureInfo.InvariantCulture, out fileTime)) {
+                if (fileTime <= 0) throw Failure("invalid_process_identity", "Creation FILETIME must be positive", false);
+                try { parsed = DateTime.FromFileTimeUtc(fileTime); }
+                catch (ArgumentOutOfRangeException) {
+                    throw Failure("invalid_process_identity", "Creation FILETIME is outside the supported DateTime range", false);
+                }
+            } else if (String.IsNullOrEmpty(created) || !DateTime.TryParseExact(created,
                 "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out parsed) ||
-                String.IsNullOrEmpty(executable) || !Path.IsPathRooted(executable))
-                throw Failure("invalid_process_identity", "Exact UTC time and an absolute EXE path are required", false);
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out parsed)) {
+                throw Failure("invalid_process_identity", "Exact decimal FILETIME or UTC creation time is required", false);
+            }
+            return parsed.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", CultureInfo.InvariantCulture);
+        }
+
+        public static string CreationFileTime(string created) {
+            DateTime parsed = DateTime.ParseExact(NormalizeCreationTime(created),
+                "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+            return parsed.ToFileTimeUtc().ToString(CultureInfo.InvariantCulture);
+        }
+
+        public static ProcessLease OpenChecked(uint pid, string created, string executable, bool forTermination) {
+            string normalizedCreated = NormalizeCreationTime(created);
+            if (String.IsNullOrEmpty(executable) || !Path.IsPathRooted(executable))
+                throw Failure("invalid_process_identity", "An absolute EXE path is required", false);
             var lease = Open(pid, forTermination);
             try {
-                if (lease.Identity.Pid != pid || lease.Identity.CreationTime != created ||
+                if (lease.Identity.Pid != pid || lease.Identity.CreationTime != normalizedCreated ||
                     !String.Equals(lease.Identity.Executable, Path.GetFullPath(executable), StringComparison.OrdinalIgnoreCase))
                     throw Failure("process_changed", "PID, creation time, or full EXE path changed", false);
                 return lease;
@@ -237,7 +259,7 @@ namespace G1RMCP.ProcessControl {
 '@
 }
 
-function ConvertTo-G1RProcessIdentity {
+function ConvertTo-SN2ProcessIdentity {
     param([Parameter(Mandatory = $true)]$Identity)
     [pscustomobject]@{
         pid = [uint32]$Identity.Pid
@@ -246,25 +268,35 @@ function ConvertTo-G1RProcessIdentity {
     }
 }
 
-function Get-G1RProcessIdentity {
+function Get-SN2ProcessIdentity {
     param([Parameter(Mandatory = $true)][uint32]$ProcessId)
-    $lease = [G1RMCP.ProcessControl.ProcessLease]::Open($ProcessId, $false)
-    try { ConvertTo-G1RProcessIdentity -Identity $lease.Identity }
+    $lease = [SN2MCP.ProcessControl.ProcessLease]::Open($ProcessId, $false)
+    try { ConvertTo-SN2ProcessIdentity -Identity $lease.Identity }
     finally { $lease.Dispose() }
 }
 
-function Open-G1RCheckedProcess {
+function ConvertTo-SN2CreationTimeUtc {
+    param([Parameter(Mandatory = $true)][string]$CreationTime)
+    [SN2MCP.ProcessControl.ProcessLease]::NormalizeCreationTime($CreationTime)
+}
+
+function ConvertTo-SN2CreationFileTime {
+    param([Parameter(Mandatory = $true)][string]$CreationTime)
+    [SN2MCP.ProcessControl.ProcessLease]::CreationFileTime($CreationTime)
+}
+
+function Open-SN2CheckedProcess {
     param(
         [Parameter(Mandatory = $true)][uint32]$ExpectedPid,
         [Parameter(Mandatory = $true)][string]$ExpectedCreationTime,
         [Parameter(Mandatory = $true)][string]$ExpectedExecutable,
         [switch]$ForTermination
     )
-    [G1RMCP.ProcessControl.ProcessLease]::OpenChecked($ExpectedPid,
+    [SN2MCP.ProcessControl.ProcessLease]::OpenChecked($ExpectedPid,
         $ExpectedCreationTime, $ExpectedExecutable, [bool]$ForTermination)
 }
 
-function Stop-G1RCheckedProcess {
+function Stop-SN2CheckedProcess {
     param(
         [Parameter(Mandatory = $true)]$Lease,
         [ValidateRange(0, 20000)][int]$GraceMilliseconds = 20000,
@@ -276,7 +308,7 @@ function Stop-G1RCheckedProcess {
         state = $result.State
         mode = $result.Mode
         grace_requests = $result.GraceRequests
-        process = ConvertTo-G1RProcessIdentity -Identity $result.Identity
+        process = ConvertTo-SN2ProcessIdentity -Identity $result.Identity
         outcome_unknown = $false
     }
 }

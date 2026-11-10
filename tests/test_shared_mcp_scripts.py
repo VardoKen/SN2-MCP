@@ -69,7 +69,7 @@ class SharedMCPScriptsTests(unittest.TestCase):
             fake_root.mkdir()
             result = self.run_script(
                 "$null=New-Item -ItemType Directory -Path $configuration.artifacts; "
-                "$record=[pscustomobject]@{schema_version=1;owner='G1R_MCP_shared_server';repository_root=$configuration.root;server_script=$configuration.script;host=$configuration.host;port=$configuration.port;native_port=$configuration.native_port;arguments=$configuration.arguments;command_line=$configuration.command_line;pid=456;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.base_python;launcher=[pscustomobject]@{pid=455;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.python;command_line=$configuration.command_line}}; "
+                "$record=[pscustomobject]@{schema_version=1;owner='SN2_MCP_shared_server';repository_root=$configuration.root;server_script=$configuration.script;host=$configuration.host;port=$configuration.port;native_port=$configuration.native_port;arguments=$configuration.arguments;command_line=$configuration.command_line;pid=456;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.base_python;launcher=[pscustomobject]@{pid=455;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.python;command_line=$configuration.command_line}}; "
                 "Write-G1RSharedManifest $configuration $record; $loaded=Read-G1RSharedManifest $configuration; "
                 "function Get-CimInstance { @([pscustomobject]@{ExecutablePath='C:\\foreign.exe';CommandLine='foreign'}) }; "
                 "function Stop-G1RCheckedProcess { throw 'unexpected_stop' }; "
@@ -89,12 +89,12 @@ class SharedMCPScriptsTests(unittest.TestCase):
             fake_root = Path(folder) / "repository"
             (fake_root / ".venv" / "Scripts").mkdir(parents=True)
             (fake_root / ".venv" / "Scripts" / "python.exe").write_bytes(b"isolated")
-            (fake_root / "src" / "g1r_mcp").mkdir(parents=True)
-            (fake_root / "src" / "g1r_mcp" / "server.py").write_bytes(b"isolated")
+            (fake_root / "src" / "sn2_mcp").mkdir(parents=True)
+            (fake_root / "src" / "sn2_mcp" / "server.py").write_bytes(b"isolated")
             (fake_root.parent / "G1R-Modkit").mkdir()
             result = self.run_script(
                 "$null=New-Item -ItemType Directory -Path $configuration.artifacts; "
-                "$record=[pscustomobject]@{schema_version=1;owner='G1R_MCP_shared_server';repository_root=$configuration.root;server_script=$configuration.script;host=$configuration.host;port=$configuration.port;native_port=$configuration.native_port;arguments=$configuration.arguments;command_line=$configuration.command_line;pid=456;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.base_python;launcher=[pscustomobject]@{pid=455;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.python;command_line=$configuration.command_line}}; Write-G1RSharedManifest $configuration $record; "
+                "$record=[pscustomobject]@{schema_version=1;owner='SN2_MCP_shared_server';repository_root=$configuration.root;server_script=$configuration.script;host=$configuration.host;port=$configuration.port;native_port=$configuration.native_port;arguments=$configuration.arguments;command_line=$configuration.command_line;pid=456;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.base_python;launcher=[pscustomobject]@{pid=455;creation_time='2026-10-31T00:00:00.0000000Z';executable=$configuration.python;command_line=$configuration.command_line}}; Write-G1RSharedManifest $configuration $record; "
                 "function Open-G1RSharedProcess {$l=[pscustomobject]@{};$l|Add-Member ScriptMethod Dispose {};return $l}; "
                 "function Get-G1RSharedListeners {@([pscustomobject]@{LocalPort=27124;LocalAddress='127.0.0.1';OwningProcess=456})}; "
                 "function Start-Process {throw 'unexpected_duplicate'}; "

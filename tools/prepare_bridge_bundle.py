@@ -1,8 +1,8 @@
 """Prepare a verifiable internal bridge bundle with its layout preserved.
 
 This is a working folder for another Windows PC, not a public release or installer.
-The official Modkit, Python environment, and game are not included; game launch
-and installation are not performed. .venv, logs, caches, and local settings are excluded.
+The Python environment and game are not included; game launch and installation
+are not performed. Environments, logs, caches, and local settings are excluded.
 """
 
 from __future__ import annotations
@@ -20,31 +20,18 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
+PRODUCTION_MARKER = b"SN2_MCP_DEVELOPMENT_PROBES=0"
+DEVELOPMENT_MARKER = b"SN2_MCP_DEVELOPMENT_PROBES=1"
 sys.path.insert(0, str(ROOT / "src"))
-from g1r_mcp.workspace import WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
+from sn2_mcp.workspace import WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
 
-TOOLS = (
-    "start_shared_mcp.ps1", "stop_shared_mcp.ps1",
-    "game_process_common.ps1", "game_process_state.ps1", "start_g1r_development.ps1", "stop_g1r_development.ps1",
-    "load_native.ps1", "native_load_result.ps1", "prepare_compile_probe.py", "prepare_object_probe.py",
-    "prepare_class_probe.py", "prepare_name_probe.py", "prepare_patch_probe.py", "prepare_base_patch_probe.py",
-    "probe_native_route.py", "probe_live_mcp.py", "probe_object_mcp.py", "probe_class_mcp.py",
-    "probe_name_mcp.py", "probe_function_contract_mcp.py", "probe_metadata_mcp.py", "probe_development_mcp.py", "probe_cleanup.py", "prepare_bridge_bundle.py",
-    "prepare_enum_probe.py", "probe_enum_mcp.py", "export_script_package.py",
-    "prepare_lifecycle_probe.py", "probe_lifecycle_mcp.py", "prepare_pod_read_probe.py",
-    "probe_array_mcp.py", "probe_struct_mcp.py",
-    "prepare_world_lifecycle_probe.py", "probe_world_lifecycle_mcp.py",
-)
-FIXTURE_DIRS = ("angelscript_probe", "object_probe", "class_probe", "name_probe", "patch_probe", "enum_probe", "lifecycle_probe", "pod_read_probe", "world_lifecycle_probe")
-SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py")
-HELPER_FILES = ("development/helpers/G1RMCPDevelopmentHelpers/GothicMod.json",
-                "development/helpers/G1RMCPDevelopmentHelpers/Script/G1RMCPDevelopmentHelpers.as")
-FIXTURE_SCRIPTS = {"angelscript_probe": "G1RMCPProbe.as", "object_probe": "G1RMCPObjectProbe.as",
-                   "class_probe": "G1RMCPClassProbe.as", "name_probe": "G1RMCPNameProbe.as", "patch_probe": "G1RMCPPatchProbe.as",
-                   "enum_probe": "G1RMCPEnumProbe.as", "lifecycle_probe": "G1RMCPLifecycleProbe.as",
-                   "pod_read_probe": "G1RMCPPODReadProbe.as", "world_lifecycle_probe": "G1RMCPWorldLifecycleProbe.as"}
+TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "prepare_bridge_bundle.py")
+FIXTURE_DIRS = ()
+SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py")
+HELPER_FILES = ()
+FIXTURE_SCRIPTS = {}
 DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock")
-BINARIES = ("build/native/Release/G1R_MCP.dll", "build/native/Release/g1r_mcp_loader.exe")
+BINARIES = ("build/native/Release/SN2_MCP.dll", "build/native/Release/sn2_mcp_loader.exe")
 
 
 class BundleError(Exception):
@@ -67,22 +54,22 @@ def _read(path: Path, boundary: Path) -> bytes:
 
 
 def _version(repository: Path) -> str:
-    source = _read(repository / "src/g1r_mcp/__init__.py", repository).decode("utf-8-sig")
+    source = _read(repository / "src/sn2_mcp/__init__.py", repository).decode("utf-8-sig")
     parsed = ast.parse(source)
     versions = [node.value.value for node in parsed.body
                 if isinstance(node, ast.Assign) and len(node.targets) == 1
                 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "__version__"
                 and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)]
-    if len(versions) != 1 or not re.fullmatch(r"\d+\.\d+\.\d+-dev\.\d+", versions[0]):
-        raise BundleError("invalid_version", "The bundle requires exactly one current development __version__")
+    if len(versions) != 1 or not re.fullmatch(r"\d+\.\d+\.\d+", versions[0]):
+        raise BundleError("invalid_version", "The bundle requires exactly one numeric __version__")
     metadata = tomllib.loads(_read(repository / "pyproject.toml", repository).decode("utf-8-sig"))
     if metadata.get("project", {}).get("version") != versions[0]:
         raise BundleError("version_mismatch", "The Python source and pyproject.toml versions differ")
     lock = tomllib.loads(_read(repository / "uv.lock", repository).decode("utf-8-sig"))
     packages = lock.get("package", [])
-    local = [item for item in packages if isinstance(item, dict) and item.get("name") == "g1r-mcp"]
+    local = [item for item in packages if isinstance(item, dict) and item.get("name") == "sn2-mcp"]
     sdk = [item for item in packages if isinstance(item, dict) and item.get("name") == "mcp"]
-    if (len(local) != 1 or local[0].get("version") != versions[0].replace("-dev.", ".dev")
+    if (len(local) != 1 or local[0].get("version") != versions[0]
             or local[0].get("source") != {"editable": "."} or len(sdk) != 1 or sdk[0].get("version") != "2.3.0"
             or metadata.get("project", {}).get("dependencies") != ["mcp==2.3.0"]):
         raise BundleError("lock_mismatch", "uv.lock does not match the version, editable root, or pinned MCP SDK")
@@ -94,6 +81,7 @@ def _compatibility(repository: Path, version: str, dll: bytes, loader: bytes) ->
     method = "runtime_image_patterns"
     if f'"{method}"' not in source or version.encode("ascii") not in dll or method.encode("ascii") not in dll:
         raise BundleError("native_version_mismatch", "The built DLL does not match the current version or runtime binding contract")
+    _production_binary(dll)
     for label, raw in (("DLL", dll), ("loader", loader)):
         if len(raw) < 64 or raw[:2] != b"MZ":
             raise BundleError("invalid_binary", f"{label} is not a PE x64 binary")
@@ -101,9 +89,15 @@ def _compatibility(repository: Path, version: str, dll: bytes, loader: bytes) ->
         if offset < 64 or offset + 6 > len(raw) or raw[offset:offset + 4] != b"PE\0\0" or struct.unpack_from("<H", raw, offset + 4)[0] != 0x8664:
             raise BundleError("invalid_binary", f"{label} is not a PE x64 binary")
     return {"platform": "Windows x64", "binding_method": method,
-            "supported_game_exe_name": "G1R/Binaries/Win64/G1R-Win64-Shipping.exe",
+            "supported_game_exe_name": "Subnautica2/Binaries/Win64/Subnautica2-Win64-Shipping.exe",
             "source": "native/src/game_access.cpp:bindings_source", "native_version_marker": version,
+            "development_probes": False, "development_build_marker": PRODUCTION_MARKER.decode("ascii"),
             "runtime_validation": "not_performed_by_packager"}
+
+
+def _production_binary(dll: bytes) -> None:
+    if PRODUCTION_MARKER not in dll or DEVELOPMENT_MARKER in dll:
+        raise BundleError("development_binary", "The runtime bundle requires a production DLL without development acceptance fixtures")
 
 
 def _enumerate(repository: Path) -> list[str]:
@@ -112,7 +106,7 @@ def _enumerate(repository: Path) -> list[str]:
     def failure(error):
         raise BundleError("access_error", "Failed to enumerate all allowed bundle sources")
 
-    for root, allowed_suffix in ((repository / "src/g1r_mcp", {".py"}),
+    for root, allowed_suffix in ((repository / "src/sn2_mcp", {".py"}),
                                  *[(repository / "tests/fixtures" / name, {".json", ".as", ".patch"}) for name in FIXTURE_DIRS]):
         _checked(root, repository, directory=True)
         for directory, directories, files in os.walk(root, followlinks=False, onerror=failure):
@@ -196,97 +190,39 @@ def _directory_set(root: Path) -> set[str]:
 
 
 def _instructions(version: str, native_version: str | None = None) -> bytes:
-    text = f"""# G1R MCP Internal Bundle {version}
+    return f"""# Subnautica 2 MCP runtime bundle {version}
 
-Python server version: {version}. Native DLL version: {native_version or version}.
+Python version: {version}. Native version: {native_version or version}.
+This folder is not an installer or a public release. Hash verification does not
+establish Subnautica runtime acceptance, load the DLL or launch the game.
 
-The bundle preserves the workspace layout; it is not an installer or a public release.
-Verification does not launch the game or load the DLL.
+1. Keep the installed game separate. Verify from this folder with
+   `python -B tools/prepare_bridge_bundle.py --verify-root .`.
+2. With Python 3.11+ and uv, choose an external environment using
+   `UV_PROJECT_ENVIRONMENT`, then run `uv sync --locked`. Runtime dependencies
+   are locked; the declared Hatchling build backend is pinned. A native
+   consumer needs the Microsoft Visual C++ x64 runtime.
+3. Start the frontend with the external environment's Python:
+   `python -B -m sn2_mcp.server --transport streamable-http --host 127.0.0.1
+   --port 27224 --native-port 27223 --workspace-root <workspace>
+   --runtime-root <bundle> --game-root <installed game>`.
+   Connect MCP to `http://127.0.0.1:27224/mcp`. Explicit stdio is also supported.
+4. Inspect `sn2_status`, `sn2_capabilities`, and `sn2_target_processes`.
+   Loading is an explicit action with exact process identity and DLL hash.
+   Native status separates module/transport, discovered bindings, observed
+   Tick and validated layouts. Version differences do not alone block startup.
+5. Inspect objects and function signatures before invoking. Handles and
+   observations are native-session values. Refresh after reconnect. Never
+   automatically replay an operation with an uncertain effect.
 
-1. Place the entire folder in a selected Windows x64 workspace; keep the game and official
-   G1R-Modkit separate. Do not copy an old `.venv`.
-2. From the root, run `python -B tools/prepare_bridge_bundle.py --verify-root .`.
-   `-B` prevents __pycache__ creation inside the folder being verified.
-3. Install Python 3.11+ and uv. Place the environment beside the bundle:
-   `$env:UV_PROJECT_ENVIRONMENT = "<separate absolute environment path>"`,
-   `$env:PYTHONDONTWRITEBYTECODE = "1"`, then run `uv sync --locked`.
-   Do not create the environment inside the bundle: strict verification rejects new files.
-4. For all Codex chats, start one shared server as a separate process:
-   `<environment>\\Scripts\\python.exe -B -m g1r_mcp.server --transport streamable-http
-   --host 127.0.0.1 --port 27124 --modkit-root <official Modkit>
-   --workspace-root <working packages> --runtime-root <bundle or working runtime>
-   --game-root <installed game>`.
-   In Codex config.toml, set `[mcp_servers.g1r_mcp]` and
-   `url = "http://127.0.0.1:27124/mcp"`; do not set command/args for each chat.
-   The server does not launch the game; all chats share one native TCP connection.
-Development-session records are optional information unless a client explicitly
-uses g1r_session_acquire(reason, protected_tools=[exact tool names]). Only those
-selected tools are protected from other clients; all other tools remain shared.
-g1r_session_status shows the owner, reason, and protected_tools. Any client can
-explicitly release protection, or replace the owner and selected tools with
-takeover=True. Protection persists after disconnect and only controls admission
-of new calls; it does not cancel accepted work. Without protection, any chat can
-read, stop, or forget a watch by watch_id.
-   Exact target-process, native-connection and object-generation checks still apply.
-   A separate stdio client uses the default transport without HTTP parameters.
-   Use absolute paths; do not reuse values from another PC.
-   The start_shared_mcp.ps1/stop_shared_mcp.ps1 scripts are intended for a working copy
-   with a local `.venv` and adjacent G1R-Modkit, not an immutable bundle
-   with an external environment. For the latter, use the direct command above.
-5. After loading, check g1r_native_status for uniquely resolved runtime image patterns
-   and native readiness. A bundle does not prove compatibility with every game update. Loading is performed only
-   through an explicit development/native_load tool; the bundle installs nothing itself.
-
-The development workflow provides MCP commands g1r_development_recipe/processes/start/stop,
-g1r_native_load/status/enable, object search and typed calls, package editing,
-snapshots, and watches. Launch, stop, and DLL loading require explicit requests.
-
-Python dependencies are downloaded by `uv sync` using uv.lock. An installed
-Microsoft Visual C++ Redistributable x64 is required. The DLL and loader are prebuilt;
-a C++ compiler is not required to run the prepared bundle. Native build sources
-are not included in this minimal bundle; rebuilds are performed in the Git workspace.
-
-The game compiles .as; hot reload is confirmed only for function bodies.
-Native compiler reports can be read through g1r_compile_diagnostics. ScriptPatches
-application was confirmed by an isolated official-runtime probe; each package
-still requires its own compilation and runtime verification.
-Isolated probe packages are prepared separately from tests/fixtures into artifacts;
-user mods and results from past experiments are not included.
-
-To verify the complete compilation workflow, create a separate complete working copy
-of the bundle. Keep the original folder for manifest verification; the working copy receives
-its own artifacts and will no longer pass verification against the original manifest.
-In PowerShell, specify absolute paths: the existing bundle, a new adjacent
-working-copy directory, the installed environment, official Modkit, and game.
-
-```powershell
-$bundlePath = "<absolute path to the original bundle>"
-$workingPath = "<absolute path to a new adjacent working copy>"
-$pythonPath = "<absolute environment path>\\Scripts\\python.exe"
-$modkitPath = "<absolute path to the official G1R-Modkit>"
-$gamePath = "<absolute path to the installed game>"
-$env:PYTHONDONTWRITEBYTECODE = "1"
-$bundlePath = (Resolve-Path -LiteralPath $bundlePath).ProviderPath
-$workingPath = [IO.Path]::GetFullPath($workingPath)
-if (Test-Path -LiteralPath $workingPath) {{ throw "The working copy already exists" }}
-if ([IO.Path]::GetDirectoryName($workingPath) -ne [IO.Path]::GetDirectoryName($bundlePath)) {{ throw "Choose an adjacent directory" }}
-& $pythonPath -B "$bundlePath\\tools\\prepare_bridge_bundle.py" --verify-root $bundlePath
-if ($LASTEXITCODE -ne 0) {{ throw "The original bundle failed verification" }}
-Copy-Item -LiteralPath $bundlePath -Destination $workingPath -Recurse
-$env:UV_PROJECT_ENVIRONMENT = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($pythonPath))
-uv sync --locked --project $workingPath
-if ($LASTEXITCODE -ne 0) {{ throw "The working-copy environment was not prepared" }}
-& $pythonPath -B "$workingPath\\tools\\prepare_compile_probe.py" --workspace-root "$workingPath\\artifacts\\compile-probe-baseline" --phase baseline
-if ($LASTEXITCODE -ne 0) {{ throw "Baseline preparation failed" }}
-& $pythonPath -B "$workingPath\\tools\\probe_development_mcp.py" --modkit-root $modkitPath --workspace-root $workingPath --game-root $gamePath --relative-package "artifacts/compile-probe-baseline/G1RMCPProbe" --expected-value 1
-```
-
-The final command explicitly launches its own game session, loads the DLL,
-checks the baseline ReadProbeValue method, and closes that session. Run it
-only when game launch is authorized. The expected value is 1; the local reload probe
-from the workspace with expected value 2 is not included in the bundle.
-"""
-    return text.encode("utf-8")
+The runtime bundle includes the inherited Python sources, declared dependencies,
+selected runtime tools and native DLL/loader. Gothic helper packages and probes
+remain source provenance in the development Git and are not Subnautica runtime
+fixtures. Server and game lifetimes are separate; finish temporary development
+processes when their work is complete. Installation and publication are separate
+operator assignments. Use a writable working copy for results so the immutable
+bundle continues to pass strict manifest verification.
+""".encode("utf-8")
 
 
 def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_version: str | None = None) -> dict:
@@ -294,8 +230,8 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
     target = _target(destination, repository)
     version = _version(repository)
     native_version = version if native_version is None else native_version
-    if not isinstance(native_version, str) or not re.fullmatch(r"\d+\.\d+\.\d+-dev\.\d+", native_version):
-        raise BundleError("invalid_version", "The native version must be a complete development version")
+    if not isinstance(native_version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", native_version):
+        raise BundleError("invalid_version", "The native version must be a complete numeric version")
     selected = _enumerate(repository)
     raw_files = {}
     for relative in selected:
@@ -314,8 +250,8 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
     manifest = {"schema_version": 1, "kind": "internal_bridge_folder", "version": version,
                 "compatibility": compatibility, "files": files,
                 "file_count": len(files), "total_bytes": sum(item["bytes"] for item in files),
-                "includes": ["python_sources", "locked_dependencies", "development_tools", "probe_fixtures", "prebuilt_native_bridge", "instructions"],
-                "excludes": ["virtual_environment", "official_modkit", "game_files", "game_caches", "user_mods", "saved_games", "logs", "local_mcp_settings"],
+                "includes": ["python_sources", "locked_dependencies", "runtime_tools", "prebuilt_native_bridge", "instructions"],
+                "excludes": ["virtual_environment", "game_files", "game_caches", "user_mods", "saved_games", "logs", "local_mcp_settings"],
                 "runtime_validation": "not_performed_by_packager", "installed": False}
     manifest["compatibility_source_sha256"] = compatibility_source
     raw_files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
@@ -326,7 +262,7 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
         try:
             if os.path.lexists(target):
                 raise BundleError("already_exists", "The bundle directory appeared before writing")
-            stage = Path(tempfile.mkdtemp(prefix=".g1r-bridge-bundle-", dir=target.parent))
+            stage = Path(tempfile.mkdtemp(prefix=".sn2-bridge-bundle-", dir=target.parent))
             own_directories["."] = _identity(stage)
             with _guard_directories(stage, target.parent), contextlib.ExitStack() as guards:
                 for relative, raw in sorted(raw_files.items()):
@@ -412,18 +348,17 @@ def verify_bundle(bundle_root: Path) -> dict:
             or manifest.get("file_count") != len(files) or manifest.get("total_bytes") != total):
         raise BundleError("integrity_mismatch", "The complete bundle contents differ from the manifest")
     required = set(DOCUMENTS) | {"tools/" + name for name in TOOLS} | set(BINARIES) | {"START.md"}
-    required |= {"src/g1r_mcp/" + name for name in SOURCE_FILES}
+    required |= {"src/sn2_mcp/" + name for name in SOURCE_FILES}
     required |= set(HELPER_FILES)
     required |= {f"tests/fixtures/{name}/GothicMod.json" for name in FIXTURE_DIRS}
     required |= {f"tests/fixtures/{name}/Script/{script}" for name, script in FIXTURE_SCRIPTS.items()}
-    required.add("tests/fixtures/patch_probe/ScriptPatches/Marker.patch")
     if not required.issubset(expected):
         raise BundleError("incomplete_bundle", "The bundle is missing a required runtime file")
     version = _version(root)
     compatibility = manifest.get("compatibility")
     native_version = compatibility.get("native_version_marker") if isinstance(compatibility, dict) else None
     if (manifest.get("version") != version or not isinstance(compatibility, dict)
-            or not isinstance(native_version, str) or not re.fullmatch(r"\d+\.\d+\.\d+-dev\.\d+", native_version)
+            or not isinstance(native_version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", native_version)
             or compatibility.get("platform") != "Windows x64"):
         raise BundleError("invalid_manifest", "The bundle version or compatibility contract is invalid")
     dll = _read(root / BINARIES[0], root)
@@ -438,6 +373,10 @@ def verify_bundle(bundle_root: Path) -> dict:
         raise BundleError("invalid_manifest", "The bundle compatibility binding method is invalid")
     if native_version.encode("ascii") not in dll or marker.encode("ascii") not in dll:
         raise BundleError("native_version_mismatch", "The DLL does not match the version or binding contract in the manifest")
+    if (compatibility.get("development_probes") is not False
+            or compatibility.get("development_build_marker") != PRODUCTION_MARKER.decode("ascii")):
+        raise BundleError("invalid_manifest", "The bundle must declare production-only native contents")
+    _production_binary(dll)
     for content in (dll, loader):
         if len(content) < 64 or content[:2] != b"MZ":
             raise BundleError("invalid_binary", "The bundle binary is not a PE x64 binary")
@@ -449,7 +388,7 @@ def verify_bundle(bundle_root: Path) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Prepare or verify a portable internal G1R MCP bundle")
+    parser = argparse.ArgumentParser(description="Prepare or verify a portable internal Subnautica 2 MCP bundle")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--destination", type=Path, help="A new directory within artifacts in the current Git workspace")
     group.add_argument("--verify-root", type=Path, help="Verify all unpacked bundle hashes without launching the game")

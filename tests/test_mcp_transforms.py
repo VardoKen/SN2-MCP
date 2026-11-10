@@ -82,12 +82,11 @@ class MCPTransformTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    listed = await client.call_tool("g1r_object_functions", {"handle": handle, "function_query": "AcceptTransform"})
+                    listed = await client.call_tool("sn2_object_functions", {"handle": handle, "function_query": "AcceptTransform"})
                     self.assertFalse(listed.is_error, listed.content)
                     self.assertEqual(listed.structured_content, functions)
                     parameter = listed.structured_content["items"][0]["parameters"][0]
@@ -95,7 +94,7 @@ class MCPTransformTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(parameter["argument_constraints"], constraints)
                     self.assertEqual(parameter["argument_constraints"]["normalization"], "none")
                     token = listed.structured_content["items"][0]["signature_token"]
-                    accepted_response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "AcceptTransform",
+                    accepted_response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "AcceptTransform",
                         "arguments": {"Input": input_transform}, "expected_signature_token": token})
                     self.assertFalse(accepted_response.is_error, accepted_response.content)
                     self.assertEqual(accepted_response.structured_content, accepted)
@@ -105,11 +104,11 @@ class MCPTransformTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(type(received["Rotation"]["Y"]), int)
                     self.assertIs(type(received["Translation"]["Z"]), int)
                     self.assertIs(type(received["Scale3D"]["Y"]), float)
-                    translated = await client.call_tool("g1r_invoke", {"handle": handle, "function": "ReadTranslation"})
+                    translated = await client.call_tool("sn2_invoke", {"handle": handle, "function": "ReadTranslation"})
                     self.assertFalse(translated.is_error, translated.content)
                     self.assertEqual(translated.structured_content, read_translation)
                     for offset, invalid in enumerate((malformed, bad_norm)):
-                        denied = await client.call_tool("g1r_invoke", {"handle": handle, "function": "AcceptTransform",
+                        denied = await client.call_tool("sn2_invoke", {"handle": handle, "function": "AcceptTransform",
                             "arguments": {"Input": invalid}, "expected_signature_token": token})
                         self.assertTrue(denied.is_error, denied.content)
                         message = next(block.text for block in denied.content if block.type == "text")
@@ -119,7 +118,7 @@ class MCPTransformTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], native.requests[3 + offset]["id"])
                         self.assertEqual(native.requests[3 + offset]["params"]["arguments"]["Input"], invalid)
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

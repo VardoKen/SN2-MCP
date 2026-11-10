@@ -48,7 +48,7 @@ async def run_probe(args: argparse.Namespace) -> dict:
         raise ProbeError("invalid_reload", "Reload requires --probe-workspace and --expected-sha256")
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)],
         cwd=str(REPOSITORY_ROOT),
     )
@@ -71,12 +71,12 @@ async def run_probe(args: argparse.Namespace) -> dict:
                     raise ProbeError("mcp_result_invalid", f"{name}: the response is not a structured object")
                 return result.structured_content
 
-            status = await call("g1r_native_status", {})
+            status = await call("sn2_native_status", {})
             if args.enable and not status.get("hook_installed"):
-                await call("g1r_native_enable", {})
+                await call("sn2_native_enable", {})
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline:
-                    status = await call("g1r_native_status", {})
+                    status = await call("sn2_native_status", {})
                     if status.get("ready"):
                         break
                     await asyncio.sleep(0.1)
@@ -84,7 +84,7 @@ async def run_probe(args: argparse.Namespace) -> dict:
             if not status.get("ready"):
                 raise ProbeError("game_not_ready", "Game Tick was not confirmed; enable the existing bridge")
 
-            found = await call("g1r_find_objects", {"query": "Default__G1RMCPCompileProbe",
+            found = await call("sn2_find_objects", {"query": "Default__G1RMCPCompileProbe",
                                                     "class_query": "G1RMCPCompileProbe", "limit": 50})
             matches = [item for item in found.get("items", [])
                        if item.get("name") == "Default__G1RMCPCompileProbe"]
@@ -92,9 +92,9 @@ async def run_probe(args: argparse.Namespace) -> dict:
                 raise ProbeError("probe_object_absent", "The exact compilation marker CDO was not uniquely found")
             target = matches[0]
             report["probe_object"] = target
-            functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 100})
+            functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 100})
             report["signature"] = check_signature(functions)
-            baseline = await call("g1r_invoke", {"handle": target["handle"], "function": METHOD_NAME, "arguments": {}})
+            baseline = await call("sn2_invoke", {"handle": target["handle"], "function": METHOD_NAME, "arguments": {}})
             report["baseline_call"] = baseline
             if baseline.get("executed") is not True or type(baseline.get("result")) is not int or baseline["result"] != args.expected_value:
                 raise ProbeError("probe_value_mismatch", "The marker returned a value different from the expected value")
@@ -103,7 +103,7 @@ async def run_probe(args: argparse.Namespace) -> dict:
             if args.observations:
                 if not args.observe_query or not args.property:
                     raise ProbeError("invalid_observation", "Observations require --observe-query and at least one --property")
-                found = await call("g1r_find_objects", {"query": args.observe_query,
+                found = await call("sn2_find_objects", {"query": args.observe_query,
                                                         "class_query": args.observe_class or "", "limit": 50})
                 exact = [item for item in found.get("items", []) if item.get("name") == args.observe_query]
                 if len(exact) != 1:
@@ -111,24 +111,24 @@ async def run_probe(args: argparse.Namespace) -> dict:
                 observed = exact[0]
                 previous_handle = observed["handle"]
                 targets = [{"handle": observed["handle"], "properties": args.property}]
-                before = await call("g1r_snapshot", {"targets": targets})
-                watch = await call("g1r_watch_start", {"handle": observed["handle"], "properties": args.property,
+                before = await call("sn2_snapshot", {"targets": targets})
+                watch = await call("sn2_watch_start", {"handle": observed["handle"], "properties": args.property,
                                                        "duration_ms": 1200, "interval_ms": 100, "capacity": 4})
                 watch_id = watch["watch_id"]
                 try:
                     await asyncio.sleep(0.35)
-                    events = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
-                    stopped = await call("g1r_watch_stop", {"watch_id": watch_id})
-                    final = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
-                    after = await call("g1r_snapshot", {"targets": targets})
-                    comparison = await call("g1r_compare_snapshots", {"before": before, "after": after, "limit": 100})
+                    events = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+                    stopped = await call("sn2_watch_stop", {"watch_id": watch_id})
+                    final = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+                    after = await call("sn2_snapshot", {"targets": targets})
+                    comparison = await call("sn2_compare_snapshots", {"before": before, "after": after, "limit": 100})
                     report["observations"] = {"object": observed, "before": before, "watch": watch,
                                                "events": events, "stopped": stopped, "final": final,
                                                "after": after, "comparison": comparison}
                 finally:
-                    await call("g1r_watch_stop", {"watch_id": watch_id})
-                    await call("g1r_watch_forget", {"watch_id": watch_id})
-                disconnect_watch = await call("g1r_watch_start", {"handle": observed["handle"], "properties": args.property,
+                    await call("sn2_watch_stop", {"watch_id": watch_id})
+                    await call("sn2_watch_forget", {"watch_id": watch_id})
+                disconnect_watch = await call("sn2_watch_start", {"handle": observed["handle"], "properties": args.property,
                                                                   "duration_ms": 2000, "interval_ms": 100, "capacity": 4})
                 previous_watch_id = disconnect_watch["watch_id"]
                 report["disconnect_watch"] = disconnect_watch
@@ -143,9 +143,9 @@ async def run_probe(args: argparse.Namespace) -> dict:
                 attempts = 0
                 while time.monotonic() < deadline:
                     await asyncio.sleep(0.25)
-                    functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 100})
+                    functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 100})
                     check_signature(functions)
-                    result = await call("g1r_invoke", {"handle": target["handle"], "function": METHOD_NAME, "arguments": {}})
+                    result = await call("sn2_invoke", {"handle": target["handle"], "function": METHOD_NAME, "arguments": {}})
                     attempts += 1
                     report["reload_call"] = result
                     if result.get("executed") is True and type(result.get("result")) is int and result["result"] == 2:
@@ -158,11 +158,11 @@ async def run_probe(args: argparse.Namespace) -> dict:
         async with stdio_client(parameters) as (incoming, outgoing):
             async with ClientSession(incoming, outgoing) as client:
                 await client.initialize()
-                await client.call_tool("g1r_native_status", {})
+                await client.call_tool("sn2_native_status", {})
                 stale = {}
                 for name, arguments in (
-                        ("g1r_watch_read", {"watch_id": previous_watch_id, "after_seq": 0, "limit": 10}),
-                        ("g1r_object_properties", {"handle": previous_handle, "limit": 2})):
+                        ("sn2_watch_read", {"watch_id": previous_watch_id, "after_seq": 0, "limit": 10}),
+                        ("sn2_object_properties", {"handle": previous_handle, "limit": 2})):
                     result = await client.call_tool(name, arguments)
                     message = next((item.text for item in result.content if item.type == "text"), "")
                     stale[name] = {"is_error": result.is_error, "message": message}

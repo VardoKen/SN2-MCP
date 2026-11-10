@@ -153,7 +153,7 @@ def _single_error(error: BaseException) -> BaseException:
 async def run_probe(args: argparse.Namespace) -> dict:
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)],
         cwd=str(REPOSITORY_ROOT), env={"PYTHONUTF8": "1"},
     )
@@ -162,7 +162,7 @@ async def run_probe(args: argparse.Namespace) -> dict:
             initialized = await client.initialize()
             tools = (await client.list_tools()).tools
             names = {tool.name for tool in tools}
-            required = {"g1r_native_status", "g1r_find_objects", "g1r_snapshot", "g1r_compare_snapshots"}
+            required = {"sn2_native_status", "sn2_find_objects", "sn2_snapshot", "sn2_compare_snapshots"}
             _require(required <= names and all(tool.annotations and tool.annotations.read_only_hint is True
                                                for tool in tools if tool.name in required),
                      "probe_tools_unavailable", "The bridge does not provide the required read-only tools")
@@ -176,23 +176,23 @@ async def run_probe(args: argparse.Namespace) -> dict:
                          "The MCP response does not contain structured JSON")
                 return response.structured_content
 
-            status = await call("g1r_native_status", {})
+            status = await call("sn2_native_status", {})
             _require(status.get("ready") is True, "game_not_ready", "The game and Tick must be ready before this read-only check")
             targets = {}
             discoveries = {}
             for label, expected in PROBE_OBJECTS.items():
-                found = await call("g1r_find_objects", {"query": "", "class_query": expected["class"],
+                found = await call("sn2_find_objects", {"query": "", "class_query": expected["class"],
                                                        "exact_path": expected["path"], "limit": 2})
                 targets[label] = check_target(found, expected)
                 discoveries[label] = {key: found[key] for key in ("total_slots", "scanned_slots", "skipped", "truncated")}
             request = {"targets": [{"handle": target["handle"], "properties": PROPERTY_NAMES[label]}
                                    for label, target in targets.items()]}
-            before = await call("g1r_snapshot", request)
+            before = await call("sn2_snapshot", request)
             before_values = check_snapshot(before, targets)
-            after = await call("g1r_snapshot", request)
+            after = await call("sn2_snapshot", request)
             after_values = check_snapshot(after, targets)
             _require(before_values == after_values, "probe_values_changed", "Probe values changed between reads")
-            comparison = await call("g1r_compare_snapshots", {"before": before, "after": after})
+            comparison = await call("sn2_compare_snapshots", {"before": before, "after": after})
             check_comparison(comparison, before, after)
             _require(before["session_id"] == after["session_id"] == status.get("session_id") and
                      before["process_id"] == after["process_id"] == status.get("process_id") and

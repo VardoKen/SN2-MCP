@@ -91,7 +91,7 @@ def check_native_signature(listing: dict) -> tuple[dict, str, str, str]:
 
 async def native_proof(call, report):
     report["native_math"] = {"tested": False}
-    found = await call("g1r_find_objects", {"query": "Default__" + NATIVE_CLASS, "class_query": NATIVE_CLASS,
+    found = await call("sn2_find_objects", {"query": "Default__" + NATIVE_CLASS, "class_query": NATIVE_CLASS,
                                           "exact_path": NATIVE_PATH, "limit": 2})
     if (found.get("truncated") is not False or not isinstance(found.get("items"), list) or len(found["items"]) != 1):
         raise ProbeError("probe_object_absent", "Exact native KismetMathLibrary CDO was not found uniquely")
@@ -99,13 +99,13 @@ async def native_proof(call, report):
     if (not isinstance(target, dict) or target.get("name") != "Default__" + NATIVE_CLASS or target.get("class") != NATIVE_CLASS
             or target.get("path") != NATIVE_PATH or not isinstance(target.get("handle"), str) or not target["handle"].startswith("obj-")):
         raise ProbeError("unsafe_probe_target", "Exact native Kismet math CDO is not confirmed")
-    listing = await call("g1r_object_functions", {"handle": target["handle"], "function_query": NATIVE_METHOD, "limit": 10})
+    listing = await call("sn2_object_functions", {"handle": target["handle"], "function_query": NATIVE_METHOD, "limit": 10})
     report["native_math"].update(target=target, reflected_functions=listing)
     _, token, transform_name, vector_name = check_native_signature(listing)
     transform = copy.deepcopy(IDENTITY)
     transform.update(Translation={"X": 1.25, "Y": -2.5, "Z": 3.75}, Scale3D={"X": 2, "Y": 0.5, "Z": -1})
     point, expected = {"X": 1, "Y": 2, "Z": 3}, {"X": 3.25, "Y": -1.5, "Z": 0.75}
-    result = await call("g1r_invoke", {"handle": target["handle"], "function": NATIVE_METHOD,
+    result = await call("sn2_invoke", {"handle": target["handle"], "function": NATIVE_METHOD,
         "arguments": {transform_name: transform, vector_name: point}, "expected_signature_token": token})
     if result.get("executed") is not True or result.get("return_type") != "StructProperty":
         raise ProbeError("probe_transform_native_result", "Native TransformLocation did not confirm a Vector return")
@@ -129,7 +129,7 @@ async def run(args):
                 initialized = await session.initialize()
                 return {"server_version": initialized.server_info.version, **await exercise(make_caller(session))}
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):
         async with ClientSession(incoming, outgoing) as session:

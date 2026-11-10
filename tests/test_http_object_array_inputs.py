@@ -9,8 +9,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -94,7 +94,7 @@ class HTTPObjectArrayInputTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        transport="streamable-http")
             factory.assert_called_once_with(port=native.port)
@@ -140,7 +140,7 @@ class HTTPObjectArrayInputTests(unittest.IsolatedAsyncioTestCase):
                     first_session = await initialize(first, "array-listing-client")
                     second_session = await initialize(second, "array-invoke-client")
                     self.assertNotEqual(first_session, second_session)
-                    listed = await call(first, first_session, "g1r_object_functions", {
+                    listed = await call(first, first_session, "sn2_object_functions", {
                         "handle": handle, "function_query": "CheckObjects"})
                     self.assertFalse(listed.get("isError", False), listed)
                     self.assertEqual(listed["structuredContent"], reflection)
@@ -151,7 +151,7 @@ class HTTPObjectArrayInputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(parameter["passing"], "const_reference")
                     self.assertIs(parameter["const"], True)
                     shared_token = listed["structuredContent"]["items"][0]["signature_token"]
-                    invoked = await call(second, second_session, "g1r_invoke", {
+                    invoked = await call(second, second_session, "sn2_invoke", {
                         "handle": handle, "function": "CheckObjects", "arguments": arguments,
                         "expected_signature_token": shared_token})
                     self.assertFalse(invoked.get("isError", False), invoked)
@@ -164,7 +164,7 @@ class HTTPObjectArrayInputTests(unittest.IsolatedAsyncioTestCase):
                         parameters = {"handle": handle, "function": function, "arguments": malformed}
                         if expected_token is not None:
                             parameters["expected_signature_token"] = shared_token
-                        denied = await call(first, first_session, "g1r_invoke", parameters)
+                        denied = await call(first, first_session, "sn2_invoke", parameters)
                         self.assertTrue(denied["isError"])
                         message = next(block["text"] for block in denied["content"]
                                        if block["type"] == "text")
@@ -173,7 +173,7 @@ class HTTPObjectArrayInputTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(error["effect"], no_effect)
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], native.requests[index]["id"])
-                    checked = await call(second, second_session, "g1r_native_status", {})
+                    checked = await call(second, second_session, "sn2_native_status", {})
                     self.assertFalse(checked.get("isError", False), checked)
                     self.assertEqual(checked["structuredContent"], status)
             self.assertEqual(native.connections, 1)

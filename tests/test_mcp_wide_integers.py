@@ -50,13 +50,12 @@ class MCPWideIntegerTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     for index, (function, value) in enumerate(accepted):
-                        response = await client.call_tool("g1r_invoke", {"handle": handle, "function": function,
+                        response = await client.call_tool("sn2_invoke", {"handle": handle, "function": function,
                                                           "arguments": {"Input": value}})
                         self.assertFalse(response.is_error, response.content)
                         self.assertIs(type(response.structured_content["return"]), int)
@@ -65,7 +64,7 @@ class MCPWideIntegerTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(type(received), int)
                         self.assertEqual(received, value)
                     for offset, (function, value) in enumerate(rejected):
-                        response = await client.call_tool("g1r_invoke", {"handle": handle, "function": function,
+                        response = await client.call_tool("sn2_invoke", {"handle": handle, "function": function,
                                                           "arguments": {"Input": value}})
                         self.assertTrue(response.is_error, response.content)
                         message = next(block.text for block in response.content if block.type == "text")
@@ -76,7 +75,7 @@ class MCPWideIntegerTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(error["effect"], no_effect)
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], request["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

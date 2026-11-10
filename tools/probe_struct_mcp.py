@@ -115,11 +115,11 @@ def check_struct(response: object, target: dict, session_id: str, property_name:
 
 
 async def exercise(call) -> dict:
-    status = await call("g1r_native_status", {})
+    status = await call("sn2_native_status", {})
     owner = status.get("session_id")
     if status.get("ready") is not True or not isinstance(owner, str) or not owner:
         raise ProbeError("game_not_ready", "Tick and current session are not confirmed")
-    found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
+    found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
                                            "exact_path": "/Script/Angelscript.Default__" + HOST, "limit": 2})
     if (found.get("truncated") is not False or not isinstance(found.get("items"), list)
             or len(found["items"]) != 1):
@@ -127,12 +127,12 @@ async def exercise(call) -> dict:
     target = check_target(found["items"][0])
     signatures = {}
     for method in METHODS:
-        signature = await call("g1r_object_functions", {"handle": target["handle"], "limit": 20,
+        signature = await call("sn2_object_functions", {"handle": target["handle"], "limit": 20,
                                                         "function_query": method})
         signatures[method] = check_signature(signature, method)
 
     async def read_scalar(method):
-        result = await call("g1r_invoke", {"handle": target["handle"], "function": method, "arguments": {}})
+        result = await call("sn2_invoke", {"handle": target["handle"], "function": method, "arguments": {}})
         expected_type = signatures[method]["parameters"][0]["type"]
         if result.get("executed") is not True or result.get("return_type") != expected_type:
             raise ProbeError("probe_not_executed", "Owned component read did not confirm execution")
@@ -147,12 +147,12 @@ async def exercise(call) -> dict:
         before = {name: await read_scalar(method) for name, (method, _) in expected.items()}
         if any(not _finite(before[name]) or before[name] != number for name, (_, number) in expected.items()):
             raise ProbeError("probe_initial_values", "Initial struct constants are not confirmed by scalar methods")
-        result = await call("g1r_read_struct", {"handle": target["handle"], "property_name": property_name})
+        result = await call("sn2_read_struct", {"handle": target["handle"], "property_name": property_name})
         checked = check_struct(result, target, owner, property_name)
         after = {name: await read_scalar(method) for name, (method, _) in expected.items()}
         if before != checked["components"] or after != before:
             raise ProbeError("probe_struct_mismatch", "Copied components do not match stable AS methods")
-        repeated = check_struct(await call("g1r_read_struct", {"handle": target["handle"], "property_name": property_name}),
+        repeated = check_struct(await call("sn2_read_struct", {"handle": target["handle"], "property_name": property_name}),
                                 target, owner, property_name)
         if repeated != checked:
             raise ProbeError("probe_struct_unstable", "Repeated struct constant reads changed")
@@ -163,7 +163,7 @@ async def exercise(call) -> dict:
 
 async def run_probe(args) -> dict:
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)],
         cwd=str(REPOSITORY_ROOT), env={"PYTHONUTF8": "1"})
     async with stdio_client(parameters) as (incoming, outgoing):

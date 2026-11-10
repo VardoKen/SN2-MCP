@@ -1,4 +1,4 @@
-"""ClassProperty MCP → TCP: классовые ссылки и эффекты отказов, без игры."""
+"""ClassProperty MCP to TCP preserves class references and failure effects without a game."""
 
 import copy
 import json
@@ -61,7 +61,7 @@ class MCPClassTests(unittest.IsolatedAsyncioTestCase):
         workspace = root / "workspace"
         workspace.mkdir()
         return StdioServerParameters(command=sys.executable,
-            args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
+            args=["-B", "-m", "sn2_mcp.server",
                   "--workspace-root", str(workspace), "--native-port", str(port)])
 
     async def call_ok(self, client, name, params, expected=None):
@@ -104,27 +104,27 @@ class MCPClassTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(self.parameters(Path(directory), native.port)) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    signature = await self.call_ok(client, "g1r_object_functions", {"handle": "obj-probe"}, class_signature())
+                    signature = await self.call_ok(client, "sn2_object_functions", {"handle": "obj-probe"}, class_signature())
                     self.assertEqual(signature["items"][0]["parameters"][1]["offset"], 8)
                     for input_value, expected in (({"handle": "class-1"}, base), (None, None), ({"handle": "class-2"}, child)):
-                        await self.call_ok(client, "g1r_invoke", params(input_value), invoked(expected))
-                    snapshots = [await self.call_ok(client, "g1r_snapshot", {"targets": targets}, expected)
+                        await self.call_ok(client, "sn2_invoke", params(input_value), invoked(expected))
+                    snapshots = [await self.call_ok(client, "sn2_snapshot", {"targets": targets}, expected)
                                  for expected in (initial, selected, same, derived)]
                     originals = copy.deepcopy(snapshots)
-                    changed = await self.call_ok(client, "g1r_compare_snapshots", {"before": snapshots[0], "after": snapshots[1]})
+                    changed = await self.call_ok(client, "sn2_snapshot_compare", {"before": snapshots[0], "after": snapshots[1]})
                     self.assertEqual((changed["type_changes"], changed["value_changes"], changed["unknown_count"]), (0, 1, 0))
-                    stable = await self.call_ok(client, "g1r_compare_snapshots", {"before": snapshots[1], "after": snapshots[2]})
+                    stable = await self.call_ok(client, "sn2_snapshot_compare", {"before": snapshots[1], "after": snapshots[2]})
                     self.assertTrue(stable["equal_selected_values"])
-                    subclass = await self.call_ok(client, "g1r_compare_snapshots", {"before": snapshots[2], "after": snapshots[3]})
+                    subclass = await self.call_ok(client, "sn2_snapshot_compare", {"before": snapshots[2], "after": snapshots[3]})
                     self.assertEqual((subclass["type_changes"], subclass["value_changes"]), (0, 1))
                     for value in (native_class, base, {**base, "class": "FutureSubclassOfClass"}):
                         copied = class_snapshot(value)
-                        response = await self.call_ok(client, "g1r_compare_snapshots", {"before": copied, "after": copied})
+                        response = await self.call_ok(client, "sn2_snapshot_compare", {"before": copied, "after": copied})
                         self.assertTrue(response["equal_selected_values"])
                         self.assertEqual(response["provenance"], "unverified")
                         self.assertEqual(response["validation"], "client_supplied_copies")
                     conflicting = class_snapshot({**base, "class": "DifferentMetaclass"})
-                    unknown = await self.call_ok(client, "g1r_compare_snapshots", {"before": selected, "after": conflicting})
+                    unknown = await self.call_ok(client, "sn2_snapshot_compare", {"before": selected, "after": conflicting})
                     self.assertEqual((unknown["value_changes"], unknown["unknown_count"]), (0, 1))
                     self.assertEqual(snapshots, originals)
             self.assertEqual(native.connections, 1)
@@ -141,33 +141,33 @@ class MCPClassTests(unittest.IsolatedAsyncioTestCase):
         stale = {"handle": "obj-previous-session", "function": "EchoTypedClass", "arguments": {"Input": None}}
         steps = [
             {"op": "invoke", "params": params("class-unrelated"),
-             "error": {"code": "incompatible_class_argument", "message": "Представляемый класс не совместим", "details": effect_false}},
+             "error": {"code": "incompatible_class_argument", "message": "Represented class is incompatible", "details": effect_false}},
             {"op": "invoke", "params": params("obj-cdo"),
-             "error": {"code": "invalid_class_argument", "message": "Обычный UObject не является UClass", "details": effect_false}},
+             "error": {"code": "invalid_class_argument", "message": "Plain UObject is not a UClass", "details": effect_false}},
             {"op": "invoke", "params": params("class-1"), "result": invoked(class_descriptor())},
             {"op": "invoke", "params": params("class-1"),
-             "error": {"code": "game_result_error", "message": "Вызов выполнен, результат не получен", "details": result_error}},
+             "error": {"code": "game_result_error", "message": "Call executed but result was not obtained", "details": result_error}},
             {"op": "invoke", "params": params("class-1"), "drop": True},
             {"op": "status", "params": {}, "result": status},
             {"op": "invoke", "params": stale,
-             "error": {"code": "stale_handle", "message": "Ссылка старой сессии", "details": effect_false}},
+             "error": {"code": "stale_handle", "message": "Handle belongs to an earlier session", "details": effect_false}},
         ]
         with tempfile.TemporaryDirectory() as directory, SessionNativeFixture(steps) as native:
             async with stdio_client(self.parameters(Path(directory), native.port)) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     for handle, code in (("class-unrelated", "incompatible_class_argument"), ("obj-cdo", "invalid_class_argument")):
-                        error = await self.call_error(client, "g1r_invoke", params(handle), code)
+                        error = await self.call_error(client, "sn2_invoke", params(handle), code)
                         self.assertFalse(error["may_have_executed"])
                         self.assertEqual(error["effect"], effect_false)
-                    await self.call_ok(client, "g1r_invoke", params("class-1"), invoked(class_descriptor()))
-                    result = await self.call_error(client, "g1r_invoke", params("class-1"), "game_result_error")
+                    await self.call_ok(client, "sn2_invoke", params("class-1"), invoked(class_descriptor()))
+                    result = await self.call_error(client, "sn2_invoke", params("class-1"), "game_result_error")
                     self.assertTrue(result["may_have_executed"])
                     self.assertEqual(result["effect"], result_error)
-                    lost = await self.call_error(client, "g1r_invoke", params("class-1"), "native_disconnected")
+                    lost = await self.call_error(client, "sn2_invoke", params("class-1"), "native_disconnected")
                     self.assertTrue(lost["may_have_executed"])
-                    await self.call_ok(client, "g1r_native_status", {}, status)
-                    old = await self.call_error(client, "g1r_invoke", stale, "stale_handle")
+                    await self.call_ok(client, "sn2_native_status", {}, status)
+                    old = await self.call_error(client, "sn2_invoke", stale, "stale_handle")
                     self.assertFalse(old["may_have_executed"])
             self.assertEqual(native.connections, 2)
             self.assertEqual(len(native.requests), 7)

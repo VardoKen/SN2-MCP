@@ -53,13 +53,13 @@ class HelpersFixture(WrapperFixture):
                 "truncated": False, "scan_complete": True, "scan_truncated": False}
 
     async def call(self, name, arguments, *, expected_error=None):
-        if name == "g1r_find_objects" and arguments["class_query"] == probe.HOST:
+        if name == "sn2_find_objects" and arguments["class_query"] == probe.HOST:
             self.calls.append((name, copy.deepcopy(arguments), expected_error))
             return {"items": [self.helper_cdo, self.helper], "truncated": False}
-        if name == "g1r_object_functions" and arguments["handle"] == self.helper["handle"]:
+        if name == "sn2_object_functions" and arguments["handle"] == self.helper["handle"]:
             self.calls.append((name, copy.deepcopy(arguments), expected_error))
             return self.helper_functions(arguments["function_query"])
-        if name == "g1r_invoke" and arguments["handle"] == self.helper["handle"]:
+        if name == "sn2_invoke" and arguments["handle"] == self.helper["handle"]:
             self.calls.append((name, copy.deepcopy(arguments), expected_error))
             method = arguments["function"]
             if arguments["expected_signature_token"] != self.helper_tokens[method]: raise AssertionError("helper token")
@@ -95,7 +95,7 @@ class DevelopmentHelpersProbeTests(unittest.TestCase):
         self.assertEqual(report["helper"]["trace"]["arguments"]["Channel"], 7)
         self.assertTrue(report["helper"]["trace"]["tested"])
         self.assertEqual(fixture.resets, 1)
-        helper_calls = [args["function"] for name, args, _ in fixture.calls if name == "g1r_invoke" and args["handle"] == "obj-helper"]
+        helper_calls = [args["function"] for name, args, _ in fixture.calls if name == "sn2_invoke" and args["handle"] == "obj-helper"]
         self.assertEqual(helper_calls, ["GetHelperVersion", "HasWorld", "HasGameplayPlayer",
                                         "GetVisibilityTraceChannel", "TraceImpactPoint"])
 
@@ -115,7 +115,7 @@ class DevelopmentHelpersProbeTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(probe.ProbeError) as caught:
                 asyncio.run(probe.helper_exercise(fixture.call))
             self.assertEqual(caught.exception.code, "probe_scalar_out_result")
-            self.assertFalse(any(name == "g1r_invoke" and arguments["handle"] == "obj-helper"
+            self.assertFalse(any(name == "sn2_invoke" and arguments["handle"] == "obj-helper"
                                  and arguments["function"] == "TraceImpactPoint"
                                  for name, arguments, _ in fixture.calls))
 
@@ -131,7 +131,7 @@ class DevelopmentHelpersProbeTests(unittest.TestCase):
         for kwargs in ({"bad_version": True}, {"has_helper_world": False}, {"bad_enum": True}):
             fixture = HelpersFixture(**kwargs)
             with self.subTest(kwargs=kwargs), self.assertRaises(probe.ProbeError): asyncio.run(probe.exercise(fixture.call))
-            self.assertFalse(any(name == "g1r_invoke" and args["handle"] == "obj-helper" and args["function"] == "TraceImpactPoint"
+            self.assertFalse(any(name == "sn2_invoke" and args["handle"] == "obj-helper" and args["function"] == "TraceImpactPoint"
                                  for name, args, _ in fixture.calls))
 
     def test_channel_failure_retains_exact_getter_result_before_validation(self):
@@ -145,12 +145,12 @@ class DevelopmentHelpersProbeTests(unittest.TestCase):
         fixture = HelpersFixture()
         async def call(name, arguments, *, expected_error=None):
             result = await fixture.call(name, arguments, expected_error=expected_error)
-            if name == "g1r_find_objects" and arguments["class_query"] == probe.HOST:
+            if name == "sn2_find_objects" and arguments["class_query"] == probe.HOST:
                 return {"items": [], "truncated": False}
             return result
         with self.assertRaises(probe.ProbeError) as caught: asyncio.run(probe.helper_exercise(call))
         self.assertTrue(any('"find_result": {"items": [], "truncated": false}' in note for note in caught.exception.__notes__))
-        self.assertFalse(any(name == "g1r_invoke" for name, _, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" for name, _, _ in fixture.calls))
 
     def test_channel_ambiguous_missing_path_or_bool_value_not_guessed(self):
         valid = {"executed": True, "return_type": "ByteProperty", "result": 7, "return_enum": {"path": probe.ENUM_PATH,
@@ -196,13 +196,13 @@ class DevelopmentHelpersProbeTests(unittest.TestCase):
             async def callback(call): return {"ok": True}
             await development.development_cycle(fake.call, "artifacts/main", 251, probe=callback,
                                                 companion_packages=["development/helpers/G1RMCPDevelopmentHelpers"])
-            related = [args for name, args in fake.calls if name in {"g1r_development_recipe", "g1r_development_start"}]
+            related = [args for name, args in fake.calls if name in {"sn2_development_recipe", "sn2_development_start"}]
             self.assertEqual(len(related), 3)
             self.assertTrue(all(args["companion_packages"] == ["development/helpers/G1RMCPDevelopmentHelpers"] for args in related))
             default = FakeMCP()
             await development.development_cycle(default.call, "artifacts/main", 251, probe=callback)
             self.assertTrue(all("companion_packages" not in args for name, args in default.calls
-                                if name in {"g1r_development_recipe", "g1r_development_start"}))
+                                if name in {"sn2_development_recipe", "sn2_development_start"}))
         asyncio.run(scenario())
 
     def test_invalid_companion_shape_rejects_before_commands(self):

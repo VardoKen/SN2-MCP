@@ -1,4 +1,4 @@
-﻿function ConvertFrom-G1RNativeLoadResult {
+﻿function ConvertFrom-SN2NativeLoadResult {
     param([Parameter(Mandatory = $true)][string]$Source,
           [Parameter(Mandatory = $true)][uint32]$ExpectedPid)
     $nativeResult = $Source | ConvertFrom-Json -ErrorAction Stop

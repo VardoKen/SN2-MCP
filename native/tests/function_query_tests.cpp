@@ -1,4 +1,4 @@
-#include <g1r_mcp/function_query.hpp>
+#include <sn2_mcp/function_query.hpp>
 
 #include <iostream>
 #include <stdexcept>
@@ -12,7 +12,7 @@ void require(bool result, const char* message) {
 }
 
 int main() {
-    namespace query = g1r_mcp::function_query;
+    namespace query = sn2_mcp::function_query;
     try {
         require(query::valid(""), "Пустой фильтр разрешён");
         require(query::valid(std::string(512, 'a')), "Граница 512 байт разрешена");

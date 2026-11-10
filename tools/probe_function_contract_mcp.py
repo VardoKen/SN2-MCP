@@ -72,11 +72,11 @@ def check_rejection(result: dict, code: str) -> None:
 
 async def _exercise(call, cleanup_state: dict) -> dict:
     """All EchoName calls must be rejected; Reset restores the CDO after the probes."""
-    status = await call("g1r_native_status", {})
+    status = await call("sn2_native_status", {})
     session_id = status.get("session_id")
     if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
         raise ProbeError("game_not_ready", "The ready queue and native session owner were not confirmed")
-    found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST, "limit": 50})
+    found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST, "limit": 50})
     exact = [item for item in found.get("items", [])
              if isinstance(item, dict) and item.get("name") == "Default__" + HOST]
     if len(exact) != 1:
@@ -85,24 +85,24 @@ async def _exercise(call, cleanup_state: dict) -> dict:
     handle = target["handle"]
     tokens = {}
     for method in ("ReadMarker", "ReadCallsCount", "EchoName", "ResetProbe"):
-        functions = await call("g1r_object_functions", {"handle": handle, "function_query": method, "limit": 10})
+        functions = await call("sn2_object_functions", {"handle": handle, "function_query": method, "limit": 10})
         tokens[method] = check_token(functions, method)
     if len(set(tokens.values())) != len(tokens):
         raise ProbeError("probe_signature_token_alias", "Different functions received the same contract token")
 
     async def read_count():
-        result = await call("g1r_invoke", {"handle": handle, "function": "ReadCallsCount", "arguments": {},
+        result = await call("sn2_invoke", {"handle": handle, "function": "ReadCallsCount", "arguments": {},
                                            "expected_signature_token": tokens["ReadCallsCount"]})
         check_invocation(result, 0)
 
     await read_count()
-    initial = await call("g1r_object_properties", {"handle": handle, "limit": 200, "property_names": KNOWN_NAMES})
+    initial = await call("sn2_object_properties", {"handle": handle, "limit": 200, "property_names": KNOWN_NAMES})
     check_selected(initial, KNOWN_NAMES, include_missing=False)
     cleanup_state.update(handle=handle, tokens=tokens)
-    marker = await call("g1r_invoke", {"handle": handle, "function": "ReadMarker", "arguments": {},
+    marker = await call("sn2_invoke", {"handle": handle, "function": "ReadMarker", "arguments": {},
                                       "expected_signature_token": tokens["ReadMarker"]})
     check_invocation(marker, 71)
-    selected = await call("g1r_object_properties", {"handle": handle, "limit": 200, "property_names": SELECTED_NAMES})
+    selected = await call("sn2_object_properties", {"handle": handle, "limit": 200, "property_names": SELECTED_NAMES})
     check_selected(selected, SELECTED_NAMES, include_missing=True)
 
     failures = []
@@ -110,18 +110,18 @@ async def _exercise(call, cleanup_state: dict) -> dict:
     for token, code in (("bad-token", "invalid_signature_token"),
                         ("sig-99999999999999999999", "unknown_signature_token"),
                         (tokens["ReadMarker"], "signature_token_mismatch")):
-        result = await call("g1r_invoke", {"handle": handle, "function": "EchoName",
+        result = await call("sn2_invoke", {"handle": handle, "function": "EchoName",
                           "arguments": {"Input": {"name_from": {"handle": handle, "property_name": "StoredEntry"}}},
                           "expected_signature_token": token}, expected_error=code)
         check_rejection(result, code)
         await read_count()
         failures.append(code)
     for names in ([], ["StoredEntry", "StoredEntry"], ["x"] * 33, ["StoredEntry\0"]):
-        result = await call("g1r_object_properties", {"handle": handle, "limit": 200, "property_names": names},
+        result = await call("sn2_object_properties", {"handle": handle, "limit": 200, "property_names": names},
                             expected_error="invalid_property_names")
         check_rejection(result, "invalid_property_names")
         failures.append("invalid_property_names")
-    final = await call("g1r_object_properties", {"handle": handle, "limit": 200, "property_names": KNOWN_NAMES})
+    final = await call("sn2_object_properties", {"handle": handle, "limit": 200, "property_names": KNOWN_NAMES})
     check_selected(final, KNOWN_NAMES, include_missing=False)
     await read_count()
     return {"session_id": session_id, "handle": handle, "signature_tokens": tokens,
@@ -147,13 +147,13 @@ async def exercise(call) -> dict:
             async def finish_cleanup():
                 handle = cleanup_state["handle"]
                 tokens = cleanup_state["tokens"]
-                result = await call("g1r_invoke", {"handle": handle, "function": "ResetProbe", "arguments": {},
+                result = await call("sn2_invoke", {"handle": handle, "function": "ResetProbe", "arguments": {},
                                                   "expected_signature_token": tokens["ResetProbe"]})
                 if result.get("executed") is not True or result.get("result") is not None:
                     raise ProbeError("probe_contract_cleanup_unconfirmed", "The owned ResetProbe was not confirmed")
-                fields = await call("g1r_object_properties", {"handle": handle, "limit": 200, "property_names": KNOWN_NAMES})
+                fields = await call("sn2_object_properties", {"handle": handle, "limit": 200, "property_names": KNOWN_NAMES})
                 check_selected(fields, KNOWN_NAMES, include_missing=False)
-                count = await call("g1r_invoke", {"handle": handle, "function": "ReadCallsCount", "arguments": {},
+                count = await call("sn2_invoke", {"handle": handle, "function": "ReadCallsCount", "arguments": {},
                                                   "expected_signature_token": tokens["ReadCallsCount"]})
                 check_invocation(count, 0)
             try:
@@ -191,7 +191,7 @@ async def run(args):
                 initialized = await session.initialize()
                 return {"server_version": initialized.server_info.version, **await exercise(make_caller(session))}
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)],
         cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):

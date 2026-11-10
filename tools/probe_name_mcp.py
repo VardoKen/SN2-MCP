@@ -120,21 +120,21 @@ async def exercise(call) -> dict:
     watch_id = None
     failure = None
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if not status.get("ready") or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "The ready queue and current session were not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST, "limit": 50})
+        found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST, "limit": 50})
         exact = [item for item in found.get("items", []) if item.get("name") == "Default__" + HOST]
         if len(exact) != 1:
             raise ProbeError("probe_object_absent", "The owned FName probe CDO was not uniquely found")
         target = check_target(exact[0])
-        functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 50})
+        functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 50})
         for method_name in METHODS:
             check_signature(functions, method_name)
 
         async def invoke(method):
-            result = await call("g1r_invoke", {"handle": target["handle"], "function": method, "arguments": {}})
+            result = await call("sn2_invoke", {"handle": target["handle"], "function": method, "arguments": {}})
             if result.get("executed") is not True:
                 raise ProbeError("probe_not_executed", "Execution of the owned method was not confirmed")
             if METHODS[method][0] == "StrProperty" and result.get("cleanup_confirmed") is not True:
@@ -152,15 +152,15 @@ async def exercise(call) -> dict:
                 raise ProbeError("probe_name_result", "The repeated FName/FString return did not match or changed")
             results[method] = {"text": expected, "repetitions": len(values)}
         report["returns"] = results
-        snapshot = await call("g1r_snapshot", {"targets": [{"handle": target["handle"], "properties": list(PROPERTIES)}]})
+        snapshot = await call("sn2_snapshot", {"targets": [{"handle": target["handle"], "properties": list(PROPERTIES)}]})
         check_snapshot(snapshot, target, session_id)
         report["checks"].append("repeated_entry_none_returns_match_properties")
         report["checks"].append("repeated_nonempty_empty_fstring_returns_cleanup_confirmed")
-        watch = await call("g1r_watch_start", {"handle": target["handle"], "properties": list(PROPERTIES),
+        watch = await call("sn2_watch_start", {"handle": target["handle"], "properties": list(PROPERTIES),
                                                 "duration_ms": 5000, "interval_ms": 50, "capacity": 8})
         watch_id = watch["watch_id"]
         await asyncio.sleep(0.25)
-        observed = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+        observed = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
         events = observed.get("events", [])
         if (observed.get("session_id") != session_id or observed.get("state") != "running"
                 or observed.get("dropped_events") != 0 or observed.get("gap") is True
@@ -176,12 +176,12 @@ async def exercise(call) -> dict:
         async def finish_cleanup():
             errors = []
             if watch_id is not None:
-                for method in ("g1r_watch_stop", "g1r_watch_forget"):
+                for method in ("sn2_watch_stop", "sn2_watch_forget"):
                     try:
                         result = await call(method, {"watch_id": watch_id})
                         if (result.get("cleanup_complete") is not True
-                                or method == "g1r_watch_forget" and result.get("forgotten") is not True
-                                or method == "g1r_watch_stop" and result.get("state") not in {"stopped", "completed", "failed"}):
+                                or method == "sn2_watch_forget" and result.get("forgotten") is not True
+                                or method == "sn2_watch_stop" and result.get("state") not in {"stopped", "completed", "failed"}):
                             raise ProbeError("probe_cleanup_unconfirmed", "Stopping observation was not confirmed")
                         report["cleanup"].append(method)
                     except BaseException as error:
@@ -205,21 +205,21 @@ async def exercise_name_inputs(call) -> dict:
     cleanup_required = False
     failure = None
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Ready Tick and the current session were not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
+        found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
                            "exact_path": "/Script/Angelscript.Default__" + HOST, "limit": 2})
         if not isinstance(found.get("items"), list) or len(found["items"]) != 1 or found.get("truncated") is not False:
             raise ProbeError("probe_object_absent", "The exact FName input CDO was not uniquely found")
         target = check_target(found["items"][0])
-        functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 50})
+        functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 50})
         for method in INPUT_METHODS:
             check_input_signature(functions, method)
 
         async def invoke(method, arguments=None):
-            result = await call("g1r_invoke", {"handle": target["handle"], "function": method, "arguments": arguments or {}})
+            result = await call("sn2_invoke", {"handle": target["handle"], "function": method, "arguments": arguments or {}})
             output = INPUT_METHODS[method][1]
             if (result.get("executed") is not True or "result" not in result or
                     (output is None and result["result"] is not None) or
@@ -229,7 +229,7 @@ async def exercise_name_inputs(call) -> dict:
             return result["result"]
 
         async def snapshot():
-            value = await call("g1r_snapshot", {"targets": [{"handle": target["handle"], "properties": [*PROPERTIES, "CallsCount"]}]})
+            value = await call("sn2_snapshot", {"targets": [{"handle": target["handle"], "properties": [*PROPERTIES, "CallsCount"]}]})
             return input_snapshot_values(value, target, session_id)
 
         if await invoke("ReadMarker") != 71:
@@ -260,7 +260,7 @@ async def exercise_name_inputs(call) -> dict:
         rejections = []
         for argument, code in rejected:
             before = await snapshot()
-            refusal = await call("g1r_invoke", {"handle": target["handle"], "function": "EchoName", "arguments": {"Input": argument}},
+            refusal = await call("sn2_invoke", {"handle": target["handle"], "function": "EchoName", "arguments": {"Input": argument}},
                                  expected_error=code)
             if refusal.get("code") != code or refusal.get("may_have_executed") is not False or await snapshot() != before:
                 raise ProbeError("probe_name_rejection_executed", "Invalid FName input was not confirmed as rejected before execution")
@@ -287,7 +287,7 @@ async def exercise_name_inputs(call) -> dict:
 
 
 async def run_probe(args) -> dict:
-    parameters = StdioServerParameters(command=sys.executable, args=["-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+    parameters = StdioServerParameters(command=sys.executable, args=["-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
         "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):
         async with ClientSession(incoming, outgoing) as client:

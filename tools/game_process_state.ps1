@@ -1,5 +1,6 @@
 ﻿param(
-    [string]$GameRoot = 'E:\SteamLibrary\steamapps\common\Gothic 1 Remake',
+    [string]$GameRoot = 'E:\Games\Subnautica 2',
+    [string]$Executable,
     [switch]$Json
 )
 $ErrorActionPreference = 'Stop'
@@ -8,14 +9,16 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'game_process_common.ps1')
 try {
     $resolvedRoot = (Resolve-Path -LiteralPath $GameRoot -ErrorAction Stop).ProviderPath
-    $allowed = @((Join-Path $resolvedRoot 'G1R-Win64-Shipping.exe'), (Join-Path $resolvedRoot 'G1R\Binaries\Win64\G1R-Win64-Shipping.exe'))
+    $allowed = if ([string]::IsNullOrWhiteSpace($Executable)) {
+        @((Join-Path $resolvedRoot 'Subnautica2.exe'), (Join-Path $resolvedRoot 'Subnautica2\Binaries\Win64\Subnautica2-Win64-Shipping.exe'))
+    } else {
+        @((Resolve-Path -LiteralPath $Executable -ErrorAction Stop).ProviderPath)
+    }
     $processes = @()
-    foreach ($candidate in @(Get-Process -Name 'G1R-Win64-Shipping' -ErrorAction SilentlyContinue)) {
-        $identity = Get-G1RProcessIdentity -ProcessId $candidate.Id
+    foreach ($candidate in @(Get-Process -Name 'Subnautica2', 'Subnautica2-Win64-Shipping' -ErrorAction SilentlyContinue)) {
+        $identity = Get-SN2ProcessIdentity -ProcessId $candidate.Id
         if ($allowed -contains $identity.executable) {
             $processes += $identity
-        } else {
-            throw 'A process with the same name was found outside the selected game directory.'
         }
     }
     $result = [pscustomobject]@{ processes = @($processes); source = 'native_process_handle_snapshot' }

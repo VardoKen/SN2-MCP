@@ -86,20 +86,20 @@ class ArrayCallFixture:
 
     async def call(self, name, arguments):
         self.calls.append((name, copy.deepcopy(arguments)))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "fixture-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.target], "truncated": False}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             functions = reflected_functions()
             if self.missing_array_dim:
                 for method in functions["items"]:
                     for parameter in method["parameters"]:
                         parameter.pop("array_dim")
             return functions
-        if name == "g1r_read_array":
+        if name == "sn2_read_array":
             return self.page(arguments)
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = arguments["function"]
             parameters = arguments["arguments"]
             if method == "ReadMarker":
@@ -211,11 +211,11 @@ class ArrayRuntimeProofTests(unittest.TestCase):
         self.assertEqual(report["names"], ["Entry", "None"])
         self.assertEqual(report["cleanup"], ["ClearFixture_and_confirmed_empty_array_pages"])
         self.assertEqual((fixture.numbers, fixture.empty_numbers, fixture.names), ([], [], ["Entry", "None"]))
-        invoked = [arguments["function"] for name, arguments in fixture.calls if name == "g1r_invoke"]
+        invoked = [arguments["function"] for name, arguments in fixture.calls if name == "sn2_invoke"]
         self.assertEqual(invoked.count("SetupFixture"), 1)
         self.assertEqual(invoked.count("ClearFixture"), 1)
         reads = [arguments for name, arguments in fixture.calls
-                 if name == "g1r_read_array" and arguments["property_name"] == "Numbers" and arguments["limit"] == 200]
+                 if name == "sn2_read_array" and arguments["property_name"] == "Numbers" and arguments["limit"] == 200]
         self.assertEqual([arguments["offset"] for arguments in reads], [0, 200, 205])
 
     def test_initial_defaults_or_page_identity_are_rejected_without_mutation(self):
@@ -226,7 +226,7 @@ class ArrayRuntimeProofTests(unittest.TestCase):
                 with self.assertRaises(live.ProbeError):
                     asyncio.run(live.exercise(fixture.call))
                 self.assertEqual((fixture.numbers, fixture.empty_numbers, fixture.names), original)
-                invoked = [arguments["function"] for name, arguments in fixture.calls if name == "g1r_invoke"]
+                invoked = [arguments["function"] for name, arguments in fixture.calls if name == "sn2_invoke"]
                 self.assertNotIn("SetupFixture", invoked)
                 self.assertNotIn("ClearFixture", invoked)
 
@@ -235,7 +235,7 @@ class ArrayRuntimeProofTests(unittest.TestCase):
         with self.assertRaises(live.ProbeError) as caught:
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(caught.exception.code, "probe_signature_mismatch")
-        self.assertFalse(any(name == "g1r_invoke" for name, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" for name, _ in fixture.calls))
 
     def test_parameter_extent_and_scan_flags_are_verified(self):
         functions = reflected_functions()
@@ -269,7 +269,7 @@ class ArrayRuntimeProofTests(unittest.TestCase):
         self.assertEqual(fixture.numbers, [])
         self.assertEqual(fixture.names, ["Entry", "None"])
         self.assertEqual([arguments["function"] for name, arguments in fixture.calls
-                          if name == "g1r_invoke" and arguments["function"] == "ClearFixture"], ["ClearFixture"])
+                          if name == "sn2_invoke" and arguments["function"] == "ClearFixture"], ["ClearFixture"])
 
     def test_clear_receipt_is_not_replaced_by_successful_local_mutation(self):
         fixture = ArrayCallFixture(unconfirmed_cleanup=True)
@@ -312,7 +312,7 @@ class ArrayRuntimeProofTests(unittest.TestCase):
             release = asyncio.Event()
 
             async def call(name, arguments):
-                if name == "g1r_invoke" and arguments["function"] == "ClearFixture":
+                if name == "sn2_invoke" and arguments["function"] == "ClearFixture":
                     entered.set()
                     await release.wait()
                 return await fixture.call(name, arguments)
@@ -326,9 +326,9 @@ class ArrayRuntimeProofTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
             self.assertEqual(fixture.numbers, [])
-            invoked = [arguments["function"] for name, arguments in fixture.calls if name == "g1r_invoke"]
+            invoked = [arguments["function"] for name, arguments in fixture.calls if name == "sn2_invoke"]
             self.assertEqual(invoked.count("ClearFixture"), 1)
-            self.assertEqual([name for name, _ in fixture.calls[-3:]], ["g1r_read_array"] * 3)
+            self.assertEqual([name for name, _ in fixture.calls[-3:]], ["sn2_read_array"] * 3)
         asyncio.run(scenario())
 
 

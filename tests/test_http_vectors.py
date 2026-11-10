@@ -8,8 +8,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -62,7 +62,7 @@ class HTTPVectorTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        transport="streamable-http")
             factory.assert_called_once_with(port=native.port)
@@ -107,15 +107,15 @@ class HTTPVectorTests(unittest.IsolatedAsyncioTestCase):
                     first_session = await initialize(first, "vector-listing-client")
                     second_session = await initialize(second, "vector-calling-client")
                     self.assertNotEqual(first_session, second_session)
-                    ownership = await call(first, first_session, "g1r_session_status", {})
+                    ownership = await call(first, first_session, "sn2_session_status", {})
                     self.assertFalse(ownership.get("isError", False), ownership)
                     self.assertFalse(ownership["structuredContent"]["claimed"])
-                    listed = await call(first, first_session, "g1r_object_functions", {
+                    listed = await call(first, first_session, "sn2_object_functions", {
                         "handle": handle, "function_query": "ProjectProbe"})
                     self.assertFalse(listed.get("isError", False), listed)
                     self.assertEqual(listed["structuredContent"], reflected)
                     shared_token = listed["structuredContent"]["items"][0]["signature_token"]
-                    result = await call(second, second_session, "g1r_invoke", {
+                    result = await call(second, second_session, "sn2_invoke", {
                         "handle": handle, "function": "ProjectProbe", "arguments": parameters,
                         "expected_signature_token": shared_token})
                     self.assertFalse(result.get("isError", False), result)
@@ -123,7 +123,7 @@ class HTTPVectorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(result["structuredContent"]["result"], point)
                     self.assertEqual(result["structuredContent"]["out_parameters"]["Output"], output)
                     self.assertEqual(native.connections, 1)
-                    invalid = await call(first, first_session, "g1r_invoke", {
+                    invalid = await call(first, first_session, "sn2_invoke", {
                         "handle": handle, "function": "ProjectProbe", "arguments": invalid_arguments,
                         "expected_signature_token": shared_token})
                     self.assertTrue(invalid["isError"])
@@ -133,10 +133,10 @@ class HTTPVectorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["effect"], no_effect)
                     self.assertEqual(error["request_id"], native.requests[2]["id"])
-                    after = await call(second, second_session, "g1r_native_status", {})
+                    after = await call(second, second_session, "sn2_native_status", {})
                     self.assertFalse(after.get("isError", False), after)
                     self.assertEqual(after["structuredContent"], status)
-                    lease = await call(second, second_session, "g1r_session_status", {})
+                    lease = await call(second, second_session, "sn2_session_status", {})
                     self.assertFalse(lease["structuredContent"]["claimed"])
             self.assertEqual(native.connections, 1)
             self.assertEqual([item["op"] for item in native.requests], ["functions", "invoke", "invoke", "status"])

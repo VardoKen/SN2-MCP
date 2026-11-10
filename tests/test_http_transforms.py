@@ -8,8 +8,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -73,7 +73,7 @@ class HTTPTransformTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        transport="streamable-http")
             factory.assert_called_once_with(port=native.port)
@@ -118,7 +118,7 @@ class HTTPTransformTests(unittest.IsolatedAsyncioTestCase):
                     first_session = await initialize(first, "transform-listing-client")
                     second_session = await initialize(second, "transform-invoke-client")
                     self.assertNotEqual(first_session, second_session)
-                    listed = await call(first, first_session, "g1r_object_functions", {
+                    listed = await call(first, first_session, "sn2_object_functions", {
                         "handle": handle, "function_query": "ReadTransformProbe"})
                     self.assertFalse(listed.get("isError", False), listed)
                     self.assertEqual(listed["structuredContent"], reflected)
@@ -128,14 +128,14 @@ class HTTPTransformTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(parameter["struct"]["fixture_extra_metadata"]["opaque_layout_marker"], 2 ** 63 + 17)
                     self.assertEqual(parameter["argument_constraints"]["normalization"], "none")
                     shared_token = listed["structuredContent"]["items"][0]["signature_token"]
-                    answer = await call(second, second_session, "g1r_invoke", {
+                    answer = await call(second, second_session, "sn2_invoke", {
                         "handle": handle, "function": "ReadTransformProbe", "arguments": {"Input": transform},
                         "expected_signature_token": shared_token})
                     self.assertFalse(answer.get("isError", False), answer)
                     self.assertEqual(answer["structuredContent"], returned)
                     self.assertIs(type(native.requests[1]["params"]["arguments"]["Input"]["Translation"]["X"]), int)
                     self.assertIs(type(native.requests[1]["params"]["arguments"]["Input"]["Rotation"]["Y"]), float)
-                    denied = await call(first, first_session, "g1r_invoke", {
+                    denied = await call(first, first_session, "sn2_invoke", {
                         "handle": handle, "function": "ReadTransformProbe", "arguments": {"Input": malformed},
                         "expected_signature_token": shared_token})
                     self.assertTrue(denied["isError"])
@@ -146,7 +146,7 @@ class HTTPTransformTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["request_id"], native.requests[2]["id"])
                     self.assertEqual(native.requests[2]["params"]["arguments"]["Input"]["Rotation"]["W"], 2)
-                    checked = await call(second, second_session, "g1r_native_status", {})
+                    checked = await call(second, second_session, "sn2_native_status", {})
                     self.assertFalse(checked.get("isError", False), checked)
                     self.assertEqual(checked["structuredContent"], status)
             self.assertEqual(native.connections, 1)

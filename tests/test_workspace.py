@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from g1r_mcp.workspace import PackageWorkspace, WorkspaceError
+from sn2_mcp.workspace import PackageWorkspace, WorkspaceError
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -110,7 +110,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_new_patch_directory_is_cleaned_on_write_failure(self):
         self.create()
         before = self.state()
-        with patch("g1r_mcp.workspace.os.link", side_effect=OSError("fixture")):
+        with patch("sn2_mcp.workspace.os.link", side_effect=OSError("fixture")):
             self.assert_error("access_error", lambda: self.workspace.write_package_file("Example", "ScriptPatches/Changes.patch", "fixture"))
         self.assertEqual(before, self.state())
 
@@ -120,7 +120,7 @@ class WorkspaceTests(unittest.TestCase):
         directory.mkdir()
         (directory / "Notes.txt").write_text("preserve", encoding="utf-8")
         before = self.state()
-        with patch("g1r_mcp.workspace.os.link", side_effect=OSError("fixture")):
+        with patch("sn2_mcp.workspace.os.link", side_effect=OSError("fixture")):
             self.assert_error("access_error", lambda: self.workspace.write_package_file("Example", "ScriptPatches/Changes.patch", "fixture"))
         self.assertEqual(before, self.state())
 
@@ -130,7 +130,7 @@ class WorkspaceTests(unittest.TestCase):
         def foreign_file_then_failure(*args, **kwargs):
             (directory / "User.txt").write_text("preserve", encoding="utf-8")
             raise OSError("fixture")
-        with patch("g1r_mcp.workspace.os.link", side_effect=foreign_file_then_failure):
+        with patch("sn2_mcp.workspace.os.link", side_effect=foreign_file_then_failure):
             self.assert_error("access_error", lambda: self.workspace.write_package_file("Example", "ScriptPatches/Changes.patch", "fixture"))
         self.assertEqual((directory / "User.txt").read_text(encoding="utf-8"), "preserve")
         self.assertEqual([path.name for path in directory.iterdir()], ["User.txt"])
@@ -232,10 +232,10 @@ class WorkspaceTests(unittest.TestCase):
         def mutate(fd):
             original(fd)
             target.write_text("user change", encoding="utf-8")
-        with patch("g1r_mcp.workspace.os.fsync", side_effect=mutate):
+        with patch("sn2_mcp.workspace.os.fsync", side_effect=mutate):
             self.assert_error("conflict", lambda: self.workspace.write_package_file("Example", "Script/Example.as", "overwrite", first["sha256"]))
         self.assertEqual(target.read_text(encoding="utf-8"), "user change")
-        self.assertFalse(any(path.name.startswith(".g1r-mcp-") for path in self.root.rglob("*")))
+        self.assertFalse(any(path.name.startswith(".sn2-mcp-") for path in self.root.rglob("*")))
 
     def test_invalid_descriptor_write_preserves_original(self):
         self.create()

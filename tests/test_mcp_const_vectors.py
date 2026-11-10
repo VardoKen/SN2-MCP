@@ -61,12 +61,11 @@ class MCPConstVectorTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    listed = await client.call_tool("g1r_object_functions", {"handle": handle, "function_query": "VectorIsZero"})
+                    listed = await client.call_tool("sn2_object_functions", {"handle": handle, "function_query": "VectorIsZero"})
                     self.assertFalse(listed.is_error, listed.content)
                     self.assertEqual(listed.structured_content, metadata)
                     declaration = listed.structured_content["items"][0]
@@ -79,14 +78,14 @@ class MCPConstVectorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(parameter["flags"], flags)
                     token = declaration["signature_token"]
                     for index, vector in enumerate(vectors):
-                        response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "VectorIsZero",
+                        response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "VectorIsZero",
                             "arguments": {"A": vector}, "expected_signature_token": token})
                         self.assertFalse(response.is_error, response.content)
                         self.assertEqual(response.structured_content, results[index])
                         self.assertIs(response.structured_content["result"], values[index])
                         self.assertIs(response.structured_content["executed"], True)
                         self.assertEqual(native.requests[index + 1]["params"]["arguments"]["A"], vector)
-                    denied = await client.call_tool("g1r_invoke", {"handle": handle, "function": "VectorIsZero",
+                    denied = await client.call_tool("sn2_invoke", {"handle": handle, "function": "VectorIsZero",
                         "arguments": {"A": malformed}, "expected_signature_token": token})
                     self.assertTrue(denied.is_error, denied.content)
                     message = next(block.text for block in denied.content if block.type == "text")
@@ -95,7 +94,7 @@ class MCPConstVectorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], no_effect)
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["request_id"], native.requests[3]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

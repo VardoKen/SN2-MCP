@@ -1,4 +1,4 @@
-#include "g1r_mcp/enum_arguments.hpp"
+#include "sn2_mcp/enum_arguments.hpp"
 
 #include <array>
 #include <iostream>
@@ -7,10 +7,10 @@
 #include <vector>
 
 namespace {
-using g1r::enum_values::Integer;
-using g1r::enum_values::Entry;
-using g1r_mcp::enum_arguments::encode_integer;
-using g1r_mcp::enum_arguments::contains_value;
+using sn2_mcp::enum_values::Integer;
+using sn2_mcp::enum_values::Entry;
+using sn2_mcp::enum_arguments::encode_integer;
+using sn2_mcp::enum_arguments::contains_value;
 using json = nlohmann::json;
 std::size_t checks{};
 
@@ -20,7 +20,7 @@ void require(bool condition, const char* reason) {
 }
 template<class Operation> void rejects(Operation&& operation, const char* code = "invalid_argument") {
     try { operation(); }
-    catch (const g1r_mcp::HandlerError& error) {
+    catch (const sn2_mcp::HandlerError& error) {
         require(error.code() == code, "Неверный код отказа enum-аргумента");
         require(error.details().at("executed") == false && error.details().at("may_have_executed") == false,
                 "Отказ аргумента объявлен выполненным");
@@ -31,13 +31,13 @@ template<class Operation> void rejects(Operation&& operation, const char* code =
 void round_trip(const char* type, int width, const json& value, const Integer& expected) {
     const auto result = encode_integer(type, width, value);
     require(result.size == static_cast<std::size_t>(width) && result.value == expected, "Неверный canonical integer");
-    require(g1r::enum_values::decode_integer(type, width, std::span(result.bytes).first(result.size)) == expected,
+    require(sn2_mcp::enum_values::decode_integer(type, width, std::span(result.bytes).first(result.size)) == expected,
             "Число изменилось при round-trip enum");
     for (std::size_t index = result.size; index < result.bytes.size(); ++index)
         require(result.bytes[index] == std::byte{}, "Байты вне размера enum не обнулены");
     std::array<std::byte, 9> unaligned{};
     std::memcpy(unaligned.data() + 1, result.bytes.data(), result.size);
-    require(g1r::enum_values::decode_integer(type, width, std::span(unaligned).subspan(1, result.size)) == expected,
+    require(sn2_mcp::enum_values::decode_integer(type, width, std::span(unaligned).subspan(1, result.size)) == expected,
             "Невыровненная копия enum повреждена");
 }
 } // namespace

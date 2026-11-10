@@ -67,16 +67,16 @@ class ClassCallFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, arguments))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "fixture-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             query = arguments["query"]
             return {"items": [self.host] if query.startswith("Default__") else [self.classes[query]]}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return {"items": [signature(name) for name in live.SIGNATURES]}
-        if name == "g1r_snapshot":
+        if name == "sn2_snapshot":
             return self.snapshot()
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method, args = arguments["function"], arguments["arguments"]
             if method == "ReadMarker":
                 return {"executed": True, "result": 61}
@@ -102,19 +102,19 @@ class ClassCallFixture:
                 if self.watch:
                     self.changed = self.snapshot()
                 return {"executed": True, "result": None}
-        if name == "g1r_watch_start":
+        if name == "sn2_watch_start":
             self.watch = True
             self.baseline = self.snapshot()
             return {"watch_id": "watch-1"}
-        if name == "g1r_watch_read":
+        if name == "sn2_watch_read":
             return {"dropped_events": 0, "gap": False, "last_seq": 2,
                     "events": [{"kind": "baseline", "snapshot": self.baseline}, {"kind": "changed", "snapshot": self.changed}]}
-        if name == "g1r_compare_snapshots":
+        if name == "sn2_compare_snapshots":
             return {"value_changes": 2}
-        if name == "g1r_watch_stop":
+        if name == "sn2_watch_stop":
             self.watch = False
             return {"cleanup_complete": True, "state": "stopped"}
-        if name == "g1r_watch_forget":
+        if name == "sn2_watch_forget":
             return {"forgotten": True, "cleanup_complete": True}
         raise AssertionError((name, arguments))
 
@@ -220,7 +220,7 @@ class ClassProbeTests(unittest.TestCase):
         self.assertFalse(fixture.watch)
         self.assertEqual(report["foreign_class"]["code"], "incompatible_class_argument")
         self.assertEqual(report["ordinary_object"]["code"], "invalid_class_argument")
-        self.assertEqual(report["cleanup"], ["StoreAnyClass", "StoreTypedClass", "restored_null_snapshot", "g1r_watch_stop", "g1r_watch_forget"])
+        self.assertEqual(report["cleanup"], ["StoreAnyClass", "StoreTypedClass", "restored_null_snapshot", "sn2_watch_stop", "sn2_watch_forget"])
 
     def test_live_exercise_restores_and_stops_after_failure(self):
         fixture = ClassCallFixture(fail_store=True)
@@ -229,7 +229,7 @@ class ClassProbeTests(unittest.TestCase):
         self.assertEqual(captured.exception.code, "isolated_failure")
         self.assertEqual(fixture.fields, {name: None for name in live.PROPERTIES})
         self.assertFalse(fixture.watch)
-        self.assertEqual([name for name, _ in fixture.calls[-2:]], ["g1r_watch_stop", "g1r_watch_forget"])
+        self.assertEqual([name for name, _ in fixture.calls[-2:]], ["sn2_watch_stop", "sn2_watch_forget"])
 
     def test_live_missing_initial_class_defaults_rejects_before_any_writes(self):
         fixture = ClassCallFixture()
@@ -237,7 +237,7 @@ class ClassProbeTests(unittest.TestCase):
         with self.assertRaises(live.ProbeError) as captured:
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(captured.exception.code, "probe_class_identity")
-        self.assertFalse(any(name == "g1r_invoke" and arguments["function"].startswith("Store") for name, arguments in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" and arguments["function"].startswith("Store") for name, arguments in fixture.calls))
 
     def test_class_cleanup_requires_explicit_null_and_terminal_flags(self):
         for mode in ("snapshot", "stop", "forget"):
@@ -247,21 +247,21 @@ class ClassProbeTests(unittest.TestCase):
             async def call(name, arguments, **keywords):
                 nonlocal restoring
                 result = await fixture.call(name, arguments, **keywords)
-                if name == "g1r_compare_snapshots":
+                if name == "sn2_compare_snapshots":
                     restoring = True
                 if restoring:
-                    if mode == "snapshot" and name == "g1r_snapshot":
+                    if mode == "snapshot" and name == "sn2_snapshot":
                         result["objects"][0]["properties"][0].pop("value")
-                    if mode == "stop" and name == "g1r_watch_stop":
+                    if mode == "stop" and name == "sn2_watch_stop":
                         return {"state": "running", "cleanup_complete": True}
-                    if mode == "forget" and name == "g1r_watch_forget":
+                    if mode == "forget" and name == "sn2_watch_forget":
                         return {"cleanup_complete": True}
                 return result
 
             with self.subTest(mode=mode), self.assertRaises(live.ProbeError) as captured:
                 asyncio.run(live.exercise(call))
             self.assertEqual(captured.exception.code, "probe_cleanup_failed")
-            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["g1r_watch_stop", "g1r_watch_forget"])
+            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["sn2_watch_stop", "sn2_watch_forget"])
 
 
 if __name__ == "__main__":

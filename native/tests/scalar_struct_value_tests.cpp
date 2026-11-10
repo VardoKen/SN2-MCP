@@ -1,5 +1,5 @@
-#include <g1r_mcp/scalar_struct_values.hpp>
-#include <g1r_mcp/scalar_struct_arguments.hpp>
+#include <sn2_mcp/scalar_struct_values.hpp>
+#include <sn2_mcp/scalar_struct_arguments.hpp>
 
 #include <algorithm>
 #include <array>
@@ -14,13 +14,13 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::scalar_struct_values::Component;
-using g1r_mcp::scalar_struct_values::Layout;
+using sn2_mcp::scalar_struct_values::Component;
+using sn2_mcp::scalar_struct_values::Layout;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action> void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный код отказа декодера скалярного DTO");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Декодер собственной копии не исполняет игровую функцию");return;
@@ -46,7 +46,7 @@ Layout mixed() {
 struct CaptureFixture {
     std::array<std::byte,4096> memory{};
     std::vector<std::string> names{"None"};
-    g1r_mcp::ObjectSerialIdentity identity{0x200,0x300,4,0,23,5,0,29};
+    sn2_mcp::ObjectSerialIdentity identity{0x200,0x300,4,0,23,5,0,29};
     Layout layout;
     explicit CaptureFixture(Layout value):layout(std::move(value)) {
         auto named=[&](std::string name) {names.push_back(std::move(name));return std::uint64_t(names.size()-1);};
@@ -60,7 +60,7 @@ struct CaptureFixture {
         put(std::span(memory),0x340,named("StructProperty"));
         put(std::span(memory),0x250,std::uintptr_t{0x400});
         put(std::span(memory),0x258,std::int32_t{layout.properties_size});
-        put(std::span(memory),0x25c,std::int32_t{layout.min_alignment});
+        put(std::span(memory),0x25c,std::int32_t{0xA50000|layout.min_alignment});
         for(std::size_t index=0;index<layout.components.size();++index) {
             const auto field=0x400+index*0x100,type=0xc00+index*0x20;
             const auto& component=layout.components[index];
@@ -80,7 +80,7 @@ struct CaptureFixture {
         }
     }
     auto capture() {
-        return g1r_mcp::scalar_struct_values::capture(0x80,layout.properties_size,1,
+        return sn2_mcp::scalar_struct_values::capture(0x80,layout.properties_size,1,
             [this]<class Value>(std::uintptr_t address) {
                 if(address>memory.size() || sizeof(Value)>memory.size()-address)throw std::runtime_error("Чтение вне fake memory");
                 Value value{};std::memcpy(&value,memory.data()+address,sizeof(value));return value;
@@ -92,7 +92,7 @@ struct CaptureFixture {
     }
 };
 void captured_property_copies() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     const std::array<Layout,3> layouts{{
         {16,8,false,{numeric("X",0,"DoubleProperty",8),numeric("Y",8,"DoubleProperty",8)}},
         {24,8,false,{numeric("X",0,"DoubleProperty",8),numeric("Y",8,"DoubleProperty",8),numeric("Z",16,"DoubleProperty",8)}},
@@ -125,7 +125,7 @@ void captured_property_copies() {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         captured_property_copies();
         const auto reflected=mixed();

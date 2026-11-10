@@ -71,12 +71,12 @@ class ConstVectorFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments), expected_error))
-        if name == "g1r_native_status": return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_native_status": return {"ready": True, "session_id": "native-owner"}
+        if name == "sn2_find_objects":
             return {"items": [self.native_target if arguments["class_query"] == probe.NATIVE_CLASS else self.target], "truncated": False}
-        if name == "g1r_read_struct": return self.layout()
-        if name == "g1r_object_functions": return self.functions(arguments["function_query"])
-        if name != "g1r_invoke": raise AssertionError((name, arguments))
+        if name == "sn2_read_struct": return self.layout()
+        if name == "sn2_object_functions": return self.functions(arguments["function_query"])
+        if name != "sn2_invoke": raise AssertionError((name, arguments))
         method = arguments["function"]
         if arguments["expected_signature_token"] != self.tokens[method]: raise AssertionError("wrong token")
         if expected_error:
@@ -130,7 +130,7 @@ class ConstVectorProbeTests(unittest.TestCase):
         self.assertEqual(set(report["reflected_functions"]), set(probe.METHODS))
         self.assertEqual(report["native_math"]["reflected_functions"], fixture.functions(probe.NATIVE_METHOD))
         self.assertEqual(report["inout"], "not_tested")
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"} for name, _, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"} for name, _, _ in fixture.calls))
 
     def test_float_layout_and_const_ref_without_out_are_supported(self):
         fixture = ConstVectorFixture(width=4, input_flags=0x08000082, native_flags=0x182)
@@ -144,7 +144,7 @@ class ConstVectorProbeTests(unittest.TestCase):
             fixture = ConstVectorFixture(input_flags=flags)
             with self.subTest(flags=flags), self.assertRaises(probe.ProbeError): asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(fixture.resets, 0)
-            self.assertFalse(any(name == "g1r_invoke" and args["function"] == "EchoConstVector" for name, args, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_invoke" and args["function"] == "EchoConstVector" for name, args, _ in fixture.calls))
 
     def test_signature_flags_metadata_name_boundaries_and_return_are_strict(self):
         for alteration in ("missingflags", "boolflags", "inconsistentconst", "passing", "direction", "marker",
@@ -174,7 +174,7 @@ class ConstVectorProbeTests(unittest.TestCase):
             fixture = ConstVectorFixture(**kwargs)
             with self.subTest(kwargs=kwargs), self.assertRaises(probe.ProbeError): asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(fixture.resets, 1)
-            self.assertFalse(any(name == "g1r_invoke" and args["function"] == probe.NATIVE_METHOD for name, args, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_invoke" and args["function"] == probe.NATIVE_METHOD for name, args, _ in fixture.calls))
 
     def test_bad_marker_echo_native_result_and_effect_cleanup_correctly(self):
         fixture = ConstVectorFixture(bad_marker=True)
@@ -199,7 +199,7 @@ class ConstVectorProbeTests(unittest.TestCase):
         async def scenario(code, failed_method):
             fixture = ConstVectorFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == failed_method:
+                if name == "sn2_invoke" and arguments["function"] == failed_method:
                     await fixture.call(name, arguments)
                     raise probe.ProbeError(code, "Результат исходного вызова неизвестен")
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -208,7 +208,7 @@ class ConstVectorProbeTests(unittest.TestCase):
             self.assertEqual(fixture.resets, 0)
             self.assertTrue(any("Const-vector cleanup skipped after an uncertain call or unavailable connection" in note
                                 for note in caught.exception.__notes__))
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == failed_method for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == failed_method for name, args, _ in fixture.calls), 1)
         for code in probe.UNKNOWN_GAME:
             for method in ("EchoConstVector", probe.NATIVE_METHOD):
                 with self.subTest(code=code, method=method): asyncio.run(scenario(code, method))
@@ -218,10 +218,10 @@ class ConstVectorProbeTests(unittest.TestCase):
             fixture = ConstVectorFixture()
             started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "EchoConstVector" and not expected_error:
+                if name == "sn2_invoke" and arguments["function"] == "EchoConstVector" and not expected_error:
                     await fixture.call(name, arguments)
                     raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     started.set()
                     await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -236,7 +236,7 @@ class ConstVectorProbeTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(fixture.resets, 1)
             self.assertEqual(fixture.count, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "EchoConstVector" for name, args, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "EchoConstVector" for name, args, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
 

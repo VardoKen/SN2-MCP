@@ -1,12 +1,12 @@
 #include <Windows.h>
 #include <memory>
 #include <fstream>
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/transport.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/transport.hpp"
 
 namespace {
-g1r_mcp::GameAccess* game{};
-g1r_mcp::Transport* transport{};
+sn2_mcp::GameAccess* game{};
+sn2_mcp::Transport* transport{};
 HMODULE module{};
 void phase(const char* text) {
     wchar_t path[32768]{};GetModuleFileNameW(module,path,32768);
@@ -25,17 +25,18 @@ DWORD WINAPI initialize(void*) {
     phase("init_enter");
     AddVectoredExceptionHandler(1,exception_log);
     try {
-        game=new g1r_mcp::GameAccess();
-        transport=new g1r_mcp::Transport([](const nlohmann::json& request){
+        game=new sn2_mcp::GameAccess();
+        transport=new sn2_mcp::Transport([](const nlohmann::json& request){
             nlohmann::json result;
-            if(request.at("op")=="enable_game") {phase("enable_game_enter");game->start();phase("enable_game_return");result=game->status();}
-            else result=game->request(request);
+            if(request.at("op")=="enable_game")phase("enable_game_enter");
+            result=game->request(request);
+            if(request.at("op")=="enable_game")phase("enable_game_return");
             if(request.at("op")=="status" || request.at("op")=="enable_game") {
                 result["session_id"]=request.at("session_id");
                 result["protocol"]=1;
             }
             return result;
-        }, g1r_mcp::DefaultPort, std::chrono::milliseconds{5000},
+        }, sn2_mcp::DefaultPort, std::chrono::milliseconds{5000},
         [](const std::string& session) { game->disconnect(session); });
         phase("transport_created");transport->start();phase("transport_started");
     } catch(const std::exception& error) {phase(error.what());}
@@ -43,7 +44,7 @@ DWORD WINAPI initialize(void*) {
     return 0;
 }
 }
-extern "C" __declspec(dllexport) DWORD G1RMCPProtocolVersion() {return 1;}
+extern "C" __declspec(dllexport) DWORD SN2MCPProtocolVersion() {return 1;}
 BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID) {
     if(reason==DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);

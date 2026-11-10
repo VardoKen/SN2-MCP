@@ -8,8 +8,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -65,7 +65,7 @@ class HTTPConstVectorTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        transport="streamable-http")
             factory.assert_called_once_with(port=native.port)
@@ -110,7 +110,7 @@ class HTTPConstVectorTests(unittest.IsolatedAsyncioTestCase):
                     first_session = await initialize(first, "const-vector-listing-client")
                     second_session = await initialize(second, "const-vector-invoke-client")
                     self.assertNotEqual(first_session, second_session)
-                    listed = await call(first, first_session, "g1r_object_functions", {
+                    listed = await call(first, first_session, "sn2_object_functions", {
                         "handle": handle, "function_query": "VectorIsZero"})
                     self.assertFalse(listed.get("isError", False), listed)
                     self.assertEqual(listed["structuredContent"], reflection)
@@ -125,7 +125,7 @@ class HTTPConstVectorTests(unittest.IsolatedAsyncioTestCase):
                     shared_token = listed["structuredContent"]["items"][0]["signature_token"]
                     for index, vector in enumerate(vectors):
                         client, session = (second, second_session) if index == 0 else (first, first_session)
-                        answer = await call(client, session, "g1r_invoke", {
+                        answer = await call(client, session, "sn2_invoke", {
                             "handle": handle, "function": "VectorIsZero", "arguments": {"A": vector},
                             "expected_signature_token": shared_token})
                         self.assertFalse(answer.get("isError", False), answer)
@@ -134,7 +134,7 @@ class HTTPConstVectorTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(native.requests[index + 1]["params"]["arguments"]["A"], vector)
                     self.assertIs(type(native.requests[1]["params"]["arguments"]["A"]["X"]), int)
                     self.assertIs(type(native.requests[2]["params"]["arguments"]["A"]["X"]), float)
-                    denied = await call(second, second_session, "g1r_invoke", {
+                    denied = await call(second, second_session, "sn2_invoke", {
                         "handle": handle, "function": "VectorIsZero", "arguments": {"A": malformed},
                         "expected_signature_token": shared_token})
                     self.assertTrue(denied["isError"])
@@ -144,7 +144,7 @@ class HTTPConstVectorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], no_effect)
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["request_id"], native.requests[3]["id"])
-                    after = await call(first, first_session, "g1r_native_status", {})
+                    after = await call(first, first_session, "sn2_native_status", {})
                     self.assertFalse(after.get("isError", False), after)
                     self.assertEqual(after["structuredContent"], status)
             self.assertEqual(native.connections, 1)

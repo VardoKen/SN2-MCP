@@ -1,4 +1,4 @@
-#include <g1r_mcp/native_exception.hpp>
+#include <sn2_mcp/native_exception.hpp>
 
 #include <array>
 #include <iostream>
@@ -6,14 +6,14 @@
 #include <type_traits>
 
 namespace {
-using g1r_mcp::native_exception::Diagnostic;
+using sn2_mcp::native_exception::Diagnostic;
 constexpr DWORD custom_code=0xe0424741;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 
 int observe_record(EXCEPTION_POINTERS* information,Diagnostic* diagnostic,std::uintptr_t* observed_address) noexcept {
     *observed_address=reinterpret_cast<std::uintptr_t>(information->ExceptionRecord->ExceptionAddress);
-    return g1r_mcp::native_exception::capture(information,diagnostic);
+    return sn2_mcp::native_exception::capture(information,diagnostic);
 }
 
 // SEH-кадр содержит только POD: форматирование JSON и C++-объекты находятся снаружи.
@@ -36,7 +36,7 @@ Diagnostic synthetic_access_violation(ULONG_PTR operation,DWORD count) {
     record.ExceptionInformation[1]=0x87654320;
     EXCEPTION_POINTERS information{&record,nullptr};
     Diagnostic diagnostic{0xffffffff,15,1,true,99,1};
-    require(g1r_mcp::native_exception::capture(&information,&diagnostic)==EXCEPTION_EXECUTE_HANDLER,
+    require(sn2_mcp::native_exception::capture(&information,&diagnostic)==EXCEPTION_EXECUTE_HANDLER,
             "POD-фильтр должен передать управление обработчику SEH");
     record.ExceptionCode=custom_code;record.ExceptionAddress=nullptr;record.ExceptionInformation[1]=0;
     require(diagnostic.code==EXCEPTION_ACCESS_VIOLATION && diagnostic.parameter_count==count &&
@@ -46,7 +46,7 @@ Diagnostic synthetic_access_violation(ULONG_PTR operation,DWORD count) {
 }
 
 int main() {
-    using namespace g1r_mcp::native_exception;
+    using namespace sn2_mcp::native_exception;
     static_assert(std::is_trivial_v<Diagnostic> && std::is_standard_layout_v<Diagnostic>);
     static_assert(noexcept(capture(static_cast<EXCEPTION_POINTERS*>(nullptr),static_cast<Diagnostic*>(nullptr))));
     try {

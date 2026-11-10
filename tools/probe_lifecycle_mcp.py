@@ -81,7 +81,7 @@ async def exercise(call, *, wait_seconds: float = 3, clock=time.monotonic, sleep
                    positive_counter: str = "InitializeCount") -> dict:
     if type(wait_seconds) not in (int, float) or not math.isfinite(wait_seconds) or not 0 <= wait_seconds <= 10:
         raise ProbeError("invalid_wait", "Lifecycle waiting is limited to ten seconds")
-    status = await call("g1r_native_status", {})
+    status = await call("sn2_native_status", {})
     session_id = status.get("session_id")
     if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
         raise ProbeError("game_not_ready", "The ready queue and current owner were not confirmed")
@@ -92,23 +92,23 @@ async def exercise(call, *, wait_seconds: float = 3, clock=time.monotonic, sleep
         config = CLASSES[class_name]
         identity = (session_id, class_name, target["path"], target["handle"])
         if identity not in verified:
-            functions = await call("g1r_object_functions", {"handle": target["handle"], "limit": 100})
+            functions = await call("sn2_object_functions", {"handle": target["handle"], "limit": 100})
             for method in ("ReadMarker", *config["fields"].values()):
                 check_signature(functions, method)
-            marker = await call("g1r_invoke", {"handle": target["handle"], "function": "ReadMarker", "arguments": {}})
+            marker = await call("sn2_invoke", {"handle": target["handle"], "function": "ReadMarker", "arguments": {}})
             if marker.get("executed") is not True or type(marker.get("result")) is not int or marker["result"] != config["marker"]:
                 raise ProbeError("probe_marker_mismatch", "The owned lifecycle class marker was not confirmed")
             verified.add(identity)
-        snapshot = await call("g1r_snapshot", {"targets": [{"handle": target["handle"], "properties": list(config["fields"])}]})
+        snapshot = await call("sn2_snapshot", {"targets": [{"handle": target["handle"], "properties": list(config["fields"])}]})
         counts = snapshot_counts(snapshot, target, session_id, config["fields"])
         for field, method in config["fields"].items():
-            returned = await call("g1r_invoke", {"handle": target["handle"], "function": method, "arguments": {}})
+            returned = await call("sn2_invoke", {"handle": target["handle"], "function": method, "arguments": {}})
             if (returned.get("executed") is not True or type(returned.get("result")) is not int
                     or not counts[field] <= returned["result"] <= 2**31 - 1):
                 raise ProbeError("probe_counter_mismatch", "The reader method decreased the counter or returned an invalid type")
             if returned["result"] != counts[field]:
                 # Callback may run between the snapshot Tick and the reader Tick.
-                changed = await call("g1r_snapshot", {"targets": [{"handle": target["handle"], "properties": list(config["fields"])}]})
+                changed = await call("sn2_snapshot", {"targets": [{"handle": target["handle"], "properties": list(config["fields"])}]})
                 latest = snapshot_counts(changed, target, session_id, config["fields"])
                 if any(latest[name] < counts[name] for name in counts) or latest[field] < returned["result"]:
                     raise ProbeError("probe_counter_mismatch", "The repeated snapshot did not confirm a counter increase")
@@ -120,7 +120,7 @@ async def exercise(call, *, wait_seconds: float = 3, clock=time.monotonic, sleep
         return counts
 
     async def collect(class_name):
-        found = await call("g1r_find_objects", {"query": class_name, "class_query": class_name, "limit": 100})
+        found = await call("sn2_find_objects", {"query": class_name, "class_query": class_name, "limit": 100})
         if found.get("truncated") is not False:
             raise ProbeError("probe_search_truncated", "The lifecycle instance search is incomplete")
         exact_cdo = [item for item in found.get("items", []) if item.get("name") == "Default__" + class_name]
@@ -161,7 +161,7 @@ async def exercise(call, *, wait_seconds: float = 3, clock=time.monotonic, sleep
 
 
 async def run_probe(args):
-    parameters = StdioServerParameters(command=sys.executable, args=["-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+    parameters = StdioServerParameters(command=sys.executable, args=["-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
         "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     with deferred_sigint():
         async with stdio_client(parameters) as (incoming, outgoing):

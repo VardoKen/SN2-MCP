@@ -1,21 +1,21 @@
-#include <g1r_mcp/observations.hpp>
-#include <g1r_mcp/transport.hpp>
-#include <g1r_mcp/scalar_arguments.hpp>
-#include <g1r_mcp/object_arguments.hpp>
+#include <sn2_mcp/observations.hpp>
+#include <sn2_mcp/transport.hpp>
+#include <sn2_mcp/scalar_arguments.hpp>
+#include <sn2_mcp/object_arguments.hpp>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 using nlohmann::json;
-using g1r_mcp::Observations;
+using sn2_mcp::Observations;
 namespace {
 void require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
 template<class Operation> void error(const char* code, Operation operation) {
     try { operation(); }
-    catch (const g1r_mcp::HandlerError& caught) {
+    catch (const sn2_mcp::HandlerError& caught) {
         require(caught.code() == code, "Неожиданный код отказа");
         return;
     }
@@ -397,66 +397,66 @@ void timing_and_count_native_representability() {
 }
 
 void scalar_argument_boundaries() {
-    require(g1r_mcp::parameter_extent(8,8,1,1)==9,"AS bool return beyond ParmsSize не включён");
-    require(g1r_mcp::parameter_extent(8,8,8,1)==16,"AS object return beyond ParmsSize не включён");
-    require(g1r_mcp::parameter_extent(8,0,8,1)==8,"Обычный параметр изменил размер");
-    require(g1r_mcp::parameter_extent(8192,8192,8,1)==8200,"Параметр за 4096 байт не включён");
-    require(g1r_mcp::parameter_extent(0,0,8192,1)==8192,"Поле больше 4096 байт не принимается");
-    require(g1r_mcp::parameter_extent(65535,65535,8,1)==65543,"AS return за uint16 ParmsSize не включён");
+    require(sn2_mcp::parameter_extent(8,8,1,1)==9,"AS bool return beyond ParmsSize не включён");
+    require(sn2_mcp::parameter_extent(8,8,8,1)==16,"AS object return beyond ParmsSize не включён");
+    require(sn2_mcp::parameter_extent(8,0,8,1)==8,"Обычный параметр изменил размер");
+    require(sn2_mcp::parameter_extent(8192,8192,8,1)==8200,"Параметр за 4096 байт не включён");
+    require(sn2_mcp::parameter_extent(0,0,8192,1)==8192,"Поле больше 4096 байт не принимается");
+    require(sn2_mcp::parameter_extent(65535,65535,8,1)==65543,"AS return за uint16 ParmsSize не включён");
     constexpr int maximum_extent=std::numeric_limits<int>::max();
-    require(g1r_mcp::parameter_extent(0,maximum_extent-8,8,1)==maximum_extent,"INT_MAX extent не принимается");
-    require(g1r_mcp::parameter_extent(maximum_extent,0,1,1)==maximum_extent,"Текущий INT_MAX extent не сохраняется");
-    error("unsupported_signature",[]{g1r_mcp::parameter_extent(0,maximum_extent-7,8,1);});
-    error("unsupported_signature",[]{g1r_mcp::parameter_extent(-1,0,1,1);});
-    error("unsupported_signature",[]{g1r_mcp::parameter_extent(8,-1,1,1);});
-    error("unsupported_signature",[]{g1r_mcp::parameter_extent(8,0,0,1);});
-    error("unsupported_signature",[]{g1r_mcp::parameter_extent(8,0,-1,1);});
-    error("unsupported_signature",[]{g1r_mcp::parameter_extent(8,0,1,2);});
-    g1r_mcp::validate_bool_layout(1,0,1);
-    g1r_mcp::validate_bool_layout(1,0,255);
-    error("unsupported_property_layout",[]{g1r_mcp::validate_bool_layout(1,1,1);});
-    error("unsupported_property_layout",[]{g1r_mcp::validate_bool_layout(0,0,1);});
-    error("unsupported_property_layout",[]{g1r_mcp::validate_bool_layout(1,0,0);});
-    require(g1r_mcp::int32_argument(json(std::numeric_limits<std::int32_t>::min()))==
+    require(sn2_mcp::parameter_extent(0,maximum_extent-8,8,1)==maximum_extent,"INT_MAX extent не принимается");
+    require(sn2_mcp::parameter_extent(maximum_extent,0,1,1)==maximum_extent,"Текущий INT_MAX extent не сохраняется");
+    error("unsupported_signature",[]{sn2_mcp::parameter_extent(0,maximum_extent-7,8,1);});
+    error("unsupported_signature",[]{sn2_mcp::parameter_extent(-1,0,1,1);});
+    error("unsupported_signature",[]{sn2_mcp::parameter_extent(8,-1,1,1);});
+    error("unsupported_signature",[]{sn2_mcp::parameter_extent(8,0,0,1);});
+    error("unsupported_signature",[]{sn2_mcp::parameter_extent(8,0,-1,1);});
+    error("unsupported_signature",[]{sn2_mcp::parameter_extent(8,0,1,2);});
+    sn2_mcp::validate_bool_layout(1,0,1);
+    sn2_mcp::validate_bool_layout(1,0,255);
+    error("unsupported_property_layout",[]{sn2_mcp::validate_bool_layout(1,1,1);});
+    error("unsupported_property_layout",[]{sn2_mcp::validate_bool_layout(0,0,1);});
+    error("unsupported_property_layout",[]{sn2_mcp::validate_bool_layout(1,0,0);});
+    require(sn2_mcp::int32_argument(json(std::numeric_limits<std::int32_t>::min()))==
             std::numeric_limits<std::int32_t>::min(),"INT32_MIN не принимается");
-    require(g1r_mcp::int32_argument(json(std::numeric_limits<std::int32_t>::max()))==
+    require(sn2_mcp::int32_argument(json(std::numeric_limits<std::int32_t>::max()))==
             std::numeric_limits<std::int32_t>::max(),"INT32_MAX не принимается");
-    require(g1r_mcp::int32_argument(json(std::uint64_t{0}))==0,"Unsigned zero не принимается");
-    error("invalid_argument",[]{g1r_mcp::int32_argument(json(std::numeric_limits<std::uint64_t>::max()));});
-    error("invalid_argument",[]{g1r_mcp::int32_argument(json(std::uint64_t{2147483648ULL}));});
-    error("invalid_argument",[]{g1r_mcp::int32_argument(json(std::int64_t{-2147483649LL}));});
-    error("invalid_argument",[]{g1r_mcp::int32_argument(json(1.0));});
-    error("invalid_argument",[]{g1r_mcp::int32_argument(json(true));});
-    error("invalid_argument",[]{g1r_mcp::float_argument(json(1e300));});
-    error("invalid_argument",[]{g1r_mcp::float_argument(json(-1e300));});
-    error("invalid_argument",[]{g1r_mcp::float_argument(json(std::numeric_limits<double>::quiet_NaN()));});
-    error("invalid_argument",[]{g1r_mcp::double_argument(json(std::numeric_limits<double>::infinity()));});
-    require(g1r_mcp::float_argument(json(std::numeric_limits<float>::max()))==
+    require(sn2_mcp::int32_argument(json(std::uint64_t{0}))==0,"Unsigned zero не принимается");
+    error("invalid_argument",[]{sn2_mcp::int32_argument(json(std::numeric_limits<std::uint64_t>::max()));});
+    error("invalid_argument",[]{sn2_mcp::int32_argument(json(std::uint64_t{2147483648ULL}));});
+    error("invalid_argument",[]{sn2_mcp::int32_argument(json(std::int64_t{-2147483649LL}));});
+    error("invalid_argument",[]{sn2_mcp::int32_argument(json(1.0));});
+    error("invalid_argument",[]{sn2_mcp::int32_argument(json(true));});
+    error("invalid_argument",[]{sn2_mcp::float_argument(json(1e300));});
+    error("invalid_argument",[]{sn2_mcp::float_argument(json(-1e300));});
+    error("invalid_argument",[]{sn2_mcp::float_argument(json(std::numeric_limits<double>::quiet_NaN()));});
+    error("invalid_argument",[]{sn2_mcp::double_argument(json(std::numeric_limits<double>::infinity()));});
+    require(sn2_mcp::float_argument(json(std::numeric_limits<float>::max()))==
             std::numeric_limits<float>::max(),"float max не принимается");
-    require(g1r_mcp::double_argument(json(1e300))==1e300,"Конечный double потерян");
+    require(sn2_mcp::double_argument(json(1e300))==1e300,"Конечный double потерян");
 }
 void object_argument_boundaries_and_inheritance() {
-    const g1r_mcp::ObjectIdentity identity{1,2,3,4};
-    require(g1r_mcp::same_object_identity(identity,{1,2,3,4}),"Одинаковая идентичность не переиспользуется");
-    require(!g1r_mcp::same_object_identity(identity,{1,9,3,4}),"Изменение класса не меняет идентичность");
-    require(!g1r_mcp::same_object_identity(identity,{1,2,3,9}),"Изменение имени не меняет идентичность");
-    require(!g1r_mcp::same_object_identity(identity,{9,2,3,4}),"Изменение указателя не меняет идентичность");
-    require(g1r_mcp::object_argument_handle(json(nullptr)).empty(),"Null объектного аргумента не принят");
-    require(g1r_mcp::object_argument_handle(json{{"handle","obj-1"}})=="obj-1","Handle не принят");
-    error("invalid_object_argument",[]{g1r_mcp::object_argument_handle(json(42));});
-    error("invalid_object_argument",[]{g1r_mcp::object_argument_handle(json{{"handle","obj-1"},{"ptr",42}});});
-    error("invalid_object_argument",[]{g1r_mcp::object_argument_handle(json{{"handle",""}});});
+    const sn2_mcp::ObjectIdentity identity{1,2,3,4};
+    require(sn2_mcp::same_object_identity(identity,{1,2,3,4}),"Одинаковая идентичность не переиспользуется");
+    require(!sn2_mcp::same_object_identity(identity,{1,9,3,4}),"Изменение класса не меняет идентичность");
+    require(!sn2_mcp::same_object_identity(identity,{1,2,3,9}),"Изменение имени не меняет идентичность");
+    require(!sn2_mcp::same_object_identity(identity,{9,2,3,4}),"Изменение указателя не меняет идентичность");
+    require(sn2_mcp::object_argument_handle(json(nullptr)).empty(),"Null объектного аргумента не принят");
+    require(sn2_mcp::object_argument_handle(json{{"handle","obj-1"}})=="obj-1","Handle не принят");
+    error("invalid_object_argument",[]{sn2_mcp::object_argument_handle(json(42));});
+    error("invalid_object_argument",[]{sn2_mcp::object_argument_handle(json{{"handle","obj-1"},{"ptr",42}});});
+    error("invalid_object_argument",[]{sn2_mcp::object_argument_handle(json{{"handle",""}});});
     auto parent=[](std::uintptr_t klass){return klass==3?std::uintptr_t{2}:klass==2?std::uintptr_t{1}:std::uintptr_t{0};};
-    require(g1r_mcp::compatible_object_class(3,3,parent),"Точный класс не принят");
-    require(g1r_mcp::compatible_object_class(3,1,parent),"Наследник не принят");
-    require(!g1r_mcp::compatible_object_class(1,3,parent),"Базовый класс принят вместо наследника");
-    error("invalid_object_class",[]{g1r_mcp::compatible_object_class(1,2,[](std::uintptr_t){return std::uintptr_t{1};});});
+    require(sn2_mcp::compatible_object_class(3,3,parent),"Точный класс не принят");
+    require(sn2_mcp::compatible_object_class(3,1,parent),"Наследник не принят");
+    require(!sn2_mcp::compatible_object_class(1,3,parent),"Базовый класс принят вместо наследника");
+    error("invalid_object_class",[]{sn2_mcp::compatible_object_class(1,2,[](std::uintptr_t){return std::uintptr_t{1};});});
     auto long_parent=[](std::uintptr_t klass){return klass<200?klass+1:std::uintptr_t{0};};
-    require(g1r_mcp::compatible_object_class(1,200,long_parent),"Предок после 64 звеньев не принят");
-    require(!g1r_mcp::compatible_object_class(1,201,long_parent),"Отсутствующий предок принят в длинной цепочке");
-    error("invalid_object_class",[]{g1r_mcp::compatible_object_class(1,201,
+    require(sn2_mcp::compatible_object_class(1,200,long_parent),"Предок после 64 звеньев не принят");
+    require(!sn2_mcp::compatible_object_class(1,201,long_parent),"Отсутствующий предок принят в длинной цепочке");
+    error("invalid_object_class",[]{sn2_mcp::compatible_object_class(1,201,
         [](std::uintptr_t klass){return klass<200?klass+1:std::uintptr_t{65};});});
-    error("invalid_object_class",[]{g1r_mcp::compatible_object_class(0,1,[](std::uintptr_t){return std::uintptr_t{0};});});
+    error("invalid_object_class",[]{sn2_mcp::compatible_object_class(0,1,[](std::uintptr_t){return std::uintptr_t{0};});});
     Observations model;
     auto data=snapshot(1);
     data["objects"][0]["properties"][0]["type"]="ObjectProperty";

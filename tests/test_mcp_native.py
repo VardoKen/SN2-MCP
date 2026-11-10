@@ -133,18 +133,17 @@ class MCPNativeTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    failure = await client.call_tool("g1r_invoke", {"handle": "obj-1", "function": "RaiseArrayBounds"})
+                    failure = await client.call_tool("sn2_invoke", {"handle": "obj-1", "function": "RaiseArrayBounds"})
                     self.assertTrue(failure.is_error)
                     message = next(item.text for item in failure.content if item.type == "text")
                     error = json.loads(message[message.index("{"):])
                     self.assertEqual(error["code"], "angelscript_exception")
                     self.assertEqual(error["effect"], details)
-                    following = await client.call_tool("g1r_native_status", {})
+                    following = await client.call_tool("sn2_native_status", {})
                     self.assertEqual(following.structured_content, status)
             self.assertEqual(native.connections, 1)
             self.assertEqual(len(native.requests), 2)
@@ -171,7 +170,6 @@ class MCPNativeTests(unittest.IsolatedAsyncioTestCase):
         timeout = {"code": "game_timeout", "message": "Исход уже принятого вызова неизвестен"}
         replies = [
             ("status", {}, status, None),
-            ("enable_game", {}, status, None),
             ("objects", {"query": "Тест", "class_query": "Probe", "limit": 2}, found, None),
             ("properties", {"handle": "obj-1", "limit": 3}, properties, None),
             ("functions", {"handle": "obj-1", "limit": 4}, functions, None),
@@ -190,27 +188,25 @@ class MCPNativeTests(unittest.IsolatedAsyncioTestCase):
             source_before = script.read_bytes()
             parameters = StdioServerParameters(
                 command=sys.executable,
-                args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                      "--workspace-root", str(workspace), "--native-port", str(native.port)],
+                args=["-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)],
             )
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 64)
-                    self.assertFalse(tools["g1r_invoke"].annotations.read_only_hint)
-                    self.assertFalse(tools["g1r_native_enable"].annotations.read_only_hint)
-                    self.assertFalse(tools["g1r_invoke"].annotations.idempotent_hint)
-                    for tool_name in ("g1r_native_status", "g1r_find_objects", "g1r_object_properties", "g1r_object_functions"):
+                    self.assertEqual(len(tools), 22)
+                    self.assertFalse(tools["sn2_invoke"].annotations.read_only_hint)
+                    self.assertFalse(tools["sn2_native_enable"].annotations.read_only_hint)
+                    self.assertFalse(tools["sn2_invoke"].annotations.idempotent_hint)
+                    for tool_name in ("sn2_native_status", "sn2_find_objects", "sn2_object_properties", "sn2_object_functions"):
                         self.assertTrue(tools[tool_name].annotations.read_only_hint)
                     cases = [
-                        ("g1r_native_status", {}, status),
-                        ("g1r_native_enable", {}, status),
-                        ("g1r_find_objects", {"query": "Тест", "class_query": "Probe", "limit": 2,
+                        ("sn2_native_status", {}, status),
+                        ("sn2_find_objects", {"query": "Тест", "class_query": "Probe", "limit": 2,
                                               "timeout_seconds": 6}, found),
-                        ("g1r_object_properties", {"handle": "obj-1", "limit": 3}, properties),
-                        ("g1r_object_functions", {"handle": "obj-1", "limit": 4}, functions),
-                        ("g1r_invoke", {"handle": "obj-1", "function": "ReadOnlyProbe"}, invocation),
+                        ("sn2_object_properties", {"handle": "obj-1", "limit": 3}, properties),
+                        ("sn2_object_functions", {"handle": "obj-1", "limit": 4}, functions),
+                        ("sn2_invoke", {"handle": "obj-1", "function": "ReadOnlyProbe"}, invocation),
                     ]
                     for tool_name, arguments, expected in cases:
                         with self.subTest(tool=tool_name):
@@ -218,7 +214,7 @@ class MCPNativeTests(unittest.IsolatedAsyncioTestCase):
                             self.assertFalse(result.is_error)
                             self.assertEqual(result.structured_content, expected)
 
-                    failure = await client.call_tool("g1r_invoke", {
+                    failure = await client.call_tool("sn2_invoke", {
                         "handle": "obj-1", "function": "TimedAction", "arguments": {"Amount": 2},
                     })
                     self.assertTrue(failure.is_error)
@@ -226,18 +222,18 @@ class MCPNativeTests(unittest.IsolatedAsyncioTestCase):
                     error = json.loads(text[text.index("{"):])
                     self.assertEqual(error["code"], "game_timeout")
                     self.assertTrue(error["may_have_executed"])
-                    self.assertEqual(error["request_id"], native.requests[6]["id"])
+                    self.assertEqual(error["request_id"], native.requests[5]["id"])
                     self.assertEqual(error["message"], timeout["message"])
-                    following = await client.call_tool("g1r_native_status", {})
+                    following = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(following.is_error)
                     self.assertEqual(following.structured_content, status)
             self.assertEqual(script.read_bytes(), source_before)
             self.assertEqual(list(workspace.iterdir()), [])
             self.assertEqual(native.connections, 1)
-            self.assertEqual(len(native.requests), 8)
-            self.assertGreater(native.requests[2]["wait_timeout_ms"], 0)
-            self.assertLessEqual(native.requests[2]["wait_timeout_ms"], 6_000)
-            self.assertEqual(len({request["id"] for request in native.requests}), 8)
+            self.assertEqual(len(native.requests), 7)
+            self.assertGreater(native.requests[1]["wait_timeout_ms"], 0)
+            self.assertLessEqual(native.requests[1]["wait_timeout_ms"], 6_000)
+            self.assertEqual(len({request["id"] for request in native.requests}), 7)
 
 
 if __name__ == "__main__":

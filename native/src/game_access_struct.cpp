@@ -1,20 +1,20 @@
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/game_memory.hpp"
-#include "g1r_mcp/array_page.hpp"
-#include "g1r_mcp/scalar_struct_values.hpp"
-#include "g1r_mcp/scalar_arguments.hpp"
-#include "g1r_mcp/enum_arguments.hpp"
-#include "g1r_mcp/vector_arguments.hpp"
-#include "g1r_mcp/transform_arguments.hpp"
-#include "g1r_mcp/rotator_arguments.hpp"
-#include "g1r_mcp/linear_color_arguments.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/game_memory.hpp"
+#include "sn2_mcp/array_page.hpp"
+#include "sn2_mcp/scalar_struct_values.hpp"
+#include "sn2_mcp/scalar_arguments.hpp"
+#include "sn2_mcp/enum_arguments.hpp"
+#include "sn2_mcp/vector_arguments.hpp"
+#include "sn2_mcp/transform_arguments.hpp"
+#include "sn2_mcp/rotator_arguments.hpp"
+#include "sn2_mcp/linear_color_arguments.hpp"
 #include <functional>
 #include <cstring>
 #include <optional>
 #include <set>
 #include <span>
 #include <vector>
-namespace g1r_mcp {
+namespace sn2_mcp {
 using json=nlohmann::json;
 using game_memory::read;
 namespace {
@@ -191,7 +191,7 @@ json GameAccess::capture_read_value(uintptr_t field,int size,int dim) const {
         } else if(type=="StructProperty") {
             const auto structure=read<uintptr_t>(current+0x70),head=read<uintptr_t>(structure+0x50),super=read<uintptr_t>(structure+0x40);
             const auto structure_identity=identity(structure);validate_class(reinterpret_cast<void*>(structure_identity.at("class").get<uintptr_t>()));
-            const auto properties_size=read<int32_t>(structure+0x58),alignment=read<int32_t>(structure+0x5c);
+            const auto properties_size=read<int32_t>(structure+0x58);const auto alignment=read<int16_t>(structure+0x5c);
             result["structure"]={{"identity",structure_identity},{"path",object_path(reinterpret_cast<void*>(structure))},
                 {"head",head},{"super",super},{"properties_size",properties_size},{"min_alignment",alignment}};
             if(properties_size!=element_size || super || alignment<1 || (alignment&(alignment-1)) || element_size%alignment)
@@ -361,7 +361,7 @@ json GameAccess::read_struct(void* object,const std::string& handle,const std::s
         validate_class(reinterpret_cast<void*>(structure.identity.object_class));
         structure.path=object_path(reinterpret_cast<void*>(structure.structure));structure.struct_name=name(structure.identity.name);
         structure.head=read<uintptr_t>(structure.structure+0x50);structure.super=read<uintptr_t>(structure.structure+0x40);
-        structure.layout={read<int32_t>(structure.structure+0x58),read<int32_t>(structure.structure+0x5c),structure.super!=0,{}};
+        structure.layout={read<int32_t>(structure.structure+0x58),read<int16_t>(structure.structure+0x5c),structure.super!=0,{}};
         if(structure.layout.properties_size!=size || structure.super || structure.layout.min_alignment<1
            || (structure.layout.min_alignment&(structure.layout.min_alignment-1)) || size%structure.layout.min_alignment)
             throw HandlerError("unsupported_struct_layout","The struct requires matching reflected size, alignment, and own fields");
@@ -417,7 +417,7 @@ json GameAccess::read_struct(void* object,const std::string& handle,const std::s
                     validate_class(reinterpret_cast<void*>(snapshot.identity.object_class));
                     snapshot.path=object_path(reinterpret_cast<void*>(snapshot.structure));snapshot.struct_name=name(snapshot.identity.name);
                     snapshot.head=read<uintptr_t>(snapshot.structure+0x50);snapshot.super=read<uintptr_t>(snapshot.structure+0x40);
-                    snapshot.layout={read<int32_t>(snapshot.structure+0x58),read<int32_t>(snapshot.structure+0x5c),snapshot.super!=0,{}};
+                    snapshot.layout={read<int32_t>(snapshot.structure+0x58),read<int16_t>(snapshot.structure+0x5c),snapshot.super!=0,{}};
                     if(snapshot.path!="/Script/GameplayTags.GameplayTag")
                         throw HandlerError("unsupported_struct_field_type","The array requires exact GameplayTags.GameplayTag elements");
                     if(snapshot.array_dim!=1 || snapshot.element_size<1 || snapshot.layout.properties_size!=snapshot.element_size)
@@ -559,4 +559,4 @@ json GameAccess::read_struct(void* object,const std::string& handle,const std::s
             {"min_alignment",before.structure.layout.min_alignment},{"components",components},
             {"consistency","copied_bytes_then_metadata_revalidated"},{"partial",partial},{"truncated",false}};
 }
-} // namespace g1r_mcp
+} // namespace sn2_mcp

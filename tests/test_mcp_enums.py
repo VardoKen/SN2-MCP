@@ -48,21 +48,20 @@ class MCPEnumTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     for metadata in (aliases, unavailable):
-                        returned = await client.call_tool("g1r_invoke", params)
+                        returned = await client.call_tool("sn2_invoke", params)
                         self.assertFalse(returned.is_error, returned.content)
                         self.assertEqual(returned.structured_content, result(metadata))
                         self.assertEqual(returned.structured_content["result"], 7)
-                    raw = await client.call_tool("g1r_invoke", raw_params)
+                    raw = await client.call_tool("sn2_invoke", raw_params)
                     self.assertFalse(raw.is_error, raw.content)
                     self.assertEqual(raw.structured_content, raw_return)
                     self.assertNotIn("return_enum", raw.structured_content)
-                    rejected = await client.call_tool("g1r_invoke", invalid_params)
+                    rejected = await client.call_tool("sn2_invoke", invalid_params)
                     self.assertTrue(rejected.is_error, rejected.content)
                     text = next(block.text for block in rejected.content if block.type == "text")
                     error = json.loads(text[text.index("{"):])
@@ -70,7 +69,7 @@ class MCPEnumTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["effect"], no_effect)
                     self.assertEqual(error["request_id"], native.requests[3]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

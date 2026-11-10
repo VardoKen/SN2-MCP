@@ -81,12 +81,11 @@ class MCPConstTransformTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    listed = await client.call_tool("g1r_object_functions", {"handle": handle, "function_query": "Transform"})
+                    listed = await client.call_tool("sn2_object_functions", {"handle": handle, "function_query": "Transform"})
                     self.assertFalse(listed.is_error, listed.content)
                     self.assertEqual(listed.structured_content, functions)
                     declarations = listed.structured_content["items"]
@@ -101,7 +100,7 @@ class MCPConstTransformTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(declarations[1]["parameters"][0]["reference"], True)
                     for index, expected in enumerate((accepted, location)):
                         declaration = declarations[index]
-                        response = await client.call_tool("g1r_invoke", {"handle": handle,
+                        response = await client.call_tool("sn2_invoke", {"handle": handle,
                             "function": declaration["name"], "arguments": {"Input": value},
                             "expected_signature_token": declaration["signature_token"]})
                         self.assertFalse(response.is_error, response.content)
@@ -112,7 +111,7 @@ class MCPConstTransformTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(type(received["Translation"]["Z"]), int)
                         self.assertEqual(received["Rotation"]["Z"], 0.6)
                         self.assertEqual(received["Rotation"]["W"], 0.8)
-                    denied = await client.call_tool("g1r_invoke", {"handle": handle, "function": "AcceptConstTransform",
+                    denied = await client.call_tool("sn2_invoke", {"handle": handle, "function": "AcceptConstTransform",
                         "arguments": {"Input": malformed}, "expected_signature_token": declarations[0]["signature_token"]})
                     self.assertTrue(denied.is_error, denied.content)
                     message = next(block.text for block in denied.content if block.type == "text")
@@ -121,7 +120,7 @@ class MCPConstTransformTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], no_effect)
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["request_id"], native.requests[3]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

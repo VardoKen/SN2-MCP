@@ -42,11 +42,11 @@ class StructFixture:
 
     async def call(self, name, args):
         self.calls.append((name, args))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "fixture-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.target], "truncated": False}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             result = signature(args["function_query"])
             if self.scalar_double and args["function_query"] != "ReadMarker":
                 result["items"][0]["parameter_size"] = 8
@@ -54,7 +54,7 @@ class StructFixture:
             if self.failure == "missing_array_dim":
                 result["items"][0]["parameters"][0].pop("array_dim")
             return result
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = args["function"]
             field_type = "DoubleProperty" if self.scalar_double and method != "ReadMarker" else live.METHODS[method][0]
             if method == "ReadMarker":
@@ -64,7 +64,7 @@ class StructFixture:
             if self.failure == "wrong_initial_scalar" and method == "ReadVectorX":
                 value = 0.0
             return {"executed": True, "return_type": field_type, "result": value}
-        if name == "g1r_read_struct":
+        if name == "sn2_read_struct":
             result = self.result(args["property_name"])
             if self.failure == "wrong_owner":
                 result["session_id"] = "other-owner"
@@ -73,7 +73,7 @@ class StructFixture:
             elif self.failure == "overlap":
                 result["components"][1]["offset"] = 0
             elif self.failure == "unstable_copy":
-                count = sum(call == "g1r_read_struct" for call, _ in self.calls)
+                count = sum(call == "sn2_read_struct" for call, _ in self.calls)
                 if count == 2:
                     result["struct_path"] += "Changed"
             return result
@@ -89,7 +89,7 @@ class StructProbeTests(unittest.TestCase):
         self.assertEqual(report["structs"]["StoredRotation"]["numeric_type"], "DoubleProperty")
         self.assertFalse(report["mutations_performed"])
         self.assertFalse(report["game_launched"])
-        invoked = [args["function"] for name, args in fixture.calls if name == "g1r_invoke"]
+        invoked = [args["function"] for name, args in fixture.calls if name == "sn2_invoke"]
         self.assertTrue(set(invoked) <= set(live.METHODS))
         self.assertNotIn("Setup", invoked)
 
@@ -97,14 +97,14 @@ class StructProbeTests(unittest.TestCase):
         fixture = StructFixture(failure="missing_array_dim")
         with self.assertRaises(live.ProbeError):
             asyncio.run(live.exercise(fixture.call))
-        self.assertFalse(any(name in {"g1r_invoke", "g1r_read_struct"} for name, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_invoke", "sn2_read_struct"} for name, _ in fixture.calls))
 
     def test_initial_scalar_values_are_verified_before_struct_reader(self):
         fixture = StructFixture(failure="wrong_initial_scalar")
         with self.assertRaises(live.ProbeError) as caught:
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(caught.exception.code, "probe_initial_values")
-        self.assertFalse(any(name == "g1r_read_struct" for name, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_read_struct" for name, _ in fixture.calls))
 
     def test_invalid_layouts_values_and_metadata_refuse_claiming_component_proof(self):
         fixture = StructFixture()
@@ -139,7 +139,7 @@ class StructProbeTests(unittest.TestCase):
         with self.assertRaises(live.ProbeError) as caught:
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(caught.exception.code, "unsupported_struct_layout")
-        self.assertEqual(sum(name == "g1r_read_struct" for name, _ in fixture.calls), 1)
+        self.assertEqual(sum(name == "sn2_read_struct" for name, _ in fixture.calls), 1)
 
     def test_changed_struct_metadata_between_reads_does_not_pass(self):
         fixture = StructFixture(failure="unstable_copy")

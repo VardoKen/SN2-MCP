@@ -1,4 +1,4 @@
-#include <g1r_mcp/aligned_parameter_buffer.hpp>
+#include <sn2_mcp/aligned_parameter_buffer.hpp>
 
 #include <algorithm>
 #include <array>
@@ -14,7 +14,7 @@
 #include <vector>
 
 namespace {
-using g1r_mcp::aligned_parameter_buffer::Buffer;
+using sn2_mcp::aligned_parameter_buffer::Buffer;
 using nlohmann::json;
 int checks{};
 
@@ -25,7 +25,7 @@ void require(bool condition,const char* message) {
 
 void reject_extent(std::size_t extent) {
     try {Buffer rejected(extent);}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()=="unsupported_signature","Неверный код отказа размера буфера");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Неверный extent должен отвергаться до исполнения");

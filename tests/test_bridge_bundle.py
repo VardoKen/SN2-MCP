@@ -1,4 +1,4 @@
-"""Переносимый внутренний комплект: закрытый whitelist и полные хеши."""
+"""Portable internal bundle: explicit inventory and complete file hashes."""
 import importlib.util
 import json
 from pathlib import Path
@@ -29,11 +29,11 @@ class BridgeBundleTests(unittest.TestCase):
         self.repository = Path(temporary.name)
         (self.repository / "artifacts").mkdir()
         self.target = self.repository / "artifacts" / "bridge-bundle-dev7"
-        self.version = "1.0.0-dev.7"
-        self.write("src/g1r_mcp/__init__.py", f'__version__ = "{self.version}"\n'.encode())
+        self.version = "0.1.0"
+        self.write("src/sn2_mcp/__init__.py", f'__version__ = "{self.version}"\n'.encode())
         for name in bundle.SOURCE_FILES:
             if name != "__init__.py":
-                self.write("src/g1r_mcp/" + name, b"# isolated source\n")
+                self.write("src/sn2_mcp/" + name, b"# isolated source\n")
         for name in bundle.TOOLS:
             self.write("tools/" + name, b"# isolated helper\n")
         for name in bundle.HELPER_FILES:
@@ -41,13 +41,12 @@ class BridgeBundleTests(unittest.TestCase):
         for name in bundle.DOCUMENTS:
             self.write(name, b"# isolated document\n")
         self.write("pyproject.toml", f'[project]\nversion = "{self.version}"\ndependencies=["mcp==2.3.0"]\n'.encode())
-        self.write("uv.lock", f'[[package]]\nname="g1r-mcp"\nversion="{self.version.replace("-dev.", ".dev")}"\nsource={{editable="."}}\n[[package]]\nname="mcp"\nversion="2.3.0"\n'.encode())
+        self.write("uv.lock", f'[[package]]\nname="sn2-mcp"\nversion="{self.version.replace("-dev.", ".dev")}"\nsource={{editable="."}}\n[[package]]\nname="mcp"\nversion="2.3.0"\n'.encode())
         for name in bundle.FIXTURE_DIRS:
             self.write(f"tests/fixtures/{name}/GothicMod.json", b'{"name":"Probe"}\n')
             self.write(f"tests/fixtures/{name}/Script/{bundle.FIXTURE_SCRIPTS[name]}", b"class UProbe {}\n")
-        self.write("tests/fixtures/patch_probe/ScriptPatches/Marker.patch", b"# isolated patch\n")
         self.write("native/src/game_access.cpp", b'"bindings_source","runtime_image_patterns"\n')
-        self.write(bundle.BINARIES[0], fake_pe(self.version.encode() + b"runtime_image_patterns"))
+        self.write(bundle.BINARIES[0], fake_pe(self.version.encode() + b"runtime_image_patterns" + bundle.PRODUCTION_MARKER))
         self.write(bundle.BINARIES[1], fake_pe())
 
     def write(self, path, raw):
@@ -71,7 +70,7 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertFalse(result["game_launched"])
         self.assertFalse(result["installed"])
         self.assertTrue(result["verified_files"])
-        self.assertTrue((self.target / "src/g1r_mcp/server.py").exists())
+        self.assertTrue((self.target / "src/sn2_mcp/server.py").exists())
         self.assertTrue((self.target / bundle.BINARIES[0]).exists())
         for path in (".venv", "artifacts/private.txt", "mods/UserMod", "build/native/Release/native-tick.log"):
             self.assertFalse((self.target / path).exists())
@@ -83,7 +82,7 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertNotIn("supported_game_exe_sha256", manifest["compatibility"])
         self.assertIn("not an installer or a public release", (self.target / "START.md").read_text(encoding="utf-8"))
 
-        old_dll = fake_pe(self.version.encode() + b"a" * 64)
+        old_dll = fake_pe(self.version.encode() + b"a" * 64 + bundle.PRODUCTION_MARKER)
         (self.target / bundle.BINARIES[0]).write_bytes(old_dll)
         manifest["compatibility"].pop("binding_method")
         manifest["compatibility"]["supported_game_exe_sha256"] = "a" * 64
@@ -112,10 +111,37 @@ class BridgeBundleTests(unittest.TestCase):
         try:
             link.symlink_to(foreign, target_is_directory=True)
         except OSError:
-            self.skipTest("Система не разрешает isolated symlink")
+            self.skipTest("The system does not permit an isolated symlink")
         with self.assertRaises(bundle.WorkspaceError):
             bundle.prepare_bundle(link / "child", repository_root=self.repository)
         self.assertEqual(list(foreign.iterdir()), [])
+
+    def test_development_fixture_dll_rejected_before_copy_and_during_verification(self):
+        base = self.version.encode() + b"runtime_image_patterns"
+        for marker in (b"", bundle.DEVELOPMENT_MARKER,
+                       bundle.PRODUCTION_MARKER + bundle.DEVELOPMENT_MARKER):
+            with self.subTest(marker=marker):
+                self.write(bundle.BINARIES[0], fake_pe(base + marker))
+                with self.assertRaises(bundle.BundleError) as captured:
+                    self.prepare()
+                self.assertEqual(captured.exception.code, "development_binary")
+                self.assertFalse(self.target.exists())
+        self.write(bundle.BINARIES[0], fake_pe(base + bundle.PRODUCTION_MARKER))
+        self.prepare()
+        manifest_path = self.target / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertIs(manifest["compatibility"]["development_probes"], False)
+        self.assertEqual(manifest["compatibility"]["development_build_marker"],
+                         bundle.PRODUCTION_MARKER.decode("ascii"))
+        altered = fake_pe(base + bundle.DEVELOPMENT_MARKER)
+        (self.target / bundle.BINARIES[0]).write_bytes(altered)
+        entry = next(item for item in manifest["files"] if item["path"] == bundle.BINARIES[0])
+        manifest["total_bytes"] += len(altered) - entry["bytes"]
+        entry.update(bytes=len(altered), sha256=bundle._sha(altered))
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(bundle.BundleError) as captured:
+            bundle.verify_bundle(self.target)
+        self.assertEqual(captured.exception.code, "development_binary")
 
     def test_version_binary_and_source_changes_refused(self):
         self.write("pyproject.toml", b'[project]\nversion="1.0.0-dev.6"\n')
@@ -127,14 +153,14 @@ class BridgeBundleTests(unittest.TestCase):
         with self.assertRaises(bundle.BundleError) as captured:
             self.prepare()
         self.assertEqual(captured.exception.code, "native_version_mismatch")
-        self.write(bundle.BINARIES[0], fake_pe(self.version.encode() + b"runtime_image_patterns"))
+        self.write(bundle.BINARIES[0], fake_pe(self.version.encode() + b"runtime_image_patterns" + bundle.PRODUCTION_MARKER))
         self.write(bundle.BINARIES[1], b"not a PE")
         with self.assertRaises(bundle.BundleError) as captured:
             self.prepare()
         self.assertEqual(captured.exception.code, "invalid_binary")
-        native_version = "1.0.0-dev.6"
+        native_version = "0.0.9"
         self.write(bundle.BINARIES[1], fake_pe())
-        self.write(bundle.BINARIES[0], fake_pe(native_version.encode() + b"runtime_image_patterns"))
+        self.write(bundle.BINARIES[0], fake_pe(native_version.encode() + b"runtime_image_patterns" + bundle.PRODUCTION_MARKER))
         result = bundle.prepare_bundle(self.target, repository_root=self.repository, native_version=native_version)
         self.assertEqual(result["version"], self.version)
         self.assertEqual(result["native_version"], native_version)
@@ -149,7 +175,7 @@ class BridgeBundleTests(unittest.TestCase):
 
     def test_verification_rejects_changed_added_and_escape_manifest(self):
         self.prepare()
-        source = self.target / "src/g1r_mcp/server.py"
+        source = self.target / "src/sn2_mcp/server.py"
         original = source.read_bytes()
         source.write_bytes(b"changed")
         with self.assertRaises(bundle.BundleError) as captured:
@@ -183,7 +209,7 @@ class BridgeBundleTests(unittest.TestCase):
 
         def failing_open(path, mode="r", *args, **kwargs):
             stream = original(path, mode, *args, **kwargs)
-            if mode == "xb" and path.name == "README.md" and ".g1r-bridge-bundle-" in str(path):
+            if mode == "xb" and path.name == "README.md" and ".sn2-bridge-bundle-" in str(path):
                 return Failure(stream)
             return stream
 
@@ -198,7 +224,7 @@ class BridgeBundleTests(unittest.TestCase):
         injected = []
 
         def inject(root):
-            if ".g1r-bridge-bundle-" in root.name and not injected:
+            if ".sn2-bridge-bundle-" in root.name and not injected:
                 file = root / "Foreign.py"
                 file.write_bytes(b"Foreign user data")
                 injected.append(file)
@@ -221,7 +247,7 @@ class BridgeBundleTests(unittest.TestCase):
             bundle.verify_bundle(self.target)
         self.assertEqual(captured.exception.code, "invalid_manifest")
         manifest["version"] = self.version
-        removed = next(entry for entry in manifest["files"] if entry["path"] == "src/g1r_mcp/native_client.py")
+        removed = next(entry for entry in manifest["files"] if entry["path"] == "src/sn2_mcp/native_client.py")
         manifest["files"].remove(removed)
         manifest["file_count"] -= 1
         manifest["total_bytes"] -= removed["bytes"]
@@ -230,7 +256,7 @@ class BridgeBundleTests(unittest.TestCase):
         with self.assertRaises(bundle.BundleError) as captured:
             bundle.verify_bundle(self.target)
         self.assertEqual(captured.exception.code, "incomplete_bundle")
-        self.write("uv.lock", b'[[package]]\nname="g1r-mcp"\nversion="wrong"\n')
+        self.write("uv.lock", b'[[package]]\nname="sn2-mcp"\nversion="wrong"\n')
         new_target = self.repository / "artifacts" / "bad-lock"
         with self.assertRaises(bundle.BundleError) as captured:
             bundle.prepare_bundle(new_target, repository_root=self.repository)
@@ -239,9 +265,9 @@ class BridgeBundleTests(unittest.TestCase):
 
 class BridgeBundleDependencyTests(unittest.TestCase):
     DEPENDENCIES = (
-        "src/g1r_mcp/process_observer.py",
-        "development/helpers/G1RMCPDevelopmentHelpers/GothicMod.json",
-        "development/helpers/G1RMCPDevelopmentHelpers/Script/G1RMCPDevelopmentHelpers.as",
+        "src/sn2_mcp/process_observer.py",
+        "src/sn2_mcp/development.py",
+        "src/sn2_mcp/tool_catalog.py",
     )
 
     def test_selected_dependencies_copy_exact_bytes_without_bundle_generation(self):
@@ -249,7 +275,7 @@ class BridgeBundleDependencyTests(unittest.TestCase):
         selected = bundle._enumerate(repository)
         self.assertTrue(set(self.DEPENDENCIES).issubset(selected))
         helper_prefix = "development/helpers/G1RMCPDevelopmentHelpers/"
-        self.assertEqual({path for path in selected if path.startswith(helper_prefix)}, set(self.DEPENDENCIES[1:]))
+        self.assertEqual({path for path in selected if path.startswith(helper_prefix)}, set())
         with tempfile.TemporaryDirectory() as temp:
             destination = Path(temp)
             for relative in self.DEPENDENCIES:
@@ -265,7 +291,7 @@ class BridgeBundleDependencyTests(unittest.TestCase):
     def test_verification_rejects_each_missing_dependency(self):
         repository = TOOL.parents[1]
         selected = set(bundle._enumerate(repository)) | {"START.md"}
-        # Состав baseline моделируется в памяти: инструкции и полный комплект не создаются.
+        # Model the baseline inventory in memory without writing the complete bundle.
         contents = {path: b"baseline" for path in selected}
         contents.update({path: bundle._read(repository / path, repository) for path in self.DEPENDENCIES})
 

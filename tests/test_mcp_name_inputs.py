@@ -43,21 +43,20 @@ class MCPNameInputTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 64)
-                    invoke = tools["g1r_invoke"]
+                    self.assertEqual(len(tools), 22)
+                    invoke = tools["sn2_invoke"]
                     self.assertFalse(invoke.annotations.read_only_hint)
                     self.assertFalse(invoke.annotations.idempotent_hint)
                     self.assertTrue(invoke.annotations.destructive_hint)
-                    response = await client.call_tool("g1r_invoke", accepted_params)
+                    response = await client.call_tool("sn2_invoke", accepted_params)
                     self.assertFalse(response.is_error, response.content)
                     self.assertEqual(response.structured_content, returned_name)
-                    denied = await client.call_tool("g1r_invoke", rejected_params)
+                    denied = await client.call_tool("sn2_invoke", rejected_params)
                     self.assertTrue(denied.is_error, denied.content)
                     text = next(block.text for block in denied.content if block.type == "text")
                     error = json.loads(text[text.index("{"):])
@@ -66,7 +65,7 @@ class MCPNameInputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["effect"], no_effect)
                     self.assertEqual(error["request_id"], native.requests[1]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

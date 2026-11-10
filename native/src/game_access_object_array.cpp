@@ -1,10 +1,10 @@
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/game_memory.hpp"
-#include "g1r_mcp/object_array_parameter_layout.hpp"
-#include "g1r_mcp/vector_parameter_direction.hpp"
-#include "g1r_mcp/scalar_struct_values.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/game_memory.hpp"
+#include "sn2_mcp/object_array_parameter_layout.hpp"
+#include "sn2_mcp/vector_parameter_direction.hpp"
+#include "sn2_mcp/scalar_struct_values.hpp"
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 
 nlohmann::json GameAccess::capture_object_array_parameter(std::uintptr_t field,int size,int dim,std::uint64_t flags) const {
     const auto capture=[&] {
@@ -128,4 +128,4 @@ nlohmann::json GameAccess::capture_enum_array_parameter(std::uintptr_t field,int
     return before;
 }
 
-} // namespace g1r_mcp
+} // namespace sn2_mcp

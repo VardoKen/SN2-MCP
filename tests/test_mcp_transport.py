@@ -13,8 +13,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server, main
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server, main
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -81,18 +81,18 @@ class LargeFrameNativeFixture(SessionNativeFixture):
 
 class MCPTransportCLITests(unittest.TestCase):
     def args(self, *extra):
-        return ["--modkit-root", "fixture-modkit", "--workspace-root", "fixture-workspace", *extra]
+        return ["--workspace-root", "fixture-workspace", *extra]
 
     def test_stdio_is_default_and_does_not_receive_http_options(self):
-        with patch("g1r_mcp.server.create_server") as factory:
+        with patch("sn2_mcp.server.create_server") as factory:
             self.assertEqual(main(self.args()), 0)
             factory.return_value.run.assert_called_once_with(transport="stdio")
 
     def test_streamable_http_passes_exact_installed_sdk_options(self):
-        for port in (27124, 29124):
-            with self.subTest(port=port), patch("g1r_mcp.server.create_server") as factory:
+        for port in (27224, 29124):
+            with self.subTest(port=port), patch("sn2_mcp.server.create_server") as factory:
                 extra = ["--transport", "streamable-http"]
-                if port != 27124:
+                if port != 27224:
                     extra += ["--port", str(port)]
                 self.assertEqual(main(self.args(*extra)), 0)
                 factory.assert_called_once()
@@ -114,7 +114,7 @@ class MCPTransportCLITests(unittest.TestCase):
                 ("--host", "0.0.0.0"), ("--host", "192.168.1.1"), ("--host", "localhost"),
                 ("--host", "::1"), ("--port", "0"), ("--port", "1023"), ("--port", "65536"),
                 ("--port", "text"), ("--transport", "sse")):
-            with self.subTest(extra=extra), patch("g1r_mcp.server.create_server") as factory, redirect_stderr(io.StringIO()):
+            with self.subTest(extra=extra), patch("sn2_mcp.server.create_server") as factory, redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as caught:
                     main(self.args("--transport", "streamable-http", *extra))
                 self.assertEqual(caught.exception.code, 2)
@@ -144,9 +144,9 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
             source.write_bytes(b"class UFixture {}\n")
             original = source.read_bytes()
             workspace.mkdir()
-            with patch("g1r_mcp.server.NativeClient") as factory:
+            with patch("sn2_mcp.server.NativeClient") as factory:
                 backend = factory.return_value
-                server = create_server(modkit, workspace, transport="streamable-http")
+                server = create_server(workspace, transport="streamable-http")
             app = server.streamable_http_app(host="127.0.0.1", streamable_http_path="/mcp",
                 stateless_http=False, json_response=True, max_request_body_size=sys.maxsize,
                 transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=True,
@@ -166,7 +166,7 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(notified.status_code, 202, notified.text[:500])
                     response = await client.post("/mcp", headers=headers,
                         json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-                            "name": "g1r_compare_snapshots", "arguments": {"before": before, "after": after}}})
+                            "name": "sn2_snapshot_compare", "arguments": {"before": before, "after": after}}})
                     self.assertGreater(len(response.request.content), 4 * 1024 * 1024)
                     self.assertEqual(response.status_code, 200, response.text[:500])
                     result = response.json()["result"]
@@ -182,7 +182,7 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(comparison["truncated"])
                     status = await client.post("/mcp", headers=headers,
                         json={"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-                            "name": "g1r_status", "arguments": {}}})
+                            "name": "sn2_status", "arguments": {}}})
                     self.assertEqual(status.status_code, 200, status.text[:500])
                     self.assertFalse(status.json()["result"].get("isError", False))
                     self.assertEqual(status.request.headers["Mcp-Session-Id"], session)
@@ -241,8 +241,8 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
-                server = create_server(modkit, workspace, native_port=native.port, transport="streamable-http")
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
+                server = create_server(workspace, native_port=native.port, transport="streamable-http")
                 factory.assert_called_once_with(port=native.port)
                 app = server.streamable_http_app(host="127.0.0.1", streamable_http_path="/mcp",
                     stateless_http=False, json_response=True, max_request_body_size=sys.maxsize,
@@ -286,11 +286,11 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                         first_session = await initialize(first, "large-string-owner")
                         second_session = await initialize(second, "large-string-reader")
                         self.assertNotEqual(first_session, second_session)
-                        self.assertEqual((await call(first, first_session, "g1r_native_status"))[0], status)
-                        listed, _ = await call(first, first_session, "g1r_object_functions",
+                        self.assertEqual((await call(first, first_session, "sn2_native_status"))[0], status)
+                        listed, _ = await call(first, first_session, "sn2_object_functions",
                             {"handle": handle, "function_query": "EchoLargeString"})
                         self.assertEqual(listed, reflection)
-                        actual, response = await call(first, first_session, "g1r_invoke",
+                        actual, response = await call(first, first_session, "sn2_invoke",
                             {"handle": handle, "function": "EchoLargeString", "arguments": arguments,
                              "expected_signature_token": listed["items"][0]["signature_token"]})
                         self.assertEqual(actual, echoed)
@@ -300,9 +300,9 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                         terminated = await first.delete("/mcp", headers={"Mcp-Session-Id": first_session,
                             "Accept": "application/json, text/event-stream"})
                         self.assertEqual(terminated.status_code, 200, terminated.text)
-                        self.assertEqual((await call(second, second_session, "g1r_invoke",
+                        self.assertEqual((await call(second, second_session, "sn2_invoke",
                             {"handle": handle, "function": "ReadCallCount"}))[0], getter)
-                        self.assertEqual((await call(second, second_session, "g1r_native_status"))[0], status)
+                        self.assertEqual((await call(second, second_session, "sn2_native_status"))[0], status)
                 factory.assert_called_once_with(port=native.port)
             self.assertEqual(native.connections, 1)
             self.assertEqual(native.echo_calls, 1)
@@ -337,8 +337,8 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
-                server = create_server(modkit, workspace, native_port=native.port, transport="streamable-http")
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
+                server = create_server(workspace, native_port=native.port, transport="streamable-http")
                 factory.assert_called_once_with(port=native.port)
             security = TransportSecuritySettings(enable_dns_rebinding_protection=True,
                 allowed_hosts=["127.0.0.1:27124"], allowed_origins=["http://127.0.0.1:27124"])
@@ -384,25 +384,24 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotEqual(first_session, second_session)
                     listed = await rpc(second, "tools/list", {}, second_session)
                     self.assertEqual(listed.status_code, 200, listed.text)
-                    self.assertEqual(len(listed.json()["result"]["tools"]), 64)
-                    self.assertEqual((await tool(second, second_session, "g1r_status"))["server"]["transport"], "streamable-http")
-                    self.assertEqual(await tool(first, first_session, "g1r_native_status"), native_status)
-                    found = await tool(first, first_session, "g1r_find_objects", {"query": "Probe"})
+                    self.assertEqual(len(listed.json()["result"]["tools"]), 22)
+                    self.assertEqual((await tool(second, second_session, "sn2_status"))["server"]["transport"], "streamable-http")
+                    self.assertEqual(await tool(first, first_session, "sn2_native_status"), native_status)
+                    found = await tool(first, first_session, "sn2_find_objects", {"query": "Probe"})
                     handle = found["items"][0]["handle"]
-                    self.assertEqual(await tool(second, second_session, "g1r_invoke", {
+                    self.assertEqual(await tool(second, second_session, "sn2_invoke", {
                         "handle": handle, "function": "ReadMarker"}), {"return": 111})
-                    information = await tool(second, second_session, "g1r_session_status")
-                    self.assertFalse(information["claimed"])
-                    self.assertEqual(information["scope"], "informational")
-                    self.assertFalse(information["control_required"])
-                    self.assertFalse(information["ownership_enforced"])
-                    metadata = {"name": "Shared", "title": "Shared package", "author": "Fixture", "modVersion": "1.0.0"}
-                    await tool(first, first_session, "g1r_create_package", {"relative_path": "Shared", "metadata": metadata})
-                    package = await tool(second, second_session, "g1r_read_package_file", {
-                        "relative_path": "Shared", "file_path": "GothicMod.json"})
-                    self.assertEqual(json.loads(package["text"]), metadata)
+                    information = await tool(second, second_session, "sn2_status")
+                    self.assertFalse(information["game_ready"])
+                    self.assertFalse(information["game_ready_known"])
+                    self.assertEqual(information["workspace"]["root"], str(workspace.absolute()))
+                    contracts = await tool(first, first_session, "sn2_capabilities")
+                    names = {entry["name"] for entry in contracts["tool_contracts"]}
+                    self.assertEqual(len(names), 22)
+                    self.assertNotIn("sn2_session_status", names)
+                    self.assertNotIn("sn2_create_package", names)
                     body = {"jsonrpc": "2.0", "id": 500, "method": "tools/call",
-                            "params": {"name": "g1r_native_status", "arguments": {}}}
+                            "params": {"name": "sn2_native_status", "arguments": {}}}
                     common = {"Accept": "application/json, text/event-stream", "Mcp-Session-Id": first_session}
                     host = await first.post("/mcp", json=body, headers={**common, "Host": "external.example:27124"})
                     self.assertEqual(host.status_code, 421, host.text)
@@ -412,10 +411,10 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                         headers={**common, "Content-Type": "text/plain"})
                     self.assertEqual(wrong_type.status_code, 400, wrong_type.text)
                     self.assertEqual(len(native.requests), 3)
-                    self.assertEqual(await tool(second, second_session, "g1r_native_status"), native_status)
+                    self.assertEqual(await tool(second, second_session, "sn2_native_status"), native_status)
                     terminated = await first.delete("/mcp", headers=common)
                     self.assertEqual(terminated.status_code, 200, terminated.text)
-                    self.assertEqual(await tool(second, second_session, "g1r_native_status"), native_status)
+                    self.assertEqual(await tool(second, second_session, "sn2_native_status"), native_status)
                     self.assertEqual((await first.post("/other", json=body, headers=common)).status_code, 404)
             self.assertEqual(native.connections, 1)
             self.assertEqual([request["op"] for request in native.requests], ["status", "objects", "invoke", "status", "status"])

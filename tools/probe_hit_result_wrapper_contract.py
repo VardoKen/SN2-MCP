@@ -112,11 +112,11 @@ async def exercise(call):
     report = {"checks": [], "rejections": [], "cleanup": [], "reflected_functions": {}, "game_launched": False,
               "dll_loaded": False, "raw_hit_result": "not_marshaled", "actor_spawn": "not_tested", "world_context": "unverified"}
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Tick and the native session were not confirmed")
-        found = await call("g1r_find_objects", {"query": HOST, "class_query": HOST, "limit": 100})
+        found = await call("sn2_find_objects", {"query": HOST, "class_query": HOST, "limit": 100})
         if found.get("truncated") is not False or not isinstance(found.get("items"), list):
             raise ProbeError("probe_object_absent", "The owned wrapper instance catalog is incomplete")
         cdos, instances = [], []
@@ -139,12 +139,12 @@ async def exercise(call):
         report["live_instance"] = target
         report["reflected_cdo_functions"] = {}
         for name in METHODS:
-            listing = await call("g1r_object_functions", {"handle": cdos[0]["handle"], "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": cdos[0]["handle"], "function_query": name, "limit": 10})
             report["reflected_cdo_functions"][name] = listing
             check_signature(listing, name)
         handle, tokens, widths = target["handle"], {}, {}
         for name in METHODS:
-            listing = await call("g1r_object_functions", {"handle": handle, "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": handle, "function_query": name, "limit": 10})
             report["reflected_functions"][name] = listing
             _, tokens[name], widths[name] = check_signature(listing, name)
         if len(set(tokens.values())) != len(tokens) or widths["ReadDefaultImpactPoint"] != widths["TraceImpactPoint"]:
@@ -153,7 +153,7 @@ async def exercise(call):
         async def invoke(name, arguments=None, *, expected_error=None):
             supplied = {} if arguments is None else arguments
             json.dumps(supplied, allow_nan=False)
-            return await call("g1r_invoke", {"handle": handle, "function": name, "arguments": supplied,
+            return await call("sn2_invoke", {"handle": handle, "function": name, "arguments": supplied,
                               "expected_signature_token": tokens[name]}, expected_error=expected_error)
 
         check_scalar(await invoke("ReadMarker"), "IntProperty", MARKER)

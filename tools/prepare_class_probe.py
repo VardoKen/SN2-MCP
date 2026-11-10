@@ -13,8 +13,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 sys.path.insert(0, str(REPOSITORY_ROOT / "tools"))
 
-from g1r_mcp.packages import PackageError, validate_package
-from g1r_mcp.workspace import PackageWorkspace, WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
+from sn2_mcp.packages import PackageError, validate_package
+from sn2_mcp.workspace import PackageWorkspace, WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
 from prepare_object_probe import _workspace_path, _record_owned, _assert_owned
 
 PACKAGE_NAME = "G1RMCPClassProbe"

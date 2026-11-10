@@ -61,16 +61,16 @@ class ContractFixture:
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, arguments, expected_error))
         if expected_error:
-            if name == "g1r_invoke" and self.mutation_on_refusal:
+            if name == "sn2_invoke" and self.mutation_on_refusal:
                 self.count += 1
             result = {"code": expected_error, "executed": False}
             if not self.omit_effect: result["may_have_executed"] = False
             return result
-        if name == "g1r_native_status": return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects": return {"items": [self.target]}
-        if name == "g1r_object_functions": return self.functions(arguments["function_query"])
-        if name == "g1r_object_properties": return self.properties(arguments["property_names"])
-        if name == "g1r_invoke":
+        if name == "sn2_native_status": return {"ready": True, "session_id": "native-owner"}
+        if name == "sn2_find_objects": return {"items": [self.target]}
+        if name == "sn2_object_functions": return self.functions(arguments["function_query"])
+        if name == "sn2_object_properties": return self.properties(arguments["property_names"])
+        if name == "sn2_invoke":
             method = arguments["function"]
             if arguments.get("expected_signature_token") != self.tokens[method]: raise AssertionError("wrong positive token")
             if method == "ReadMarker": return {"executed": True, "result": 71}
@@ -92,9 +92,9 @@ class FunctionContractProbeTests(unittest.TestCase):
         self.assertEqual(report["changed_runtime_signature"], "not_tested")
         self.assertEqual(fixture.count, 0)
         self.assertEqual(fixture.resets, 1)
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"}
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"}
                              for name, _, _ in fixture.calls))
-        invalid_calls = [arguments for name, arguments, error in fixture.calls if name == "g1r_invoke" and error]
+        invalid_calls = [arguments for name, arguments, error in fixture.calls if name == "sn2_invoke" and error]
         self.assertTrue(all(arguments["function"] == "EchoName" for arguments in invalid_calls))
         self.assertEqual(fixture.calls[-1][1]["function"], "ReadCallsCount")
 
@@ -105,7 +105,7 @@ class FunctionContractProbeTests(unittest.TestCase):
                 asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(caught.exception.code, code)
             self.assertEqual(fixture.resets, 0)
-            self.assertFalse(any(name == "g1r_invoke" and arguments["function"] == "EchoName"
+            self.assertFalse(any(name == "sn2_invoke" and arguments["function"] == "EchoName"
                                  for name, arguments, _ in fixture.calls))
 
     def test_false_refusal_effect_or_missing_metadata_triggers_reset(self):
@@ -152,9 +152,9 @@ class FunctionContractProbeTests(unittest.TestCase):
             fixture = ContractFixture()
             reset_started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and expected_error:
+                if name == "sn2_invoke" and expected_error:
                     raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     reset_started.set()
                     await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)

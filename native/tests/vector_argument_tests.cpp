@@ -1,4 +1,4 @@
-#include <g1r_mcp/vector_arguments.hpp>
+#include <sn2_mcp/vector_arguments.hpp>
 
 #include <array>
 #include <cmath>
@@ -18,7 +18,7 @@ void require(bool good,const char* message) {
 }
 template<class Action>void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный код отказа FVector");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Отказ FVector должен быть до исполнения");
@@ -26,16 +26,16 @@ template<class Action>void reject(const char* code,Action&& action) {
     }
     throw std::runtime_error("Ожидался отказ FVector");
 }
-g1r_mcp::struct_values::Layout layout(int width) {
+sn2_mcp::struct_values::Layout layout(int width) {
     return {width*3,width,false,{{"Z",width==4?"FloatProperty":"DoubleProperty",width,0,1},
                                {"X",width==4?"FloatProperty":"DoubleProperty",width,width*2,1},
                                {"Y",width==4?"FloatProperty":"DoubleProperty",width,width,1}}};
 }
-template<class T>T read(const g1r_mcp::vector_arguments::EncodedVector& copied,int offset) {
+template<class T>T read(const sn2_mcp::vector_arguments::EncodedVector& copied,int offset) {
     T result{};std::memcpy(&result,copied.bytes.data()+offset,sizeof(result));return result;
 }
 void check_float(const json& value) {
-    const auto captured=g1r_mcp::vector_arguments::encode(layout(4),value);
+    const auto captured=sn2_mcp::vector_arguments::encode(layout(4),value);
     require(captured.size==12,"FVector Float должен занимать 12 байтов");
     require(read<float>(captured,8)==static_cast<float>(value["X"].get<double>())
         && read<float>(captured,4)==static_cast<float>(value["Y"].get<double>())
@@ -44,7 +44,7 @@ void check_float(const json& value) {
     for(int index=12;index<24;++index)require(captured.bytes[index]==std::byte{},"Хвост Float FVector должен оставаться нулевым");
 }
 void check_double(const json& value) {
-    const auto captured=g1r_mcp::vector_arguments::encode(layout(8),value);
+    const auto captured=sn2_mcp::vector_arguments::encode(layout(8),value);
     require(captured.size==24,"FVector Double должен занимать 24 байта");
     require(read<double>(captured,16)==value["X"].get<double>()
         && read<double>(captured,8)==value["Y"].get<double>()
@@ -54,7 +54,7 @@ void check_double(const json& value) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const auto floats=layout(4),doubles=layout(8);
         const json ordinary={{"X",1.25},{"Y",-2.5},{"Z",3.75}};

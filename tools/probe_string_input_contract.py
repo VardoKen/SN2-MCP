@@ -92,11 +92,11 @@ async def exercise(call):
     report = {"checks": [], "calls": [], "rejections": [], "cleanup": [], "reflected_functions": {},
               "game_launched": False, "dll_loaded": False, "native_string": "not_tested", "by_value": "not_tested"}
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Tick and the native session were not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
+        found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
             "exact_path": "/Script/Angelscript.Default__" + HOST, "limit": 2})
         if (found.get("truncated") is not False or not isinstance(found.get("items"), list) or len(found["items"]) != 1):
             raise ProbeError("probe_object_absent", "The exact owned FString CDO was not uniquely found")
@@ -107,13 +107,13 @@ async def exercise(call):
             raise ProbeError("unsafe_probe_target", "The exact owned FString CDO was not confirmed")
         handle, tokens = target["handle"], {}
         for name in METHODS:
-            listing = await call("g1r_object_functions", {"handle": handle, "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": handle, "function_query": name, "limit": 10})
             report["reflected_functions"][name] = listing
             _, tokens[name] = check_signature(listing, name)
         if len(set(tokens.values())) != len(tokens): raise ProbeError("probe_signature_token_alias", "Different FString methods received the same token")
 
         async def invoke(name, arguments=None, *, expected_error=None):
-            return await call("g1r_invoke", {"handle": handle, "function": name,
+            return await call("sn2_invoke", {"handle": handle, "function": name,
                 "arguments": {} if arguments is None else arguments, "expected_signature_token": tokens[name]}, expected_error=expected_error)
 
         check_scalar(await invoke("ReadMarker"), "IntProperty", MARKER)

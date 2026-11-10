@@ -41,7 +41,7 @@ class MCPSourcePaginationTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable,
-                args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
+                args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(modkit),
                       "--workspace-root", str(workspace)])
             before = {relative: hashlib.sha256((modkit / relative).read_bytes()).hexdigest()
                       for relative in expected_paths}
@@ -49,15 +49,15 @@ class MCPSourcePaginationTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    for name in ("g1r_find_source_files", "g1r_search_source", "g1r_list_source_types"):
+                    for name in ("sn2_find_source_files", "sn2_search_source", "sn2_list_source_types"):
                         self.assertIn(name, tools)
                         self.assertTrue(tools[name].annotations.read_only_hint)
                         self.assertFalse(tools[name].annotations.destructive_hint)
                         self.assertIn("offset", tools[name].input_schema["properties"])
                     searches = (
-                        ("g1r_find_source_files", {"query": ".as"}),
-                        ("g1r_search_source", {"query": "repeated needle", "case_sensitive": True}),
-                        ("g1r_list_source_types", {"query": "UDuplicate"}),
+                        ("sn2_find_source_files", {"query": ".as"}),
+                        ("sn2_search_source", {"query": "repeated needle", "case_sensitive": True}),
+                        ("sn2_list_source_types", {"query": "UDuplicate"}),
                     )
                     for name, arguments in searches:
                         with self.subTest(tool=name):
@@ -83,10 +83,10 @@ class MCPSourcePaginationTests(unittest.IsolatedAsyncioTestCase):
                             all_items = first["items"] + second["items"]
                             self.assertEqual([item["path"] for item in all_items], expected_paths)
                             self.assertEqual(len({item["path"] for item in all_items}), 205)
-                            if name == "g1r_search_source":
+                            if name == "sn2_search_source":
                                 self.assertTrue(all(item["line"] == 1 and item["text"] == "// repeated needle"
                                                     for item in all_items))
-                            if name == "g1r_list_source_types":
+                            if name == "sn2_list_source_types":
                                 self.assertTrue(all(item["line"] == 2 and item["qualified_name"] == "UDuplicate"
                                                     for item in all_items))
                             empty = await self.call_ok(client, name, {**arguments, "limit": 200, "offset": 1000})

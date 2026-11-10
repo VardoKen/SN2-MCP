@@ -1,38 +1,40 @@
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/transport.hpp"
-#include "g1r_mcp/scalar_arguments.hpp"
-#include "g1r_mcp/object_arguments.hpp"
-#include "g1r_mcp/class_arguments.hpp"
-#include "g1r_mcp/object_query.hpp"
-#include "g1r_mcp/function_query.hpp"
-#include "g1r_mcp/function_contract.hpp"
-#include "g1r_mcp/selected_property_query.hpp"
-#include "g1r_mcp/name_return.hpp"
-#include "g1r_mcp/name_argument.hpp"
-#include "g1r_mcp/string_return.hpp"
-#include "g1r_mcp/array_page.hpp"
-#include "g1r_mcp/enum_values.hpp"
-#include "g1r_mcp/enum_arguments.hpp"
-#include "g1r_mcp/vector_layout.hpp"
-#include "g1r_mcp/vector_arguments.hpp"
-#include "g1r_mcp/vector_parameter_direction.hpp"
-#include "g1r_mcp/parameter_direction.hpp"
-#include "g1r_mcp/scalar_outputs.hpp"
-#include "g1r_mcp/scalar_struct_values.hpp"
-#include "g1r_mcp/scalar_struct_arguments.hpp"
-#include "g1r_mcp/rotator_arguments.hpp"
-#include "g1r_mcp/aligned_parameter_buffer.hpp"
-#include "g1r_mcp/transform_layout.hpp"
-#include "g1r_mcp/transform_arguments.hpp"
-#include "g1r_mcp/string_arguments.hpp"
-#include "g1r_mcp/string_input_lifetime.hpp"
-#include "g1r_mcp/object_array_input_lifetime.hpp"
-#include "g1r_mcp/linear_color_layout.hpp"
-#include "g1r_mcp/linear_color_arguments.hpp"
-#include "g1r_mcp/cleanup_once.hpp"
-#include "g1r_mcp/native_exception.hpp"
-#include "g1r_mcp/as_exception_capture.hpp"
-#include "g1r_mcp/image_patterns.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/transport.hpp"
+#include "sn2_mcp/scalar_arguments.hpp"
+#include "sn2_mcp/object_arguments.hpp"
+#include "sn2_mcp/class_arguments.hpp"
+#include "sn2_mcp/object_query.hpp"
+#include "sn2_mcp/function_query.hpp"
+#include "sn2_mcp/function_contract.hpp"
+#include "sn2_mcp/function_call_support.hpp"
+#include "sn2_mcp/selected_property_query.hpp"
+#include "sn2_mcp/name_return.hpp"
+#include "sn2_mcp/name_argument.hpp"
+#include "sn2_mcp/string_return.hpp"
+#include "sn2_mcp/array_page.hpp"
+#include "sn2_mcp/enum_values.hpp"
+#include "sn2_mcp/enum_arguments.hpp"
+#include "sn2_mcp/vector_layout.hpp"
+#include "sn2_mcp/vector_arguments.hpp"
+#include "sn2_mcp/vector_parameter_direction.hpp"
+#include "sn2_mcp/parameter_direction.hpp"
+#include "sn2_mcp/scalar_outputs.hpp"
+#include "sn2_mcp/scalar_struct_values.hpp"
+#include "sn2_mcp/scalar_struct_arguments.hpp"
+#include "sn2_mcp/rotator_arguments.hpp"
+#include "sn2_mcp/aligned_parameter_buffer.hpp"
+#include "sn2_mcp/transform_layout.hpp"
+#include "sn2_mcp/transform_arguments.hpp"
+#include "sn2_mcp/string_arguments.hpp"
+#include "sn2_mcp/string_input_lifetime.hpp"
+#include "sn2_mcp/object_array_input_lifetime.hpp"
+#include "sn2_mcp/linear_color_layout.hpp"
+#include "sn2_mcp/linear_color_arguments.hpp"
+#include "sn2_mcp/cleanup_once.hpp"
+#include "sn2_mcp/native_exception.hpp"
+#include "sn2_mcp/process_identity.hpp"
+#include "sn2_mcp/request_identity.hpp"
+#include "sn2_mcp/image_patterns.hpp"
 #include <MinHook.h>
 #include <algorithm>
 #include <array>
@@ -45,7 +47,7 @@
 #include <set>
 #include <vector>
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 using json = nlohmann::json;
 namespace {
 uint64_t steady_ms() {
@@ -154,18 +156,6 @@ uintptr_t kNames{};
 uintptr_t kTick{};
 uintptr_t kProcessEvent{};
 uintptr_t kFree{};
-uintptr_t kAngelscriptManager{};
-uintptr_t kFormatDiagnostics{};
-uintptr_t kASExceptionLogger{};
-uintptr_t kCompilationLockOffset{};
-uintptr_t kASStackTrace{};
-uintptr_t kASReload{};
-uintptr_t kMoviePlayerInterfaceVtable{};
-uintptr_t kMoviePlayerWait{};
-uintptr_t kPlatformPumpMessages{};
-uintptr_t kMoviePlayerLoadingFinished{};
-uintptr_t kMoviePlayerPlaying{};
-uintptr_t kMoviePlayerStop{};
 uintptr_t kStringConstruct{};
 uintptr_t kNameConstruct{};
 uintptr_t kObjectArrayRealloc{};
@@ -185,34 +175,18 @@ bool call_event(void* function, void* object, void* event, void* params,native_e
     __try { reinterpret_cast<void(__fastcall*)(void*,void*,void*)>(function)(object,event,params); return true; }
     __except(native_exception::capture(GetExceptionInformation(),fault)) { return false; }
 }
-bool safe_movieplayer_flag(uintptr_t function,uintptr_t player,bool* result,native_exception::Diagnostic* fault) {
-    __try {*result=reinterpret_cast<bool(__fastcall*)(void*)>(function)(reinterpret_cast<void*>(player));return true;}
-    __except(native_exception::capture(GetExceptionInformation(),fault)) {return false;}
-}
-bool safe_movieplayer_stop(uintptr_t function,uintptr_t player,native_exception::Diagnostic* fault) {
-    __try {reinterpret_cast<void(__fastcall*)(void*)>(function)(reinterpret_cast<void*>(player));return true;}
-    __except(native_exception::capture(GetExceptionInformation(),fault)) {return false;}
-}
-void movieplayer_wait_frame_cleanup(MoviePlayerJobs::WaitFrame* frame,bool returned) noexcept {
-    if(!frame)return;
-    if(returned)frame->returned(steady_ms());
-    delete frame;
-}
-void movieplayer_wait_with_frame(uintptr_t original,void* player,bool allow_engine_tick,MoviePlayerJobs::WaitFrame* frame) {
-    __try {reinterpret_cast<void(__fastcall*)(void*,bool)>(original)(player,allow_engine_tick);}
-    __finally {movieplayer_wait_frame_cleanup(frame,AbnormalTermination()==FALSE);}
-}
 bool free_string(uintptr_t free_address, void* memory) {
     if (!memory) return true;
     __try { reinterpret_cast<void(__fastcall*)(void*)>(free_address)(memory); return true; }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-bool construct_string(uintptr_t constructor,g1r_mcp::StringHeader* header,const char16_t* text,int units) {
-    __try {reinterpret_cast<void(__fastcall*)(g1r_mcp::StringHeader*,const char16_t*,int)>(constructor)(header,text,units);return true;}
+bool construct_string(uintptr_t constructor,sn2_mcp::StringHeader* header,const char16_t* text,int units) {
+    __try {reinterpret_cast<void(__fastcall*)(sn2_mcp::StringHeader*,const char16_t*,int)>(constructor)(header,text,units);return true;}
     __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 bool construct_name(uintptr_t constructor,uint64_t* value,const char16_t* text) {
-    __try {reinterpret_cast<uint64_t*(__fastcall*)(uint64_t*,const char16_t*,uint32_t)>(constructor)(value,text,0);return true;}
+    // Current 0x1479E60 branch inserts a missing base only for FNAME_Add (1).
+    __try {reinterpret_cast<uint64_t*(__fastcall*)(uint64_t*,const char16_t*,uint32_t)>(constructor)(value,text,1);return true;}
     __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 bool allocate_object_array(uintptr_t allocator,size_t bytes,void** result) {
@@ -227,40 +201,14 @@ std::string utf8(const wchar_t* value, int length) {
     WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value,length,result.data(),count,nullptr,nullptr);
     return result;
 }
-std::string copied_string(const g1r_mcp::StringHeader& header) {
-    g1r_mcp::validate_string_header(header);
+std::string copied_string(const sn2_mcp::StringHeader& header) {
+    sn2_mcp::validate_string_header(header);
     std::vector<wchar_t> text(static_cast<size_t>(header.count));
     if(header.count && !copy_memory(text.data(),reinterpret_cast<void*>(header.data),
                                    static_cast<size_t>(header.count)*sizeof(wchar_t)))
         throw HandlerError("invalid_memory","String memory is unavailable");
     if(header.count && text.back()==0)text.pop_back();
     return utf8(text.data(),static_cast<int>(text.size()));
-}
-// Current executable evidence: dev91-script-reload-source-evidence.json.
-// The caller passes a 16-byte array header of two-FString, 32-byte entries.
-// The source meanings of these two fields remain unknown.
-struct ReloadChangedFilePair {
-    StringHeader first;
-    StringHeader second;
-};
-static_assert(sizeof(ReloadChangedFilePair)==32);
-void capture_reload_changed_files(void* changed_files,json& output) {
-    const auto address=reinterpret_cast<uintptr_t>(changed_files);
-    const auto header=read<ArrayHeader>(address);
-    const auto page=array_page(header,sizeof(ReloadChangedFilePair),1,0,
-        std::numeric_limits<std::size_t>::max());
-    for(int32_t index=0;index<page.count;++index) {
-        const auto pair_address=page.begin+static_cast<uintptr_t>(index)*sizeof(ReloadChangedFilePair);
-        const auto pair=read<ReloadChangedFilePair>(pair_address);
-        auto first=copied_string(pair.first);
-        auto second=copied_string(pair.second);
-        const auto after=read<ReloadChangedFilePair>(pair_address);
-        if(std::memcmp(&pair,&after,sizeof(pair)))
-            throw HandlerError("reload_capture_changed","The changed-file string headers changed while being copied");
-        output.push_back({{"first",std::move(first)},{"second",std::move(second)}});
-    }
-    if(!same_array_header(header,read<ArrayHeader>(address)))
-        throw HandlerError("reload_capture_changed","The changed-file array header changed while being copied");
 }
 std::size_t limit_of(const json& params,std::size_t default_value=50) {
     if(!params.contains("limit"))return default_value;
@@ -269,6 +217,14 @@ std::size_t limit_of(const json& params,std::size_t default_value=50) {
        || value.get<uint64_t>()<1 || value.get<uint64_t>()>std::numeric_limits<std::size_t>::max())
         throw HandlerError("invalid_limit","limit must be a positive integer representable by size_t");
     return static_cast<std::size_t>(value.get<uint64_t>());
+}
+std::size_t offset_of(const json& params) {
+    if(!params.contains("offset"))return 0;
+    const auto& value=params.at("offset");
+    if(!value.is_number_integer() || (!value.is_number_unsigned() && value.get<std::int64_t>()<0)
+       || value.get<std::uint64_t>()>std::numeric_limits<std::size_t>::max())
+        throw HandlerError("invalid_offset","offset must be a nonnegative integer representable by size_t");
+    return static_cast<std::size_t>(value.get<std::uint64_t>());
 }
 bool contains(const std::string& value,const std::string& query) {
     std::string a=value,b=query;
@@ -289,7 +245,7 @@ json scalar(uintptr_t address,const std::string& type,int size,uintptr_t field) 
     if(type=="FloatProperty" && size==4) {auto v=read<float>(address); return std::isfinite(v)?json(v):json(nullptr);}
     if(type=="DoubleProperty" && size==8) {auto v=read<double>(address);return std::isfinite(v)?json(v):json(nullptr);}
     if(type=="StrProperty" && size==16) {
-        return copied_string(read<g1r_mcp::StringHeader>(address));
+        return copied_string(read<sn2_mcp::StringHeader>(address));
     }
     return nullptr;
 }
@@ -307,435 +263,344 @@ GameAccess* GameAccess::active_{};
 uintptr_t GameAccess::ensure_image_base() {
     if(base_)return base_;
     const auto candidate_base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto executable=sn2::loader::comparable_path(sn2::loader::process_image(GetCurrentProcess()));
+    if(!executable.ends_with(L"\\subnautica2\\binaries\\win64\\subnautica2-win64-shipping.exe"))
+        throw HandlerError("target_process_mismatch","The native target is not the configured Subnautica 2 Shipping process");
     const image_patterns::Image image(candidate_base);
-    kTick=image.find_unique("game_tick",
-        "4C 8B DC 55 57 41 54 49 8D AB 08 FC FF FF 48 81 EC E0 04 00 00 "
-        "48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 B8 03 00 00");
-    kProcessEvent=image.find_unique("process_event",
-        "40 55 56 57 41 54 41 55 41 56 41 57 48 81 EC 70 01 00 00 48 8D 6C 24 30");
-    const auto name_string=image.find_unique("name_pool_reference",
-        "48 89 5C 24 10 48 89 74 24 18 57 48 83 EC 30 83 79 04 00 "
-        "48 8B FA 8B 19 48 8B F1 0F 85 ?? ?? ?? ?? 80 3D ?? ?? ?? ?? 00 "
-        "74 09 4C 8D 05 ?? ?? ?? ?? EB 16 48 8D 0D ?? ?? ?? ??");
-    kNames=image.rip_target(name_string+42,3,7);
-    const auto object_walk=image.find_unique("object_registry_reference",
-        "40 53 48 83 EC 40 48 8D 15 ?? ?? ?? ?? 48 8D 4C 24 20 E8 ?? ?? ?? ?? "
-        "44 8B 05 ?? ?? ?? ?? 33 DB 45 85 C0 0F 8E ?? ?? ?? ?? "
-        "4C 8B 0D ?? ?? ?? ?? 48 89 7C 24 50");
-    kObjects=image.rip_target(object_walk+41,3,7);
-    const auto compilation_lock=image.find_unique("angelscript_manager_lock",
-        "48 8B 35 ?? ?? ?? ?? 80 BE ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? "
-        "48 89 9C 24 C8 01 00 00 48 8D 9E ?? ?? ?? ?? "
-        "4C 89 A4 24 D0 01 00 00 48 8B CB");
-    kAngelscriptManager=image.rip_target(compilation_lock,3,7);
-    kCompilationLockOffset=read<int32_t>(candidate_base+compilation_lock+31);
-    kFormatDiagnostics=image.find_unique("angelscript_diagnostics",
-        "48 89 5C 24 18 55 56 57 41 54 41 55 41 56 41 57 "
-        "48 8D 6C 24 D9 48 81 EC 00 01 00 00 45 33 F6 C7 44 24 34 01 00 00 00 "
-        "48 8D 99 ?? ?? ?? ?? 4C 89 32");
-    kASExceptionLogger=image.find_unique("angelscript_exception_logger",
-        "48 81 EC C8 01 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 "
-        "48 89 84 24 A0 01 00 00 48 8B 05 ?? ?? ?? ?? "
-        "48 8B 90 ?? ?? ?? ?? 48 85 D2");
-    kASReload=image.find_unique("angelscript_reload",
-        "48 89 5C 24 10 55 56 57 41 54 41 55 41 56 41 57 "
-        "48 8D AC 24 B0 FB FF FF 48 81 EC 50 05 00 00 "
-        "48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 40 04 00 00 "
-        "0F B6 05 ?? ?? ?? ?? 44 0F B6 EA");
-    kASStackTrace=image.find_unique("angelscript_stack_trace",
-        "40 55 53 57 41 55 41 56 48 8D AC 24 A0 FC FF FF 48 81 EC 60 04 00 00");
-    kFree=image.find_unique("engine_free",
-        "48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B 0D ?? ?? ?? ?? "
-        "48 85 C9 75 0C E8 ?? ?? ?? ?? 48 8B");
-    kObjectArrayRealloc=image.find_unique("engine_realloc",
-        "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 "
-        "48 8B F1 41 8B D8 48 8B 0D ?? ?? ?? ?? 48 8B FA");
-    kStringConstruct=image.find_unique("string_constructor",
-        "48 89 6C 24 18 56 41 56 41 57 48 83 EC 20 45 33 FF "
-        "49 63 E8 4C 89 39 4C 8B F2 4C 89 79 08");
-    kNameConstruct=image.find_unique("name_constructor",
-        "40 53 48 83 EC 30 45 33 D2 48 89 54 24 20 48 8B D9 48 8B C2 "
-        "48 85 D2 74 2C 44 0F B7 0A 66 45 85 C9");
-    kMoviePlayerWait=image.find_unique("movieplayer_wait",
-        "40 55 53 41 56 41 57 48 8D AC 24 18 FF FF FF 48 81 EC E8 01 00 00 "
-        "48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 80 00 00 00 "
-        "48 8B 01 0F 57 C0 0F 2F 81 C8 00 00 00");
-    kPlatformPumpMessages=image.find_unique("platform_message_pump",
-        "48 81 EC 88 00 00 00 0F B6 05 ?? ?? ?? ?? 84 C0");
-    kMoviePlayerLoadingFinished=image.find_unique("movieplayer_loading_finished",
-        "33 D2 33 C0 F0 0F B1 91 9C 00 00 00 0F 95 C0 C3");
-    kMoviePlayerPlaying=image.find_unique("movieplayer_playing",
-        "48 83 B9 90 00 00 00 00 75 0C 80 B9 A0 00 00 00 00 75 03 32 C0 C3 B0 01 C3");
-    kMoviePlayerStop=image.find_unique("movieplayer_stop",
-        "48 C7 81 50 01 00 00 00 00 00 00 C6 81 A1 00 00 00 01 C3");
-    const std::array<uintptr_t,4> movieplayer_entries={candidate_base+kMoviePlayerStop,
-        candidate_base+kMoviePlayerWait,candidate_base+kMoviePlayerLoadingFinished,candidate_base+kMoviePlayerPlaying};
-    const auto movieplayer_table=image.unique("movieplayer_interface_table",
-        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(movieplayer_entries.data()),sizeof(movieplayer_entries)},
-        std::string(sizeof(movieplayer_entries),'x'),false);
-    kMoviePlayerInterfaceVtable=movieplayer_table-0x50;
+    const auto discover=[&](RuntimeBinding& binding,std::string_view label,std::string_view pattern,
+                             std::size_t instruction_offset=0,std::size_t displacement_offset=0,
+                             std::size_t instruction_size=0,std::size_t target_offset=0) {
+        try {
+            const auto match=image.find_unique(label,pattern);
+            const auto rva=instruction_size?image.rip_target(match+instruction_offset,displacement_offset,instruction_size)+target_offset:match;
+            if(!image.contains(rva,sizeof(uintptr_t)))
+                throw HandlerError("binding_outside_image","The resolved binding exceeds the mapped image");
+            binding={rva,{},false};
+        } catch(const HandlerError& error) {binding={0,error.code()+": "+error.what(),false};}
+    };
+    const auto discover_function=[&](RuntimeBinding& binding,std::string_view label,
+                                     std::string_view body_pattern,std::size_t body_offset) {
+        try {
+            const auto match=image.find_unique(label,body_pattern);
+            if(match<body_offset)throw HandlerError("binding_outside_image","A function body precedes its entry");
+            const auto entry=match-body_offset;
+            DWORD64 unwind_image{};
+            const auto unwind=RtlLookupFunctionEntry(candidate_base+match,&unwind_image,nullptr);
+            if(!unwind || unwind_image!=candidate_base || unwind->BeginAddress!=entry
+               || unwind->EndAddress<=match || !image.contains(entry,16))
+                throw HandlerError("binding_unwind_mismatch","The matched body does not resolve to the expected PE unwind function entry");
+            json existing=nullptr;
+            const auto address=candidate_base+entry;
+            const auto first=read<std::uint16_t>(address);
+            std::uintptr_t destination{};
+            if(first==0x25ff) {
+                const auto displacement=read<std::int32_t>(address+2);
+                const auto slot=static_cast<std::int64_t>(address)+6+displacement;
+                if(slot<=0)throw HandlerError("binding_detour_invalid","The existing indirect jump slot is invalid");
+                destination=read<std::uintptr_t>(static_cast<std::uintptr_t>(slot));
+                existing={{"encoding","FF25_RIP"},{"slot",slot},{"destination",destination}};
+            }else if((first&0xff)==0xe9) {
+                const auto target=static_cast<std::int64_t>(address)+5+read<std::int32_t>(address+1);
+                if(target<=0)throw HandlerError("binding_detour_invalid","The existing relative jump is invalid");
+                destination=static_cast<std::uintptr_t>(target);
+                existing={{"encoding","E9_REL32"},{"destination",destination}};
+            }
+            if(destination) {
+                MEMORY_BASIC_INFORMATION region{};
+                if(!VirtualQuery(reinterpret_cast<void*>(destination),&region,sizeof(region))
+                   || region.State!=MEM_COMMIT || (region.Protect&(PAGE_GUARD|PAGE_NOACCESS))
+                   || !(region.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)))
+                    throw HandlerError("binding_detour_invalid","The existing hook destination is not executable committed memory");
+                HMODULE owner{};
+                if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    reinterpret_cast<LPCWSTR>(destination),&owner)) {
+                    wchar_t path[32768]{};const auto length=GetModuleFileNameW(owner,path,32768);
+                    existing["module"]=length?json(utf8(path,static_cast<int>(length))):json(nullptr);
+                }
+            }
+            binding={entry,{},false};
+            binding.discovery={{"method","unique_function_body_and_pe_unwind"},{"body_rva",match},
+                {"body_offset",body_offset},{"function_end_rva",unwind->EndAddress},{"existing_entry_hook",existing}};
+        }catch(const HandlerError& error){binding={0,error.code()+": "+error.what(),false};}
+    };
+    // Current CL131439 executable semantics and unique masked patterns were
+    // inspected on 2026-11-10. Matches are candidates, not runtime acceptance.
+    discover_function(bindings_.tick,"tick",
+        "49 8D 6B 98 48 81 EC 40 01 00 00 41 0F 29 7B A8 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 45 00 41 0F 29 73 B8 0F 28 F9 0F 57 F6 44 88 44 24 30",0xb);
+    discover_function(bindings_.process_event,"process_event",
+        "8B 41 08 4D 8B F0 C1 E8 1E 48 8B FA F6 D0 4C 8B F9 A8 01 0F 84 ?? ?? ?? ?? 33 F6 F7 82 B0 00 00 00 00 04 00 00",0x30);
+    discover(bindings_.names,"name_pool_reference",
+        "80 3D ?? ?? ?? ?? 00 74 09 4C 8D 05 ?? ?? ?? ?? EB 16 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4C 8B C0 C6 05 ?? ?? ?? ?? 01 8B CB 0F B7 C3 C1 E9 10", 9, 3, 7, 0);
+    discover(bindings_.object_array,"registry_reference",
+        "2B FB 85 FF 7E 14 41 3B EF 75 0F 49 8B D6 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 5C 24 50 48 8B 6C 24 58", 14, 3, 7, 16);
+    discover(bindings_.free,"free",
+        "48 85 C9 74 2E 53 48 83 EC 20 48 8B D9 48 8B 0D ?? ?? ?? ?? 48 85 C9 75 0C E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 48 8B D3 FF 50 48");
+    discover(bindings_.realloc,"realloc",
+        "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F1 41 8B D8 48 8B 0D ?? ?? ?? ?? 48 8B FA 48 85 C9 75 0C E8 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? 48 8B 01 44 8B CB 4C 8B C7 48 8B D6 48 8B 5C 24 30 48 8B 74 24 38 48 83 C4 20 5F 48 FF 60 38");
+    discover(bindings_.string_construct,"wide_string_construct",
+        "48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 83 EC 30 45 33 E4 49 63 E8 4C 89 21");
+    discover_function(bindings_.name_construct,"name_construct",
+        "49 83 C1 02 0F B7 C0 44 0B D0 41 0F B7 01 66 85 C0 75 ED 41 F7 C2 80 FF FF FF 4C 89 5C 24 20",0x30);
+    kTick=bindings_.tick.rva;
+    kProcessEvent=bindings_.process_event.rva;
+    kNames=bindings_.names.rva;
+    kObjects=bindings_.object_array.rva;
+    kFree=bindings_.free.rva;
+    kObjectArrayRealloc=bindings_.realloc.rva;
+    kStringConstruct=bindings_.string_construct.rva;
+    kNameConstruct=bindings_.name_construct.rva;
     base_=candidate_base;
     return base_;
 }
 bool GameAccess::start() {
-    if(enabled_) return true;
+    std::lock_guard lock(bootstrap_mutex_);
+    if(enabled_){if(!reflection_validated_.load())reflection_error_.clear();return true;}
     try {ensure_image_base();}
-    catch(const HandlerError& error) {startup_error_=error.code();return false;}
-    auto initialized=MH_Initialize();
-    if(initialized!=MH_OK && initialized!=MH_ERROR_ALREADY_INITIALIZED) {startup_error_="hook_initialize_failed";return false;}
-    active_=this;process_event_=reinterpret_cast<ProcessEventFn>(base_+kProcessEvent);
-    if(MH_CreateHook(reinterpret_cast<void*>(base_+kASExceptionLogger),reinterpret_cast<void*>(&hooked_as_exception_logger),
-                     reinterpret_cast<void**>(&original_as_exception_logger_))!=MH_OK) {startup_error_="as_exception_hook_failed";return false;}
-    if(MH_EnableHook(reinterpret_cast<void*>(base_+kASExceptionLogger))!=MH_OK) {
-        MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));startup_error_="as_exception_hook_failed";return false;
+    catch(const std::exception& error) {startup_error_=error.what();return false;}
+    if(!bindings_.executor_discovered()) {
+        startup_error_="tick_binding_unavailable";return false;
     }
-    diagnostic("hook_create_enter");
-    if(MH_CreateHook(reinterpret_cast<void*>(base_+kASStackTrace),reinterpret_cast<void*>(&hooked_as_stack_trace),
-                     reinterpret_cast<void**>(&original_as_stack_trace_))!=MH_OK) {
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASExceptionLogger));MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));
-        startup_error_="as_stack_hook_failed";return false;
+    const auto initialized=MH_Initialize();
+    if(initialized!=MH_OK && initialized!=MH_ERROR_ALREADY_INITIALIZED) {
+        startup_error_="hook_initialize_failed";return false;
     }
-    if(MH_EnableHook(reinterpret_cast<void*>(base_+kASStackTrace))!=MH_OK) {
-        MH_RemoveHook(reinterpret_cast<void*>(base_+kASStackTrace));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASExceptionLogger));MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));
-        startup_error_="as_stack_hook_failed";return false;
+    active_=this;
+    process_event_=bindings_.process_event.available()?reinterpret_cast<ProcessEventFn>(base_+kProcessEvent):nullptr;
+    if(MH_CreateHook(reinterpret_cast<void*>(base_+kTick),reinterpret_cast<void*>(&hooked_tick),
+                     reinterpret_cast<void**>(&original_tick_))!=MH_OK) {
+        active_=nullptr;startup_error_="tick_hook_create_failed";return false;
     }
-    if(MH_CreateHook(reinterpret_cast<void*>(base_+kTick),reinterpret_cast<void*>(&hooked_tick),reinterpret_cast<void**>(&original_tick_))!=MH_OK) {
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASStackTrace));MH_RemoveHook(reinterpret_cast<void*>(base_+kASStackTrace));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASExceptionLogger));MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));
-        startup_error_="tick_hook_failed";return false;
-    }
+    enabled_=true;
     if(MH_EnableHook(reinterpret_cast<void*>(base_+kTick))!=MH_OK) {
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASStackTrace));MH_RemoveHook(reinterpret_cast<void*>(base_+kASStackTrace));
-        MH_RemoveHook(reinterpret_cast<void*>(base_+kTick));MH_DisableHook(reinterpret_cast<void*>(base_+kASExceptionLogger));
-        MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));startup_error_="tick_hook_failed";return false;
+        enabled_=false;MH_RemoveHook(reinterpret_cast<void*>(base_+kTick));
+        original_tick_=nullptr;active_=nullptr;startup_error_="tick_hook_enable_failed";return false;
     }
-    if(MH_CreateHook(reinterpret_cast<void*>(base_+kASReload),reinterpret_cast<void*>(&hooked_as_reload),
-           reinterpret_cast<void**>(&original_as_reload_))!=MH_OK) {
-        MH_DisableHook(reinterpret_cast<void*>(base_+kTick));MH_RemoveHook(reinterpret_cast<void*>(base_+kTick));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASStackTrace));MH_RemoveHook(reinterpret_cast<void*>(base_+kASStackTrace));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASExceptionLogger));MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));
-        startup_error_="script_reload_hook_failed";return false;
-    }
-    if(MH_EnableHook(reinterpret_cast<void*>(base_+kASReload))!=MH_OK) {
-        MH_RemoveHook(reinterpret_cast<void*>(base_+kASReload));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kTick));MH_RemoveHook(reinterpret_cast<void*>(base_+kTick));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASStackTrace));MH_RemoveHook(reinterpret_cast<void*>(base_+kASStackTrace));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASExceptionLogger));MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));
-        startup_error_="script_reload_hook_failed";return false;
-    }
-    script_reload_hook_installed_=true;
-    bool movie_wait_created=false,platform_pump_created=false;
-    const auto undo_movieplayer_installation=[&] {
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASReload));MH_RemoveHook(reinterpret_cast<void*>(base_+kASReload));script_reload_hook_installed_=false;
-        if(platform_pump_created){MH_DisableHook(reinterpret_cast<void*>(base_+kPlatformPumpMessages));MH_RemoveHook(reinterpret_cast<void*>(base_+kPlatformPumpMessages));}
-        if(movie_wait_created){MH_DisableHook(reinterpret_cast<void*>(base_+kMoviePlayerWait));MH_RemoveHook(reinterpret_cast<void*>(base_+kMoviePlayerWait));}
-        MH_DisableHook(reinterpret_cast<void*>(base_+kTick));MH_RemoveHook(reinterpret_cast<void*>(base_+kTick));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASStackTrace));MH_RemoveHook(reinterpret_cast<void*>(base_+kASStackTrace));
-        MH_DisableHook(reinterpret_cast<void*>(base_+kASExceptionLogger));MH_RemoveHook(reinterpret_cast<void*>(base_+kASExceptionLogger));
-    };
-    if(MH_CreateHook(reinterpret_cast<void*>(base_+kMoviePlayerWait),reinterpret_cast<void*>(&hooked_movieplayer_wait),
-                     reinterpret_cast<void**>(&original_movieplayer_wait_))!=MH_OK) {
-        undo_movieplayer_installation();startup_error_="movieplayer_wait_hook_failed";return false;
-    }
-    movie_wait_created=true;
-    if(MH_CreateHook(reinterpret_cast<void*>(base_+kPlatformPumpMessages),reinterpret_cast<void*>(&hooked_platform_pump_messages),
-                     reinterpret_cast<void**>(&original_platform_pump_messages_))!=MH_OK) {
-        undo_movieplayer_installation();startup_error_="movieplayer_message_pump_hook_failed";return false;
-    }
-    platform_pump_created=true;
-    if(MH_EnableHook(reinterpret_cast<void*>(base_+kMoviePlayerWait))!=MH_OK ||
-       MH_EnableHook(reinterpret_cast<void*>(base_+kPlatformPumpMessages))!=MH_OK) {
-        undo_movieplayer_installation();startup_error_="movieplayer_hook_enable_failed";return false;
-    }
-    movieplayer_hooks_installed_=true;
-    diagnostic("hook_enabled");enabled_=true;return true;
+    startup_error_.clear();diagnostic("tick_hook_enabled");return true;
 }
-bool __fastcall GameAccess::hooked_as_reload(void* manager,std::uint8_t mode,void* changed_files) {
-    auto self=active_;
-    const auto attempt_id=++self->script_reload_attempts_started_;
-    const auto generation_before=self->successful_script_reloads_.load();
-    json receipt;
-    try {
-        receipt={{"changed_files",json::array()},{"capture_complete",false}};
-        capture_reload_changed_files(changed_files,receipt["changed_files"]);
-        receipt["capture_complete"]=true;
-    } catch(const HandlerError& error) {
-        try {receipt["capture_error"]={{"code",error.code()},{"message",error.what()}};}catch(...) {}
-    } catch(const std::exception& error) {
-        try {receipt["capture_error"]={{"code","reload_capture_failed"},{"message",error.what()}};}catch(...) {}
-    } catch(...) {
-        try {receipt["capture_error"]={{"code","reload_capture_failed"},{"message","Could not capture changed-file metadata"}};}catch(...) {}
-    }
-    const bool result=self->original_as_reload_(manager,mode,changed_files);
-    if(result)++self->successful_script_reloads_;else ++self->failed_script_reloads_;
-    const auto completion_id=++self->script_reload_attempts_completed_;
-    try {
-        const bool capture_complete=receipt.is_object() && receipt.value("capture_complete",false);
-        receipt.update({{"attempt_id",attempt_id},{"completion_id",completion_id},{"mode",mode},{"success",result},
-            {"script_generation_before",generation_before},
-            {"script_generation_after",self->successful_script_reloads_.load()},{"capture_complete",capture_complete}});
-        if(!receipt.contains("changed_files"))receipt["changed_files"]=json::array();
-        std::lock_guard lock(self->script_reload_receipt_mutex_);
-        if(self->last_completed_script_reload_.is_null() ||
-           self->last_completed_script_reload_.value("completion_id",std::uint64_t{})<completion_id)
-            self->last_completed_script_reload_=std::move(receipt);
-    } catch(...) {
-        // A failed bridge capture must not change the engine reload result.
-    }
-    return result;
-}
-void __fastcall GameAccess::hooked_as_exception_logger(const char* message) {
-    as_exception_capture::LoggerScope logger;
-    as_exception_capture::record(message,[](uintptr_t address,char& value) {
-        return copy_memory(&value,reinterpret_cast<const void*>(address),sizeof(value));
-    });
-    active_->original_as_exception_logger_(message);
-}
-void __fastcall GameAccess::hooked_as_stack_trace(void* output) {
-    active_->original_as_stack_trace_(output);
-    if(!as_exception_capture::active_logger || !as_exception_capture::active ||
-       as_exception_capture::active_logger->owner()!=as_exception_capture::active)return;
-    std::vector<std::string> frames;
-    bool complete=false;
-    try {
-        ArrayHeader header{};
-        if(!copy_memory(&header,output,sizeof(header)))throw HandlerError("invalid_memory","Stack memory is unavailable");
-        if(header.count<0 || header.capacity<header.count ||
-           (!header.data && (header.count || header.capacity)) ||
-           (header.data && (!header.capacity || header.data%alignof(StringHeader))))
-            throw HandlerError("invalid_array_header","Invalid stack array");
-        const auto capacity_bytes=static_cast<uintptr_t>(header.capacity)*sizeof(StringHeader);
-        if(header.data>std::numeric_limits<uintptr_t>::max()-capacity_bytes)
-            throw HandlerError("invalid_array_header","The stack address range overflows");
-        frames.reserve(static_cast<size_t>(header.count));
-        for(int32_t index=0;index<header.count;++index) {
-            StringHeader frame{};
-            if(!copy_memory(&frame,reinterpret_cast<const void*>(header.data+static_cast<uintptr_t>(index)*sizeof(frame)),sizeof(frame)))
-                throw HandlerError("invalid_memory","Stack frame memory is unavailable");
-            frames.push_back(copied_string(frame));
+void GameAccess::validate_runtime_layout() {
+    reflection_validation_={{"state","checking"},{"method","game_tick_relationship_checks"},
+        {"thread_id",GetCurrentThreadId()},{"tick",ticks_.load()},{"stage","binding_presence"}};
+    if(!bindings_.reflection_discovered())
+        throw HandlerError("reflection_bindings_unavailable","Name pool or object registry was not discovered");
+    if(GetCurrentThreadId()!=game_thread_.load())
+        throw HandlerError("reflection_wrong_thread","The checkpoint requires the observed Tick thread");
+    reflection_validation_["stage"]="name_pool";
+    if(name(0)!="None")
+        throw HandlerError("name_layout_mismatch","The target FName index zero does not decode as None");
+    const auto current_block=read<std::uint32_t>(base_+kNames+8);
+    const auto current_cursor=read<std::uint32_t>(base_+kNames+0xc);
+    if(current_block>=8192 || current_cursor>0x20000
+       || !read<std::uintptr_t>(base_+kNames+0x10+current_block*sizeof(std::uintptr_t)))
+        throw HandlerError("name_layout_mismatch","The name pool block and cursor violate the target layout");
+    reflection_validation_["name_pool"]={{"none",name(0)},{"current_block",current_block},{"current_cursor",current_cursor}};
+    reflection_validation_["stage"]="object_registry";
+    const auto maximum=read<std::int32_t>(base_+kObjects+0x10),count=read<std::int32_t>(base_+kObjects+0x14);
+    const auto max_chunks=read<std::int32_t>(base_+kObjects+0x18),chunks=read<std::int32_t>(base_+kObjects+0x1c);
+    if(count<=0 || maximum<count || chunks<=0 || max_chunks<chunks
+       || std::int64_t(count)>std::int64_t(chunks)*65536 || !read<std::uintptr_t>(base_+kObjects))
+        throw HandlerError("registry_layout_mismatch","The object registry counts and chunk table are inconsistent");
+    reflection_validation_["registry"]={{"count",count},{"maximum",maximum},{"chunks",chunks},
+        {"maximum_chunks",max_chunks},{"item_stride",24},{"serial_offset",0x10}};
+    const std::set<std::string> required={"/Script/CoreUObject.Object","/Script/CoreUObject.Class",
+        "/Script/CoreUObject.Struct","/Script/CoreUObject.Function","/Script/Engine.Engine",
+        "/Script/Engine.World","/Script/Engine.GameViewportClient"};
+    std::map<std::string,std::uintptr_t> metadata;
+    std::size_t live{},destroying{};
+    for(int index=0;index<count;++index) {
+        auto object=slot(index);if(!object)continue;
+        const auto pointer=reinterpret_cast<std::uintptr_t>(object);
+        if(read<std::int32_t>(pointer+0xc)!=index)
+            throw HandlerError("registry_layout_mismatch","A live UObject index disagrees with its registry slot");
+        if(read<std::uint32_t>(pointer+8)&0x18000){++destroying;continue;}
+        ++live;
+        // Only known metadata is followed through its outer chain here. All
+        // returned objects are validated again by the existing handle guards.
+        const auto simple=object_name(object);
+        const bool candidate=std::any_of(required.begin(),required.end(),[&](const auto& path){
+            return path.ends_with("."+simple);});
+        if(!candidate)continue;
+        const auto path=object_path(object);
+        if(required.contains(path)) {
+            validate_object(object);
+            if(!metadata.emplace(path,pointer).second)
+                throw HandlerError("reflection_identity_mismatch","Required class path is not unique: "+path);
         }
-        complete=true;
-    } catch(...) {}
-    as_exception_capture::record_stack(std::move(frames),complete);
-}
-void __fastcall GameAccess::hooked_tick(void* loop) {
-    static std::atomic<int> reports{0};auto count=reports.fetch_add(1);
-    if(count<2)diagnostic("tick_enter");
-    auto self=active_; if(!self) return;
-    self->original_tick_(loop);
-    if(count<2)diagnostic("tick_original_return");
-    if(self->enabled_) self->pump();
-    if(count<2)diagnostic("tick_pump_return");
-}
-bool GameAccess::movieplayer_flag(uintptr_t player,std::size_t slot,uintptr_t expected_rva) const {
-    uintptr_t table{},function{};
-    if(!copy_memory(&table,reinterpret_cast<void*>(player),sizeof(table)))
-        throw HandlerError("movieplayer_memory_unavailable","MoviePlayer interface memory is unavailable");
-    if(table!=base_+kMoviePlayerInterfaceVtable || !copy_memory(&function,reinterpret_cast<void*>(table+slot),sizeof(function))
-       || function!=base_+expected_rva)
-        throw HandlerError("movieplayer_interface_mismatch","MoviePlayer interface or method differs from the confirmed executable");
-    bool value=false;native_exception::Diagnostic fault{};
-    if(!safe_movieplayer_flag(base_+expected_rva,player,&value,&fault))
-        throw HandlerError("movieplayer_read_failed","MoviePlayer status call raised a native exception",
-            {{"executed",false},{"may_have_executed",false},{"do_not_retry",false},{"native_exception",native_exception::describe(fault)}});
-    return value;
-}
-void GameAccess::movieplayer_stop(uintptr_t player) const {
-    uintptr_t table{},function{};
-    if(!copy_memory(&table,reinterpret_cast<void*>(player),sizeof(table)))
-        throw HandlerError("movieplayer_memory_unavailable","MoviePlayer interface memory is unavailable");
-    if(table!=base_+kMoviePlayerInterfaceVtable || !copy_memory(&function,reinterpret_cast<void*>(table+0x50),sizeof(function))
-       || function!=base_+kMoviePlayerStop)
-        throw HandlerError("movieplayer_interface_mismatch","MoviePlayer StopMovie method differs from the confirmed executable");
-    native_exception::Diagnostic fault{};
-    if(!safe_movieplayer_stop(base_+kMoviePlayerStop,player,&fault))
-        throw HandlerError("movieplayer_stop_failed","MoviePlayer StopMovie call raised a native exception",
-            {{"executed",true},{"may_have_executed",true},{"do_not_retry",true},{"native_exception",native_exception::describe(fault)}});
-}
-void __fastcall GameAccess::hooked_movieplayer_wait(void* player,bool allow_engine_tick) {
-    auto* self=active_;if(!self)return;
-    MoviePlayerJobs::WaitFrame* frame=nullptr;
-    try {frame=new MoviePlayerJobs::WaitFrame(self->movieplayer_jobs_,reinterpret_cast<uintptr_t>(player),
-              GetCurrentThreadId(),allow_engine_tick,steady_ms());}
-    catch(...) {diagnostic("movieplayer_wait_frame_failed");}
-    movieplayer_wait_with_frame(reinterpret_cast<uintptr_t>(self->original_movieplayer_wait_),player,allow_engine_tick,frame);
-}
-void __fastcall GameAccess::hooked_platform_pump_messages(bool from_main_loop) {
-    auto* self=active_;if(!self)return;
-    self->original_platform_pump_messages_(from_main_loop);
-    if(!self->movieplayer_hooks_installed_)return;
-    try {
-        self->movieplayer_jobs_.sample_and_service(GetCurrentThreadId(),steady_ms(),
-            [self](uintptr_t player){return self->movieplayer_flag(player,0x60,kMoviePlayerLoadingFinished);},
-            [self](uintptr_t player){return self->movieplayer_flag(player,0x68,kMoviePlayerPlaying);},
-            [self](uintptr_t player){self->movieplayer_stop(player);});
-    } catch(...) {diagnostic("movieplayer_service_callback_setup_failed");}
-}
-json GameAccess::movieplayer_status(const std::string& session) const {
-    auto result=movieplayer_jobs_.cached_status();
-    result["hooks_installed"]=movieplayer_hooks_installed_.load();
-    result["wait_hook_installed"]=movieplayer_hooks_installed_.load();
-    result["message_pump_hook_installed"]=movieplayer_hooks_installed_.load();
-    result["adapter_source"]="movieplayer_wait_message_pump";
-    result["game_calls_on_status"]=false;
-    const auto observed=last_tick_ms_.load(),now=steady_ms();
-    result["ordinary_tick_ready"]=enabled_.load() && observed && now>=observed && now-observed<=kRequestWaitMs;
-    result["session_id"]=session.empty()?json(nullptr):json(session);
-    result["process_id"]=GetCurrentProcessId();result["protocol"]=1;
-    return result;
-}
-json GameAccess::request_movieplayer_finish(const json& envelope) {
-    if(!movieplayer_hooks_installed_)
-        throw HandlerError("movieplayer_adapter_not_ready","MoviePlayer hooks are not installed");
-    const auto wait=request_wait(envelope);
-    const auto& params=envelope.at("params");
-    if(!params.contains("expected_wait_id") || !params.at("expected_wait_id").is_string()
-       || params.at("expected_wait_id").get_ref<const std::string&>().empty())
-        throw HandlerError("invalid_movieplayer_request","A nonempty expected_wait_id string is required");
-    auto job=movieplayer_jobs_.request_finish(envelope.at("session_id").get<std::string>(),params.at("expected_wait_id").get<std::string>());
-    auto future=job->result.get_future();
-    const auto completed=[&] {
-        auto result=future.get();
-        result["session_id"]=envelope.at("session_id");result["process_id"]=GetCurrentProcessId();result["protocol"]=1;
-        return result;
-    };
-    if(future.wait_for(wait)!=std::future_status::ready) {
-        if(movieplayer_jobs_.cancel_finish(job))
-            throw HandlerError("movieplayer_not_servicing","MoviePlayer request was cancelled before its wait-thread service started",
-                {{"executed",false},{"may_have_executed",false},{"do_not_retry",false},{"request_started",false},
-                 {"stage","queued_cancelled"},{"movieplayer_status",movieplayer_status(envelope.at("session_id").get<std::string>())}});
-        if(future.wait_for(std::chrono::milliseconds(0))==std::future_status::ready)return completed();
-        if(job->state.get()==JobState::cancelled)
-            throw HandlerError("session_closed","MoviePlayer request was cancelled before execution after its session closed");
-        throw HandlerError("movieplayer_timeout","MoviePlayer finish request started; its outcome is not yet known",
-            {{"executed",false},{"may_have_executed",true},{"do_not_retry",true},{"request_started",true},
-             {"stage","running_outcome_unknown"},{"movieplayer_status",movieplayer_status(envelope.at("session_id").get<std::string>())}});
     }
-    return completed();
+    reflection_validation_["registry"]["live_slots_inspected"]=live;
+    reflection_validation_["registry"]["destroying_slots_skipped"]=destroying;
+    for(const auto& path:required)if(!metadata.contains(path))
+        throw HandlerError("reflection_metadata_missing","Required reflected class was not found: "+path);
+    const auto metaclass=metadata.at("/Script/CoreUObject.Class");
+    if(read<std::uintptr_t>(metaclass+0x10)!=metaclass)
+        throw HandlerError("reflection_identity_mismatch","CoreUObject.Class is not its own metaclass");
+    reflection_validation_["stage"]="class_property_function_relationships";
+    json classes=json::array();std::size_t fields_checked{},functions_checked{},parameters_checked{};
+    const auto check_fields=[&](std::uintptr_t owner,std::int32_t extent,bool function) {
+        std::set<std::uintptr_t> visited;
+        std::size_t parameters{},returns{};std::uint16_t return_offset=0xffff;
+        for(auto field=read<std::uintptr_t>(owner+0x50);field;field=read<std::uintptr_t>(field+0x18)) {
+            if(!visited.insert(field).second)
+                throw HandlerError("reflection_field_cycle","The checkpoint found a reflected FField cycle");
+            const auto type=field_type(field,[this](auto packed){return name(packed);});
+            if(!type.ends_with("Property") || name(read<std::uint64_t>(field+0x20)).empty())
+                throw HandlerError("reflection_field_mismatch","FField class and name do not describe an FProperty");
+            const auto dim=read<std::int32_t>(field+0x30),size=read<std::int32_t>(field+0x34);
+            const auto offset=read<std::int32_t>(field+0x44);const auto flags=read<std::uint64_t>(field+0x38);
+            if(dim<1 || size<1 || offset<0)
+                throw HandlerError("reflection_field_mismatch","An FProperty has invalid dimension, size or offset");
+            if(!function || (flags&0x80)) {
+                if(std::int64_t(offset)+std::int64_t(size)*dim>extent)
+                    throw HandlerError("reflection_field_mismatch","An FProperty exceeds its reflected owner extent");
+            }
+            ++fields_checked;
+            if(function && (flags&0x80)) {
+                ++parameters;++parameters_checked;
+                if(flags&0x400){++returns;return_offset=static_cast<std::uint16_t>(offset);}
+            }
+        }
+        if(function && (parameters!=read<std::uint8_t>(owner+0xb4) || returns>1
+           || read<std::uint16_t>(owner+0xb8)!=return_offset))
+            throw HandlerError("reflection_function_mismatch","UFunction count/return header disagrees with CPF_Parm fields");
+    };
+    for(const auto& [path,klass]:metadata) {
+        if(read<std::uintptr_t>(klass+0x10)!=metaclass)
+            throw HandlerError("reflection_identity_mismatch","Required metadata is not a CoreUObject.Class: "+path);
+        std::set<std::uintptr_t> supers;
+        for(auto current=klass;current;current=read<std::uintptr_t>(current+0x40)) {
+            if(!supers.insert(current).second)
+                throw HandlerError("reflection_super_cycle","The checkpoint found a UStruct super cycle");
+            validate_object(reinterpret_cast<void*>(current));
+            if(read<std::uintptr_t>(current+0x10)!=metaclass)
+                throw HandlerError("reflection_super_mismatch","A superclass is not a UClass");
+        }
+        const auto extent=read<std::int32_t>(klass+0x58);const auto alignment=read<std::int16_t>(klass+0x5c);
+        if(extent<0 || alignment<=0 || (alignment&(alignment-1)))
+            throw HandlerError("reflection_struct_mismatch","UStruct extent or alignment is inconsistent");
+        check_fields(klass,extent,false);
+        std::set<std::uintptr_t> children;
+        for(auto child=read<std::uintptr_t>(klass+0x48);child;child=read<std::uintptr_t>(child+0x28)) {
+            if(!children.insert(child).second)
+                throw HandlerError("reflection_child_cycle","The checkpoint found a UField child cycle");
+            const auto identity=validate_object(reinterpret_cast<void*>(child));
+            if(identity.object_class!=reinterpret_cast<void*>(metadata.at("/Script/CoreUObject.Function")))continue;
+            if(read<std::uintptr_t>(child+0x20)!=klass)
+                throw HandlerError("reflection_function_mismatch","A UFunction child does not name its owning class");
+            check_fields(child,read<std::uint16_t>(child+0xb6),true);++functions_checked;
+        }
+        classes.push_back({{"path",path},{"index",read<std::int32_t>(klass+0xc)},
+            {"size",extent},{"alignment",alignment},{"super_count",supers.size()-1}});
+    }
+    if(!fields_checked || !functions_checked || !parameters_checked)
+        throw HandlerError("reflection_coverage_missing","The checkpoint did not inspect properties and nonempty UFunctions");
+    reflection_validation_.update({{"state","verified"},{"stage","complete"},{"classes",classes},
+        {"fields_checked",fields_checked},{"functions_checked",functions_checked},{"parameters_checked",parameters_checked},
+        {"limits",{"This checkpoint validates sampled engine metadata relationships, not every property layout",
+                    "ProcessEvent, owned values and sparse storage require their own target exercises"}}});
+    bindings_.names.runtime_validated=true;bindings_.object_array.runtime_validated=true;
+    reflection_validated_=true;
+}
+void __fastcall GameAccess::hooked_tick(void* engine,float delta_seconds,bool idle_mode) {
+    auto* self=active_;
+    if(!self || !self->original_tick_)return;
+    self->original_tick_(engine,delta_seconds,idle_mode);
+    if(self->enabled_)self->pump();
 }
 json GameAccess::status() const {
-    const auto observed=last_tick_ms_.load(), now=steady_ms();
-    const auto age=observed && now>=observed ? now-observed : 0;
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+    constexpr bool development_probes=true;
+    constexpr auto development_build_marker="SN2_MCP_DEVELOPMENT_PROBES=1";
+#else
+    constexpr bool development_probes=false;
+    constexpr auto development_build_marker="SN2_MCP_DEVELOPMENT_PROBES=0";
+#endif
+    const auto observed=last_tick_ms_.load(),now=steady_ms();
+    const auto age=observed && now>=observed?now-observed:0;
     const bool recent=observed && age<=kRequestWaitMs;
-    json pending=nullptr, active=nullptr, world=nullptr;bool queue_metadata_available{};
+    json pending=nullptr,active=nullptr,world=nullptr;bool queue_metadata_available{};
     {
         std::unique_lock lock(queue_mutex_,std::try_to_lock);
         queue_metadata_available=lock.owns_lock();
-        if(queue_metadata_available)world=world_metadata_;
-        if(queue_metadata_available)pending=queue_.size();
-        if(queue_metadata_available && active_job_)active={{"request_id",active_job_->request.value("id",json(nullptr))},
-                              {"operation",active_job_->request.value("op",std::string{})},
-                              {"state","running"}};
-    }
-    return {{"version","1.0.0-dev.115"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
-            {"movieplayer",movieplayer_status({})},
-            {"as_exception_capture",{{"hook_installed",enabled_.load()},{"source","observed_logging_entry"},
-                {"scope","current_thread_process_event"},{"historical_errors_available",false},{"stack_capture_available",enabled_.load()},{"stack_captured",false}}},
-            {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},{"ready",enabled_.load()&&recent},
-            {"pump",{{"state",!observed?"not_observed":recent?"recent_tick":"tick_stale"},
-                     {"last_tick_monotonic_ms",observed?json(observed):json(nullptr)},
-                     {"tick_age_ms",observed?json(age):json(nullptr)},
-                     {"freshness_limit_ms",kRequestWaitMs},{"world_ready_confirmed",false}}},
-            {"requests",{{"queue_depth",pending},{"queue_limit",nullptr},{"active",active},{"metadata_available",queue_metadata_available},
-                         {"completed",completed_jobs_.load()},{"cancelled_before_start",cancelled_jobs_.load()},
-                         {"wait_timeout_ms",nullptr},{"default_wait_timeout_ms",kRequestWaitMs},{"cancelled_jobs_can_execute",false}}},
-            {"bindings_source","runtime_image_patterns"},{"startup_error",startup_error_},
-            {"process_id",GetCurrentProcessId()},
-            {"string_inputs",{{"quarantined",string_inputs_quarantined_.load()},
-                {"quarantine_cause",string_inputs_quarantine_cause_.load()},
-                {"retained_allocations",string_inputs_retained_count_.load()},
-                {"retained_bytes",string_inputs_retained_bytes_.load()},
-                {"max_inputs",nullptr},{"max_utf16_units",string_arguments::max_utf16_units},{"max_input_bytes",nullptr}}},
-            {"object_array_inputs",{{"quarantined",object_array_inputs_quarantined_.load()},
-                {"quarantine_cause",object_array_inputs_quarantine_cause_.load()},
-                {"retained_allocations",object_array_inputs_retained_count_.load()},
-                {"retained_bytes",object_array_inputs_retained_bytes_.load()},
-                {"max_inputs",nullptr},{"max_elements",std::numeric_limits<int32_t>::max()},{"max_input_bytes",nullptr}}},
-            {"operations",{"status","enable_game","compile_diagnostics","movieplayer_status","movieplayer_finish","objects","properties","functions","invoke","read_array","read_set","read_map","read_struct",
-                           "snapshot","watch_start","watch_read","watch_stop","watch_forget","watch_list","watch_resume"}},
-            {"snapshot_limits",{{"objects",nullptr},{"properties_per_object",nullptr},{"scan_fields_per_object",nullptr},
-                                {"property_value_bytes",nullptr},{"object_path_bytes",nullptr},
-                                {"snapshot_bytes",nullptr}}},
-            {"watch_limits",{{"records",nullptr},{"properties",nullptr},
-                             {"duration_ms_min",1},{"duration_ms_max",nullptr},
-                             {"interval_ms_min",1},{"interval_ms_max",nullptr},
-                             {"capacity_min",1},{"capacity_max",nullptr},
-                             {"buffer_bytes",nullptr},{"read_events",nullptr},
-                             {"due_watches_per_tick",nullptr}}},
-            {"snapshot_consistency","single_tick_sequential"},
-            {"world_generation_supported",true},{"world",world},{"script_reload_generation_supported",true},
-            {"scripts",{{"source","observed_native_reload_return"},{"hook_installed",script_reload_hook_installed_.load()},
-                {"generation",successful_script_reloads_.load()},{"failed_attempts",failed_script_reloads_.load()},
-                {"generation_semantics","successful_reload_attempt_completed"},{"specific_source_compiled_confirmed",false}}},
-            {"serial_guard",{{"policy","strict_observed_equality_including_zero"},
-                              {"checks",{"object_serial","class_identity","class_serial"}},
-                              {"coverage","conditional_on_observed_nonzero_object_and_class_serial"},
-                              {"allocates_serial",false},{"zero_aba_protection",false}}},
-            {"limitations",{"Native binding requires uniquely resolved compatible image patterns","Zero serial values do not protect against ABA; an observed serial change invalidates the previous handle","One active connection; handles and observations belong to its session","World generation follows GameEngine.GameViewport.World identity; script generation counts successful reload attempts and does not prove a particular source changed","The DLL cannot be unloaded; close the game to terminate it"}}};
-}
-json GameAccess::compile_diagnostics() {
-    const auto image_base=ensure_image_base();
-    const auto manager=read<uintptr_t>(image_base+kAngelscriptManager);
-    if(!manager)throw HandlerError("compile_diagnostics_unavailable","The AngelScript manager has not been created");
-    auto* compilation_lock=reinterpret_cast<CRITICAL_SECTION*>(manager+kCompilationLockOffset);
-    std::string text;
-    std::uint64_t started_before{},completed_before{},started_after{},completed_after{};
-    json reload_receipt;
-    EnterCriticalSection(compilation_lock);
-    try {
-        started_before=script_reload_attempts_started_.load();
-        completed_before=script_reload_attempts_completed_.load();
-        StringHeader header{};
-        using Formatter=StringHeader*(__fastcall*)(void*,StringHeader*);
-        reinterpret_cast<Formatter>(image_base+kFormatDiagnostics)(reinterpret_cast<void*>(manager),&header);
-        text=copied_owned_string_return(header,[](const StringHeader& value) {
-            std::wstring copied(static_cast<size_t>(value.count),L'\0');
-            const auto bytes=static_cast<size_t>(value.count)*sizeof(wchar_t);
-            size_t offset=0;
-            while(offset<bytes) {
-                const auto count=std::min<size_t>(bytes-offset,1048576);
-                if(!copy_memory(reinterpret_cast<std::byte*>(copied.data())+offset,
-                                reinterpret_cast<const void*>(value.data+offset),count))
-                    throw HandlerError("invalid_memory","Diagnostic text is unavailable");
-                offset+=count;
-            }
-            if(!copied.empty() && copied.back()==0)copied.pop_back();
-            return utf8(copied.data(),static_cast<int>(copied.size()));
-        },[image_base](uintptr_t data) {
-            return free_string(image_base+kFree,reinterpret_cast<void*>(data));
-        });
-        {
-            std::lock_guard lock(script_reload_receipt_mutex_);
-            reload_receipt=last_completed_script_reload_;
-            started_after=script_reload_attempts_started_.load();
-            completed_after=script_reload_attempts_completed_.load();
+        if(queue_metadata_available) {
+            world=world_metadata_;pending=queue_.size();
+            if(active_job_)active={{"request_id",active_job_->request.value("id",json(nullptr))},
+                {"operation",active_job_->request.value("op",std::string{})},{"state","running"}};
         }
-        LeaveCriticalSection(compilation_lock);
-    } catch(...) {
-        LeaveCriticalSection(compilation_lock);
-        throw;
     }
-    const bool receipt_current=completed_after==0 ? reload_receipt.is_null() :
-        reload_receipt.is_object() && reload_receipt.value("completion_id",std::uint64_t{})==completed_after;
-    const bool reload_context_consistent=started_before==started_after && completed_before==completed_after &&
-        started_after==completed_after && receipt_current;
-    return {{"status","available"},{"source","FAngelscriptManager::FormatDiagnostics"},
-            {"process_id",GetCurrentProcessId()},{"text",std::move(text)},
-            {"reload_attempt_started",started_after},{"reload_attempt_completed",completed_after},
-            {"compiler_read_reload_context_consistent",reload_context_consistent},
-            {"last_completed_reload",std::move(reload_receipt)}};
+    json bindings=nullptr,validation=nullptr;std::string startup,reflection_error;
+    {
+        std::lock_guard lock(bootstrap_mutex_);
+        bindings=bindings_.describe();validation=reflection_validation_;
+        startup=startup_error_;reflection_error=reflection_error_;
+    }
+    json target={{"pid",GetCurrentProcessId()},{"executable",nullptr},{"creation_filetime",nullptr}};
+    try {
+        const auto image=sn2::loader::process_image(GetCurrentProcess());
+        target["executable"]=utf8(image.data(),static_cast<int>(image.size()));
+        target["creation_filetime"]=std::to_string(sn2::loader::creation_filetime(GetCurrentProcess()));
+    } catch(const std::exception& error) {target["error"]=error.what();}
+    const bool reflection=reflection_validated_.load();
+    return {{"version","0.1.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+            {"process_id",GetCurrentProcessId()},{"process_creation_filetime",target.at("creation_filetime")},{"target_process",target},
+            {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},
+            {"executor_ready",enabled_.load()&&recent},{"ready",enabled_.load()&&recent&&reflection},
+            {"pump",{{"state",!observed?"not_observed":recent?"recent_tick":"tick_stale"},
+                {"last_tick_monotonic_ms",observed?json(observed):json(nullptr)},
+                {"tick_age_ms",observed?json(age):json(nullptr)},{"freshness_limit_ms",kRequestWaitMs},
+                {"world_ready_confirmed",false}}},
+            {"requests",{{"queue_depth",pending},{"queue_limit",nullptr},{"active",active},
+                {"metadata_available",queue_metadata_available},{"completed",completed_jobs_.load()},
+                {"cancelled_before_start",cancelled_jobs_.load()},{"default_wait_timeout_ms",kRequestWaitMs},
+                {"cancelled_jobs_can_execute",false}}},
+            {"bindings_source","runtime_image_patterns"},{"bindings",bindings},{"startup_error",startup},
+            {"abi_state",reflection?"reflection_checkpoint_verified":"unverified"},
+            {"development_probes",development_probes},
+            {"development_build_marker",development_build_marker},
+            {"accepted_types",evidence_.describe()},
+            {"reflection",{{"state",reflection?"verified":"unverified"},{"validation",validation},
+                {"error",reflection_error.empty()?json(nullptr):json(reflection_error)}}},
+            {"capabilities",{{"reflection_reads",reflection?"verified":"unverified"},
+                {"typed_invocation","unverified"},{"owned_values","unverified"},
+                {"sparse_containers","unverified"},{"observations",reflection?"available":"unverified"}}},
+            {"operations",{"status","enable_game","objects","properties","functions","invoke","read_array",
+                "read_set","read_map","read_struct","snapshot","watch_start","watch_read","watch_stop",
+                "watch_forget","watch_list","watch_resume"}},
+            {"snapshot_consistency","single_tick_sequential"},{"world_generation_supported",reflection},
+            {"world",world},{"reflection_generation",nullptr},{"script_reload_generation_supported",false},
+            {"string_inputs",{{"quarantined",string_inputs_quarantined_.load()},
+                {"retained_allocations",string_inputs_retained_count_.load()},
+                {"retained_bytes",string_inputs_retained_bytes_.load()}}},
+            {"object_array_inputs",{{"quarantined",object_array_inputs_quarantined_.load()},
+                {"retained_allocations",object_array_inputs_retained_count_.load()},
+                {"retained_bytes",object_array_inputs_retained_bytes_.load()}}},
+            {"serial_guard",{{"policy","strict_observed_equality_including_zero"},
+                {"coverage","conditional_on_observed_nonzero_object_and_class_serial"},{"zero_aba_protection",false}}},
+            {"limitations",{"Image-pattern matches are static candidates; game-thread metadata validates reflection",
+                "Typed invocation and owned/sparse layouts still require target acceptance",
+                "Zero serial values do not protect against ABA",
+                "One active native session; handles and observations expire on disconnect",
+                "DLL residency ends with the process; hot unload is not implemented"}}};
+}
+void GameAccess::require_runtime_operation(const std::string& operation) const {
+    if(operation=="invoke" && !bindings_.process_event.available())
+        throw HandlerError("process_event_unavailable","The current executable ProcessEvent binding is unavailable",
+            {{"executed",false},{"may_have_executed",false},{"do_not_retry",false}});
+    if(!reflection_validated_.load())
+        throw HandlerError("reflection_unverified","Subnautica game-thread reflection checkpoint has not passed",
+            {{"executed",false},{"may_have_executed",false},{"do_not_retry",false}});
 }
 json GameAccess::request(const json& envelope) {
-    if(envelope.at("op")=="status") return status();
-    if(envelope.at("op")=="compile_diagnostics") return compile_diagnostics();
-    if(envelope.at("op")=="movieplayer_status")return movieplayer_status(envelope.at("session_id").get<std::string>());
-    if(envelope.at("op")=="movieplayer_finish")return request_movieplayer_finish(envelope);
+    const auto operation=envelope.at("op").get<std::string>();
+    const auto& params=envelope.at("params");
+    validate_request_identity(params,GetCurrentProcessId(),
+        sn2::loader::creation_filetime(GetCurrentProcess()),envelope.at("session_id"));
+    if(operation=="status")return status();
+    if(operation=="enable_game"){start();return status();}
+    require_runtime_operation(operation);
     if(!enabled_) throw HandlerError("native_not_ready","Game hooks are not installed: "+startup_error_);
     const auto wait=request_wait(envelope);
     auto job=std::make_shared<Job>();job->request=envelope;auto future=job->result.get_future();
     {std::lock_guard lock(queue_mutex_);
-     job->world_generation=world_generation_.load();job->script_generation=successful_script_reloads_.load();queue_.push_back(job);}
+     job->world_generation=world_generation_.load();queue_.push_back(job);}
     if(future.wait_for(wait)!=std::future_status::ready) {
         if(job->state.cancel()) {
             ++cancelled_jobs_;
@@ -754,7 +619,6 @@ json GameAccess::request(const json& envelope) {
     return future.get();
 }
 void GameAccess::disconnect(const std::string& session) {
-    movieplayer_jobs_.disconnect(session);
     // Network thread: only mark cleanup and cancel jobs that have not entered Tick.
     std::lock_guard lock(queue_mutex_);
     session_cleanup_pending_=true;
@@ -767,12 +631,82 @@ void GameAccess::disconnect(const std::string& session) {
         }
     }
 }
+namespace {
+json public_shape(const json& metadata,bool map_member_metadata=false) {
+    json result=json::object();
+    for(const auto* key:{"type","element_size","array_dim","direction","passing","struct_path","struct_name",
+                        "properties_size","min_alignment","scalar_type","container_type","element_type",
+                        "inner_type","inner_element_size","inner_array_dim","inner_offset"})
+        if(metadata.contains(key))result[key]=metadata.at(key);
+    for(const auto* key:{"struct","array","set","element","element_struct","bool_layout","declared_type"})
+        if(metadata.contains(key) && metadata.at(key).is_object())result[key]=public_shape(metadata.at(key));
+    if(map_member_metadata)for(const auto* key:{"key","value"})
+        if(metadata.contains(key) && metadata.at(key).is_object())result[key]=public_shape(metadata.at(key));
+    for(const auto* key:{"field_size","byte_offset","byte_mask","field_mask","underlying_type"})
+        if(metadata.contains(key))result[key]=metadata.at(key);
+    for(const auto* key:{"declared_type","meta_class","property_class"})
+        if(metadata.contains(key) && metadata.at(key).is_object()) {
+            const auto& declared=metadata.at(key);
+            result[key]={{"name",declared.value("name",std::string{})},{"path",declared.value("path",std::string{})}};
+        }
+    if(metadata.contains("enum") && metadata.at("enum").is_object()) {
+        const auto& enumeration=metadata.at("enum");
+        result["enum"]={{"path",enumeration.value("path",json(nullptr))},
+            {"underlying_type",enumeration.value("underlying_type",json(nullptr))}};
+    }
+    for(const auto* key:{"components","members"})
+        if(metadata.contains(key) && metadata.at(key).is_array()) {
+            result[key]=json::array();
+            for(const auto& component:metadata.at(key)) {
+                auto child=public_shape(component);
+                if(component.contains("name"))child["name"]=component.at("name");
+                if(component.contains("offset"))child["offset"]=component.at("offset");
+                result[key].push_back(std::move(child));
+            }
+        }
+    return result;
+}
+bool owned_shape(const json& shape) {
+    const auto type=shape.value("type",std::string{});
+    if(type=="StrProperty" || type=="ArrayProperty" || type=="SetProperty")return true;
+    if(shape.is_structured())for(const auto& child:shape)if(child.is_object() && owned_shape(child))return true;
+    return false;
+}
+}
+void GameAccess::observe_result(const std::string& operation,const json& result) {
+    if(result.value("source",std::string{})=="development_fixture")return;
+    // Partial values and empty-container metadata do not establish decoded
+    // element coverage. Individual supported property reads can be recorded.
+    if(operation=="invoke")return; // recorded with its validated signature below
+    if(operation=="properties") {
+        for(const auto& item:result.value("items",json::array())) {
+            if(!item.value("supported",false) || item.value("partial",false) || !item.contains("value"))continue;
+            auto shape=public_shape(item);shape["direction"]="property_read";
+            evidence_.observe(operation,shape,ticks_.load(),false,true);
+        }
+    }else if(operation=="read_array" || operation=="read_set" || operation=="read_map") {
+        auto shape=public_shape(result,operation=="read_map");shape["direction"]="container_read";
+        const bool populated=result.contains("items") && !result.at("items").empty();
+        evidence_.observe(operation,shape,ticks_.load(),false,true,result.value("partial",false),populated);
+    }else if(operation=="read_struct") {
+        auto shape=public_shape(result);shape["direction"]="struct_read";
+        evidence_.observe(operation,shape,ticks_.load(),false,true,result.value("partial",false));
+    }
+}
 void GameAccess::pump() {
     if(!game_thread_.load()) game_thread_=GetCurrentThreadId();
     if(game_thread_.load()!=GetCurrentThreadId()) return;
     ++ticks_;
     last_tick_ms_=steady_ms();
-    refresh_scripts();
+    {
+        std::lock_guard lock(bootstrap_mutex_);
+        bindings_.tick.runtime_validated=true;
+        if(!reflection_validated_.load() && reflection_error_.empty()) {
+            try {validate_runtime_layout();}
+            catch(const std::exception& error) {reflection_error_=error.what();}
+        }
+    }
+    if(!reflection_validated_.load())return;
     try {refresh_world();}
     catch(const HandlerError& error) {
         change_world({});
@@ -791,12 +725,15 @@ void GameAccess::pump() {
     if(job) {
         if(job->state.begin()) {
             {std::lock_guard lock(queue_mutex_);active_job_=job;}
-            try {job->result.set_value(execute(job->request));}catch(...) {job->result.set_exception(std::current_exception());}
+            try {
+                auto result=execute(job->request);
+                try{observe_result(job->request.at("op").get<std::string>(),result);}catch(...) {}
+                job->result.set_value(std::move(result));
+            }catch(...) {job->result.set_exception(std::current_exception());}
             job->state.finish();++completed_jobs_;
             {std::lock_guard lock(queue_mutex_);active_job_.reset();}
         }
     }
-    refresh_scripts();
     try {refresh_world();}
     catch(const HandlerError& error) {
         change_world({});
@@ -971,63 +908,13 @@ void GameAccess::refresh_world() {
     if(!class_is(world.object,"/Script/Engine.World"))throw HandlerError("unsupported_world_layout","GameViewport.World is not a World");
     change_world(world);
 }
-bool GameAccess::script_object(void* object) const {
-    if(read<uint32_t>(reinterpret_cast<uintptr_t>(object)+8)&0x10) {
-        const auto klass=read<uintptr_t>(reinterpret_cast<uintptr_t>(object)+0x10);
-        if(!class_is(reinterpret_cast<void*>(klass),"/Script/AngelscriptCode.ASClass"))return false;
-    }
-    std::set<uintptr_t> seen;
-    if(class_is(object,"/Script/AngelscriptCode.ASClass"))return true;
-    if(class_is(object,"/Script/CoreUObject.Class")) {
-        for(auto represented=reinterpret_cast<uintptr_t>(object);represented;represented=read<uintptr_t>(represented+0x40)) {
-            if(!seen.insert(represented).second)throw HandlerError("invalid_object_class","The represented class hierarchy contains a cycle");
-            if(class_is(reinterpret_cast<void*>(represented),"/Script/AngelscriptCode.ASClass"))return true;
-        }
-        seen.clear();
-    }
-    for(auto klass=read<uintptr_t>(reinterpret_cast<uintptr_t>(object)+0x10);klass;klass=read<uintptr_t>(klass+0x40)) {
-        if(!seen.insert(klass).second)throw HandlerError("invalid_object_class","The class hierarchy contains a cycle");
-        if(class_is(reinterpret_cast<void*>(klass),"/Script/AngelscriptCode.ASClass"))return true;
-    }
-    return class_is(object,"/Script/AngelscriptCode.ASFunction");
-}
-void GameAccess::refresh_scripts() {
-    const auto generation=successful_script_reloads_.load();
-    if(generation==script_generation_)return;
-    std::lock_guard lock(queue_mutex_);
-    const auto previous=script_generation_;script_generation_=generation;
-    std::vector<std::string> affected;
-    for(const auto& [id,handle]:handles_)
-        if(handle.script_bound && handle.script_generation!=generation)affected.push_back(id);
-    observations_.invalidate_script(affected,previous,generation,steady_ms(),ticks_.load());
-    for(auto entry=queue_.begin();entry!=queue_.end();) {
-        const auto& job=*entry;
-        const auto references_script=[&](const auto& self,const json& value)->bool {
-            if(value.is_object() && value.contains("handle") && value.at("handle").is_string()) {
-                const auto found=handles_.find(value.at("handle").get<std::string>());
-                if(found!=handles_.end() && found->second.script_bound)return true;
-            }
-            if(value.is_structured())for(const auto& child:value)if(self(self,child))return true;
-            return false;
-        };
-        if(job->script_generation!=generation && references_script(references_script,job->request.at("params")) && job->state.cancel()) {
-            ++cancelled_jobs_;
-            job->result.set_exception(std::make_exception_ptr(HandlerError("script_reloaded","The script context changed before the request executed",
-                {{"executed",false},{"may_have_executed",false},{"request_started",false},{"stage","queued_cancelled"},
-                 {"previous_script_generation",job->script_generation},{"script_generation",generation}})));
-            entry=queue_.erase(entry);
-        } else ++entry;
-    }
-}
 std::string GameAccess::handle_for(void* object,int index) {
     auto identity=validate_object(object);
     if(identity.index!=index)throw HandlerError("stale_handle","The object index changed");
     identity.bound_world=object_world(object);
     identity.world_generation=identity.bound_world?world_generation_.load():0;
-    identity.script_bound=script_object(object);identity.script_generation=identity.script_bound?successful_script_reloads_.load():0;
     for(const auto& [id,existing]:handles_) {
         if(existing.world_generation==identity.world_generation && existing.bound_world==identity.bound_world
-           && existing.script_bound==identity.script_bound && existing.script_generation==identity.script_generation
            && same_serial_identity(serial_identity(existing),serial_identity(identity)))return id;
     }
     auto id="obj-"+std::to_string(++next_handle_);
@@ -1062,8 +949,7 @@ GameAccess::Handle GameAccess::validate_object(void* object) const {
     return {object,reinterpret_cast<void*>(object_class),index,object_fname,item.serial,class_index,class_fname,class_item.serial};
 }
 void GameAccess::validate_class(void* object_class) const {
-    // Exact metaclass identity was confirmed by a read-only probe in the current game:
-    // /Script/CoreUObject.Class (index 15, class Class), 30.10.2026.
+    // Validate the actual target metaclass and hierarchy before treating it as UClass.
     const auto identity=validate_object(object_class);
     auto metaclass=reinterpret_cast<uintptr_t>(identity.object_class);
     std::set<uintptr_t> visited;
@@ -1114,7 +1000,7 @@ json GameAccess::object_descriptor(void* object,void* expected_class) {
         {"session_id",handle_session_}};
     const auto& reference=handles_.at(result.at("handle").get<std::string>());
     result["world_generation"]=reference.world_generation?json(reference.world_generation):json(nullptr);
-    result["script_generation"]=reference.script_bound?json(reference.script_generation):json(nullptr);
+    result["script_generation"]=json(nullptr);
     const auto after=validate_object(object);
     if(!same_serial_identity(serial_identity(identity),serial_identity(after)))
         throw HandlerError("stale_handle","The object value changed while being copied");
@@ -1186,7 +1072,7 @@ GameAccess::EnumTable GameAccess::enum_table(void* object) const {
         const auto ptr=reinterpret_cast<uintptr_t>(object);
         const auto data=read<uintptr_t>(ptr+0x40);
         const auto count=read<int32_t>(ptr+0x48),capacity=read<int32_t>(ptr+0x4c);
-        const auto bytes=g1r::enum_values::table_byte_size(count,capacity,data!=0);
+        const auto bytes=sn2_mcp::enum_values::table_byte_size(count,capacity,data!=0);
         if(data>std::numeric_limits<uintptr_t>::max()-bytes)
             throw HandlerError("invalid_enum_table","The enum table address range overflows");
         std::vector<std::byte> copied(bytes);
@@ -1198,7 +1084,7 @@ GameAccess::EnumTable GameAccess::enum_table(void* object) const {
         const auto after=validate_object(object);
         if(!same_serial_identity(serial_identity(identity),serial_identity(after)))
             throw HandlerError("stale_handle","The enum changed while being copied");
-        auto entries=g1r::enum_values::decode_entries(copied,count,capacity);
+        auto entries=sn2_mcp::enum_values::decode_entries(copied,count,capacity);
         return {identity,path,std::move(entries)};
     } catch(const std::invalid_argument& error) {
         throw HandlerError("enum_validation_unavailable",error.what());
@@ -1211,9 +1097,9 @@ json GameAccess::enum_metadata(void* object,const json& value,const std::string&
     try {
         const auto table=enum_table(object);
         metadata["path"]=table.path;
-        const g1r::enum_values::Integer number=value.is_number_unsigned()
-            ?g1r::enum_values::Integer(value.get<uint64_t>()):g1r::enum_values::Integer(value.get<int64_t>());
-        const auto match=g1r::enum_values::find_label(number,table.entries,[this](uint64_t fname){return name(fname);});
+        const sn2_mcp::enum_values::Integer number=value.is_number_unsigned()
+            ?sn2_mcp::enum_values::Integer(value.get<uint64_t>()):sn2_mcp::enum_values::Integer(value.get<int64_t>());
+        const auto match=sn2_mcp::enum_values::find_label(number,table.entries,[this](uint64_t fname){return name(fname);});
         metadata["name_status"]=match.status;
         metadata["value_name"]=match.name.empty()?json(nullptr):json(match.name);
         metadata["matched_count"]=match.matched_count;metadata["ambiguous"]=match.ambiguous;
@@ -1237,14 +1123,14 @@ GameAccess::EnumLayout GameAccess::enum_layout(const std::string& type,int size,
                 throw HandlerError("unsupported_enum_underlying_layout","The UnderlyingProp size or array dimension does not match");
             enum_ptr=read<uintptr_t>(field+0x78);
         } else enum_ptr=read<uintptr_t>(field+0x70);
-        g1r::enum_values::integer_layout(underlying_type,size);
+        sn2_mcp::enum_values::integer_layout(underlying_type,size);
         return {underlying_type,size,reinterpret_cast<void*>(enum_ptr)};
     } catch(const std::invalid_argument& error) {
         throw HandlerError(error.what(),"Unsupported enum layout");
     }
 }
 json GameAccess::enum_property(uintptr_t address,const std::string& type,int size,uintptr_t field) {
-    namespace ev=g1r::enum_values;
+    namespace ev=sn2_mcp::enum_values;
     try {
         const auto declared=enum_layout(type,size,field);
         const auto layout=ev::integer_layout(declared.underlying_type,size);
@@ -1262,10 +1148,6 @@ json GameAccess::enum_property(uintptr_t address,const std::string& type,int siz
 void* GameAccess::resolve(const std::string& id) {
     auto found=handles_.find(id);if(found==handles_.end())throw HandlerError("stale_handle","The handle is unknown or expired");
     const auto& h=found->second;
-    if(h.script_bound && h.script_generation!=successful_script_reloads_.load())
-        throw HandlerError("script_reloaded","The handle belongs to a previous script context; obtain a new handle",
-            {{"executed",false},{"may_have_executed",false},{"do_not_retry",false},
-             {"previous_script_generation",h.script_generation},{"script_generation",successful_script_reloads_.load()}});
     if(h.bound_world && h.world_generation!=world_generation_.load())
         throw HandlerError("world_changed","The handle belongs to a previous selected world; obtain a new handle",
             {{"executed",false},{"may_have_executed",false},{"do_not_retry",false},
@@ -1282,19 +1164,22 @@ json GameAccess::object_info(void* object,int index) {
     auto ptr=reinterpret_cast<uintptr_t>(object);return {{"handle",handle},{"index",index},{"name",object_name(object)},
         {"path",object_path(object)},{"class",object_name(reinterpret_cast<void*>(read<uintptr_t>(ptr+0x10)))},{"flags",read<uint32_t>(ptr+8)},
         {"world_generation",reference.world_generation?json(reference.world_generation):json(nullptr)},
-        {"script_generation",reference.script_bound?json(reference.script_generation):json(nullptr)}};
+        {"script_generation",json(nullptr)}};
 }
-json GameAccess::properties(void* object,std::size_t limit) {
+json GameAccess::properties(void* object,std::size_t limit,std::size_t page_offset) {
     json items=json::array();auto klass=read<uintptr_t>(reinterpret_cast<uintptr_t>(object)+0x10);bool truncated=false;
+    std::size_t scanned{};
     std::set<uintptr_t> visited_classes,visited_fields;
     for(;klass;klass=read<uintptr_t>(klass+0x40)) {
         if(!visited_classes.insert(klass).second)
             throw HandlerError("property_scan_cycle","Class chain contains a cycle");
         auto field=read<uintptr_t>(klass+0x50);auto class_size=read<int32_t>(klass+0x58);
         for(;field;field=read<uintptr_t>(field+0x18)) {
-            if(items.size()>=limit){truncated=true;break;}
             if(!visited_fields.insert(field).second)
                 throw HandlerError("property_scan_cycle","Property chain contains a cycle");
+            if(scanned<page_offset){++scanned;continue;}
+            if(items.size()>=limit){truncated=true;break;}
+            ++scanned;
             auto type=field_type(field,[this](auto f){return name(f);});auto offset=read<int32_t>(field+0x44),size=read<int32_t>(field+0x34);
             json item={{"name",name(read<uint64_t>(field+0x20))},{"type",type},{"offset",offset},{"element_size",size},{"array_dim",read<int32_t>(field+0x30)}};
             if(offset>=0 && size>0 && offset<=class_size-size && item["array_dim"]==1) {
@@ -1312,7 +1197,9 @@ json GameAccess::properties(void* object,std::size_t limit) {
             items.push_back(item);
         } if(truncated)break;
     }
-    return {{"items",items},{"truncated",truncated},{"validation","game_thread_memory_read"}};
+    return {{"items",items},{"truncated",truncated},{"scan_complete",!truncated},
+            {"offset",page_offset},{"scanned_fields",scanned},{"next_offset",truncated?json(scanned):json(nullptr)},
+            {"offset_kind","inherited_property_ordinal"},{"validation","game_thread_memory_read"}};
 }
 json GameAccess::selected_properties(void* object,const json& names) {
     json items=json::array();
@@ -1369,7 +1256,7 @@ json GameAccess::snapshot(const json& targets) {
     Observations::validate_targets(targets);
     json result={{"snapshot_id","snapshot-"+std::to_string(++next_snapshot_)},
         {"source","live_native"},{"session_id",handle_session_},{"process_id",GetCurrentProcessId()},{"world_generation",world_generation_.load()},
-        {"script_generation",successful_script_reloads_.load()},
+        {"script_generation",nullptr},{"reflection_generation",nullptr},
         {"thread_id",GetCurrentThreadId()},{"tick_count",ticks_.load()},
         {"consistency","single_tick_sequential"},{"objects",json::array()},
         {"partial",false},{"truncated",false},
@@ -1398,24 +1285,33 @@ json GameAccess::snapshot(const json& targets) {
     return result;
 }
 uint64_t GameAccess::encode_name_text(const json& value) const {
-            if(value.size()!=1 || !value.at("name").is_string())
-                throw HandlerError("invalid_name_argument","Text FName requires only {name:string}");
-            const auto& text=value.at("name").get_ref<const std::string&>();
-            if(text.find('\0')!=std::string::npos)
-                throw HandlerError("invalid_name_argument","Text FName cannot contain an embedded NUL");
-            std::wstring encoded;
-            if(!text.empty()) {
-                const auto length=static_cast<int>(text.size());
-                const auto units=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),length,nullptr,0);
-                if(!units)throw HandlerError("invalid_name_argument","Text FName contains invalid UTF-8");
-                encoded.resize(static_cast<size_t>(units));
-                if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),length,encoded.data(),units)!=units)
-                    throw HandlerError("invalid_name_argument","Text FName could not be converted to UTF-16");
-            }
-            uint64_t packed{};
-            if(!construct_name(base_+kNameConstruct,&packed,reinterpret_cast<const char16_t*>(encoded.c_str())))
-                throw HandlerError("name_constructor_fault","The FName constructor raised a native exception");
-            return packed;
+    if(!bindings_.name_construct.available())
+        throw HandlerError("name_constructor_unavailable","The current executable FName constructor binding is unavailable",
+            {{"executed",false},{"may_have_executed",false}});
+    if(value.size()!=1 || !value.at("name").is_string())
+        throw HandlerError("invalid_name_argument","Text FName requires only {name:string}");
+    const auto& text=value.at("name").get_ref<const std::string&>();
+    if(text.find('\0')!=std::string::npos)
+        throw HandlerError("invalid_name_argument","Text FName cannot contain an embedded NUL");
+    std::wstring encoded;
+    if(!text.empty()) {
+        if(text.size()>static_cast<std::size_t>(std::numeric_limits<int>::max()))
+            throw HandlerError("invalid_name_argument","Text FName exceeds the Windows UTF-8 conversion extent");
+        const auto length=static_cast<int>(text.size());
+        const auto units=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),length,nullptr,0);
+        if(!units)throw HandlerError("invalid_name_argument","Text FName contains invalid UTF-8");
+        encoded.resize(static_cast<size_t>(units));
+        if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),length,encoded.data(),units)!=units)
+            throw HandlerError("invalid_name_argument","Text FName could not be converted to UTF-16");
+    }
+    uint64_t packed{};
+    ++name_constructions_started_;
+    if(!construct_name(base_+kNameConstruct,&packed,reinterpret_cast<const char16_t*>(encoded.c_str())))
+        throw HandlerError("name_constructor_fault","The FName constructor raised a native exception");
+    const auto decoded=name(packed);
+    if(!text.empty() && (decoded.size()!=text.size() || !object_query::contains_case_insensitive(decoded,text)))
+        throw HandlerError("name_constructor_mismatch","The constructed FName does not round-trip the requested text");
+    return packed;
 }
 std::string GameAccess::read_copied_string(const StringHeader& header) const {return copied_string(header);}
 scalar_struct_values::Snapshot GameAccess::capture_scalar_struct_parameter(uintptr_t field,int size,int dim) const {
@@ -1461,7 +1357,7 @@ scalar_struct_values::Snapshot GameAccess::capture_gameplay_tag_parameter(uintpt
     validate_class(reinterpret_cast<void*>(result.identity.object_class));
     result.path=object_path(reinterpret_cast<void*>(result.structure));result.struct_name=name(result.identity.name);
     result.head=read<uintptr_t>(result.structure+0x50);result.super=read<uintptr_t>(result.structure+0x40);
-    result.layout={read<int32_t>(result.structure+0x58),read<int32_t>(result.structure+0x5c),result.super!=0,{}};
+    result.layout={read<int32_t>(result.structure+0x58),read<int16_t>(result.structure+0x5c),result.super!=0,{}};
     if(result.path!="/Script/GameplayTags.GameplayTag" || result.struct_name!="GameplayTag")
         throw HandlerError("unsupported_gameplay_tag_type","The input requires exact GameplayTags.GameplayTag");
     if(result.layout.properties_size!=size || result.super || !result.head || result.layout.min_alignment<1
@@ -1494,6 +1390,7 @@ json GameAccess::capture_function_contract(void* object,uintptr_t owner,uintptr_
     if(!contains(object_name(function_identity.object_class),"Function"))
         throw HandlerError("unsupported_signature","The reflected entry is not a UFunction");
     const auto function_name=object_name(reinterpret_cast<void*>(function));
+    require_flat_parameter_call(object_path(reinterpret_cast<void*>(owner)),function_name);
     const auto field_head=read<uintptr_t>(function+0x50);
     const auto function_flags=read<uint32_t>(function+0xb0);
     const auto declared_count=read<uint8_t>(function+0xb4);
@@ -1744,7 +1641,7 @@ json GameAccess::capture_function_contract(void* object,uintptr_t owner,uintptr_
     if(count!=declared_count)throw HandlerError("unsupported_signature","NumParms does not match the complete CPF_Parm chain");
     json result={{"session",handle_session_},{"target_handle",target_handle},{"function_name",function_name},
         {"world_generation",handles_.at(target_handle).world_generation},
-        {"script_generation",(handles_.at(target_handle).script_bound || class_is(reinterpret_cast<void*>(function),"/Script/AngelscriptCode.ASFunction"))?json(successful_script_reloads_.load()):json(nullptr)},
+        {"script_generation",nullptr},{"reflection_generation",nullptr},
         {"target",identity(object_identity)},{"owner",identity(owner_identity)},{"function",identity(function_identity)},
         {"function_outer",read<uintptr_t>(function+0x20)},{"function_flags",function_flags},
         {"header",{{"parameter_count",declared_count},{"parameter_size",parameter_bytes},{"return_offset",return_offset},
@@ -1882,8 +1779,9 @@ json GameAccess::capture_function_contract(void* object,uintptr_t owner,uintptr_
     if(resolve(target_handle)!=object)throw HandlerError("signature_changed","The object handle changed while reading the signature");
     return result;
 }
-json GameAccess::functions(void* object,std::size_t limit,const std::string& query,const std::string& target_handle) {
+json GameAccess::functions(void* object,std::size_t limit,std::size_t offset,const std::string& query,const std::string& target_handle) {
     json items=json::array();auto klass=read<uintptr_t>(reinterpret_cast<uintptr_t>(object)+0x10);
+    std::size_t matched{};
     bool truncated=false,scan_truncated=false;std::set<uintptr_t> visited_classes;
     for(;klass;klass=read<uintptr_t>(klass+0x40)) {
         if(!visited_classes.insert(klass).second){scan_truncated=true;break;}
@@ -1894,7 +1792,9 @@ json GameAccess::functions(void* object,std::size_t limit,const std::string& que
             if(!contains(object_name(reinterpret_cast<void*>(fieldclass)),"Function"))continue;
             const auto function_name=object_name(reinterpret_cast<void*>(field));
             if(!function_query::name_matches(function_name,query))continue;
+            if(matched<offset){++matched;continue;}
             if(items.size()>=limit){truncated=true;break;}
+            ++matched;
             json parameters=json::array();auto parameter=read<uintptr_t>(field+0x50);
             std::set<uintptr_t> visited_parameters;bool parameters_truncated=false;
             for(;parameter;parameter=read<uintptr_t>(parameter+0x18)) {
@@ -1923,17 +1823,45 @@ json GameAccess::functions(void* object,std::size_t limit,const std::string& que
                 item["signature_token"]=nullptr;
                 item["signature_token"]=store_function_contract(signature_contracts_,next_signature_token_,contract);
                 item["signature_status"]="complete";
-            }catch(const HandlerError& error){item["signature_status"]=error.code();}
+        }catch(const HandlerError& error){item["signature_status"]=error.code();item["signature_error"]={{"code",error.code()},{"message",error.what()},{"details",error.details()}};}
             items.push_back(std::move(item));
             if(parameters_truncated)scan_truncated=true;
         }
         if(truncated || scan_truncated)break;
     }
     return {{"items",items},{"truncated",truncated || scan_truncated},{"scan_truncated",scan_truncated},
+            {"offset",offset},{"matching_functions_scanned",matched},
+            {"next_offset",truncated&&!scan_truncated?json(matched):json(nullptr)},
+            {"offset_kind","matching_inherited_function_ordinal"},
             {"scan_complete",!truncated && !scan_truncated}};
 }
 json GameAccess::invoke(void* object,const std::string& function_name,const json& arguments,
                         const std::string& target_handle,const json* expected_token) {
+    const auto prepared_before=name_constructions_started_.load(),events_before=process_events_started_.load(),returned_before=process_events_returned_.load();
+    try {
+        auto result=invoke_impl(object,function_name,arguments,target_handle,expected_token);
+        if(name_constructions_started_.load()!=prepared_before)result["preparation_effect"]={{"name_pool_may_have_changed",true}};
+        return result;
+    }catch(const HandlerError& error) {
+        if(name_constructions_started_.load()==prepared_before)throw;
+        auto details=error.details();details["preparation_effect"]={{"name_pool_may_have_changed",true}};
+        if(process_events_started_.load()==events_before) {
+            details["executed"]=false;details["may_have_executed"]=false;details["process_event_returned"]=false;
+        }else if(process_events_returned_.load()!=returned_before) {
+            details["executed"]=true;details["process_event_returned"]=true;
+        }
+        throw HandlerError(error.code(),error.what(),std::move(details));
+    }catch(...) {
+        if(name_constructions_started_.load()==prepared_before)throw;
+        const bool event_started=process_events_started_.load()!=events_before;
+        const bool event_returned=process_events_returned_.load()!=returned_before;
+        throw HandlerError("invocation_preparation_error","Invocation failed after FName preparation",
+            {{"executed",event_returned},{"process_event_returned",event_returned},{"may_have_executed",event_started},{"do_not_retry",event_started},
+             {"preparation_effect",{{"name_pool_may_have_changed",true}}}});
+    }
+}
+json GameAccess::invoke_impl(void* object,const std::string& function_name,const json& arguments,
+                       const std::string& target_handle,const json* expected_token) {
     const auto invocation_identity=validate_object(object);
     json expected_contract=nullptr;
     if(expected_token)expected_contract=checked_function_contract(signature_contracts_,*expected_token,handle_session_,target_handle,function_name);
@@ -1949,27 +1877,12 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
         }
     }
     if(!function)throw HandlerError("function_not_found","Reflected function not found");
-    const auto script_reference=[&](const auto& self,const json& value)->bool {
-        if(value.is_object() && value.contains("handle") && value.at("handle").is_string()) {
-            const auto found=handles_.find(value.at("handle").get<std::string>());
-            if(found!=handles_.end() && found->second.script_bound)return true;
-        }
-        if(value.is_structured())for(const auto& child:value)if(self(self,child))return true;
-        return false;
-    };
-    const bool script_call=handles_.at(target_handle).script_bound || class_is(reinterpret_cast<void*>(function),"/Script/AngelscriptCode.ASFunction")
-        || script_reference(script_reference,arguments);
-    const auto call_script_generation=successful_script_reloads_.load();
-    if(active_job_ && active_job_->script_generation!=successful_script_reloads_.load()
-       && script_call)
-        throw HandlerError("script_reloaded","The script context changed after the call was queued",
-            {{"executed",false},{"may_have_executed",false},{"request_started",false},
-             {"previous_script_generation",active_job_->script_generation},{"script_generation",successful_script_reloads_.load()}});
     if(expected_token) {
         if(expected_contract.at("function").at("object")!=function || expected_contract.at("owner").at("object")!=function_owner)
             throw HandlerError("signature_token_mismatch","The token belongs to a different implementation of the same function name");
         require_same_function_contract(expected_contract,capture_function_contract(object,function_owner,function,target_handle));
     }
+    const auto invocation_evidence_contract=capture_function_contract(object,function_owner,function,target_handle);
     auto bytes=read<uint16_t>(function+0xb6);
     std::vector<uintptr_t> parameter_fields;
     std::set<uintptr_t> visited_fields;
@@ -1990,7 +1903,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
     struct ClassArgument {std::string handle;void* property_class;void* meta_class;};
     std::vector<ClassArgument> class_arguments;
     struct EnumArgument {uintptr_t field;std::string type;EnumLayout layout;
-                         g1r::enum_values::Integer value;std::optional<Handle> enum_identity;};
+                         sn2_mcp::enum_values::Integer value;std::optional<Handle> enum_identity;};
     std::vector<EnumArgument> enum_inputs;
     struct NameSource {
         NameArgumentSource source;
@@ -2104,6 +2017,22 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
     }
     const bool contains_container_return=contains_set_return || contains_array_return;
     const bool contains_owned_containers=contains_container_return || contains_array_output;
+    if((contains_string_input || contains_string_output || has_string_return || contains_object_array || contains_owned_containers)
+       && !bindings_.free.available())
+        throw HandlerError("free_binding_unavailable","This signature owns engine values and requires the target free binding",
+            {{"executed",false},{"may_have_executed",false}});
+    if(contains_object_array && !bindings_.realloc.available())
+        throw HandlerError("realloc_binding_unavailable","Array inputs require the target realloc binding",
+            {{"executed",false},{"may_have_executed",false}});
+    const bool string_array_input=std::any_of(parameter_fields.begin(),parameter_fields.end(),[&](auto field){
+        const auto flags=read<std::uint64_t>(field+0x38);
+        return !(flags&0x400) && (!((flags&0x100) && !(flags&0x2)))
+            && field_type(field,[this](auto value){return name(value);})=="ArrayProperty"
+            && field_type(read<std::uintptr_t>(field+0x78),[this](auto value){return name(value);})=="StrProperty";
+    });
+    if((contains_string_input || string_array_input) && !bindings_.string_construct.available())
+        throw HandlerError("string_constructor_unavailable","FString inputs require the target wide string constructor",
+            {{"executed",false},{"may_have_executed",false}});
     const bool strict_pod_contract=contains_vector || contains_transform || contains_color || contains_rotator || contains_scalar_struct || contains_scalar_output || contains_string_input || contains_string_output || contains_object_array || contains_owned_containers;
     if(strict_pod_contract) {
         pod_function_contract=capture_function_contract(object,function_owner,function,target_handle);
@@ -2267,7 +2196,6 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
     struct StringOutput {uintptr_t field{};int offset{};uint64_t flags{};std::string key;StringHeader header{};};
     std::vector<StringOutput> string_outputs;
     string_input_lifetime::Ledger string_ledger;
-    as_exception_capture::State script_errors;
     bool string_event_started=false,string_event_completed=false,string_return_registered=false,string_cleanup_done=false;
     bool string_outputs_registered=false;
     auto register_string_outputs=[&]() {
@@ -2338,7 +2266,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
     };
     auto record_container_cleanup=[&](json& details) {
         if(!contains_owned_containers)return;
-        const bool confirmed=!string_event_started || (string_event_completed && !script_errors.exception_count && container_return_cleanup_confirmed);
+        const bool confirmed=!string_event_started || (string_event_completed && container_return_cleanup_confirmed);
         if(contains_container_return)details["return_cleanup_confirmed"]=confirmed;
         if(contains_array_output)details["array_output_cleanup_confirmed"]=confirmed;
         details["cleanup_confirmed"]=details.value("cleanup_confirmed",true) && confirmed;
@@ -2413,20 +2341,17 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
     };
     auto release_mixed_strings=[&](json& details) {
         if(!contains_string_input && !contains_string_array_input && !has_string_return && !contains_string_output)return;
-        if(script_errors.exception_count && contains_string_output) {
-            string_ledger.mark_uncertain();string_quarantine_cause=4;
-        }
         if(string_event_completed && (contains_string_input || contains_string_array_input) && !string_cleanup_done && !string_ledger.uncertain()) {
             try{validate_string_inputs();}catch(...) {string_ledger.mark_uncertain();string_quarantine_cause=3;}
         }
-        if(!script_errors.exception_count && string_event_completed && has_string_return && !string_cleanup_done && !string_return_registered && !string_ledger.uncertain()) {
+        if(string_event_completed && has_string_return && !string_cleanup_done && !string_return_registered && !string_ledger.uncertain()) {
             StringHeader header{};
             try {
                 if(!copy_memory(&header,buffer+return_offset,sizeof(header)))throw HandlerError("invalid_string_storage","The FString result is unavailable");
                 string_ledger.add_return(header);string_return_registered=true;
             }catch(...) {string_ledger.mark_uncertain();string_quarantine_cause=4;}
         }
-        if(!script_errors.exception_count && string_event_completed && contains_string_output && !string_cleanup_done && !string_outputs_registered && !string_ledger.uncertain()) {
+        if(string_event_completed && contains_string_output && !string_cleanup_done && !string_outputs_registered && !string_ledger.uncertain()) {
             try{register_string_outputs();}catch(...) {string_ledger.mark_uncertain();string_quarantine_cause=4;}
         }
         const auto cleanup=release_strings();
@@ -2842,16 +2767,13 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
         if(!(capture_name(input.source.source)==input.source))
             throw HandlerError("name_source_changed","The FName source value or metadata changed before the call");
     }
-    if(script_call && call_script_generation!=successful_script_reloads_.load())
-        throw HandlerError("script_reloaded","The script context changed before ProcessEvent",
-            {{"executed",false},{"may_have_executed",false},{"request_started",false},
-             {"previous_script_generation",call_script_generation},{"script_generation",successful_script_reloads_.load()}});
     string_event_started=true;
     native_exception::Diagnostic native_fault{};
     bool event_returned{};
     {
-        as_exception_capture::Scope capture(script_errors);
-        event_returned=call_event(reinterpret_cast<void*>(process_event_),object,reinterpret_cast<void*>(function),buffer,&native_fault);
+    ++process_events_started_;
+    event_returned=call_event(reinterpret_cast<void*>(process_event_),object,reinterpret_cast<void*>(function),buffer,&native_fault);
+    if(event_returned)++process_events_returned_;
     }
     if(!event_returned) {
         if(contains_string_input || contains_string_output || contains_string_array_input || (contains_object_array && has_string_return)){string_ledger.mark_uncertain();string_quarantine_cause=2;}
@@ -2872,37 +2794,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
         throw HandlerError("game_call_fault","The game call raised a native exception; its effect is unknown",std::move(details));
     }
     string_event_completed=true;
-    if(script_errors.exception_count) {
-        json details={{"executed",true},{"may_have_executed",true},{"do_not_retry",true},
-            {"process_event_returned",true},{"script_completion_confirmed",false},
-            {"script_errors",as_exception_capture::describe(script_errors)}};
-        if(return_type=="StrProperty" || contains_string_output || contains_owned_containers) {
-            if(return_type=="StrProperty" || contains_container_return)details["return_cleanup_confirmed"]=false;
-            if(contains_array_output)details["array_output_cleanup_confirmed"]=false;
-            if(contains_string_output){details["string_output_cleanup_confirmed"]=false;string_ledger.mark_uncertain();string_quarantine_cause=4;}
-            details["cleanup_confirmed"]=false;
-        }
-        if(contains_string_input) {
-            try {validate_string_inputs();}
-            catch(const HandlerError& error) {string_ledger.mark_uncertain();string_quarantine_cause=3;details["cleanup_error"]=error.code();}
-            catch(...) {string_ledger.mark_uncertain();string_quarantine_cause=3;details["cleanup_error"]="input_validation_failed";}
-            const auto cleanup=release_strings();
-            details["input_cleanup_confirmed"]=cleanup.confirmed;
-            details["cleanup_confirmed"]=details.value("cleanup_confirmed",true) && cleanup.confirmed;
-            details["cleanup_attempted"]=details.value("cleanup_attempted",false) || cleanup.attempted;
-        }
-        if(contains_object_array) {
-            try {validate_array_inputs();}
-            catch(const HandlerError& error) {array_ledger.mark_uncertain();array_quarantine_cause=3;details["cleanup_error"]=error.code();}
-            catch(...) {array_ledger.mark_uncertain();array_quarantine_cause=3;details["cleanup_error"]="input_validation_failed";}
-            const auto cleanup=release_arrays();
-            details["array_input_cleanup_confirmed"]=cleanup.confirmed;
-            details["cleanup_confirmed"]=details.value("cleanup_confirmed",true) && cleanup.confirmed;
-            details["cleanup_attempted"]=details.value("cleanup_attempted",false) || cleanup.attempted;
-        }
-        if(contains_string_output)release_mixed_strings(details);
-        throw HandlerError("angelscript_exception","An AngelScript exception was recorded during ProcessEvent",std::move(details));
-    }
+
     validate_array_inputs();
     validate_string_inputs();
     register_string_outputs();
@@ -3071,6 +2963,35 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
         if(!out_parameters.empty()) {
             response["out_parameters"]=out_parameters;response["out_parameter_metadata"]=out_parameter_metadata;
         }
+        try {
+        const auto& contract=invocation_evidence_contract;
+        bool complete_call=true;
+        for(const auto& parameter:contract.at("public_function").at("parameters")) {
+            const auto type=parameter.at("type").get<std::string>();
+            if(type!="ArrayProperty" && type!="SetProperty")continue;
+            const auto key=parameter.at("name").get<std::string>();
+            const bool returned=parameter.value("return",false),output=parameter.value("out",false)&&!parameter.value("const",false)&&!returned;
+            if(!returned && !output)continue;
+            const auto& value=returned?response.at("result"):out_parameters.at(key);
+            if(value.is_object() && value.value("partial",false)){complete_call=false;break;}
+        }
+        if(complete_call)
+        for(const auto& parameter:contract.at("public_function").at("parameters")) {
+            auto shape=public_shape(parameter);
+            if(!shape.contains("direction"))shape["direction"]=parameter.value("return",false)?"return":
+                parameter.value("out",false)&&!parameter.value("const",false)?"output":"input";
+            const auto key=parameter.at("name").get<std::string>();
+            const bool returned=shape.at("direction")=="return";
+            const bool output=shape.at("direction")=="output";
+            const auto& value=returned?response.at("result"):output?out_parameters.at(key):arguments.at(key);
+            const bool container=shape.at("type")=="ArrayProperty" || shape.at("type")=="SetProperty";
+            const bool partial=container && (returned || output) && value.is_object() && value.value("partial",false);
+            const bool populated=shape.at("type")=="ArrayProperty" || shape.at("type")=="SetProperty"
+                ?value.is_array()?!value.empty():value.is_object()&&value.contains("items")&&!value.at("items").empty():true;
+            const bool owned=owned_shape(shape);
+            evidence_.observe("invoke",shape,ticks_.load(),owned,response.value("cleanup_confirmed",!owned),partial,populated);
+        }
+        }catch(...) {} // Observation failure does not change a completed call.
         return response;
     };
     if(return_type=="StrProperty") {
@@ -3085,7 +3006,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
             register_string_array_results();
             const auto cleanup=release_strings();
             if(!cleanup.confirmed)throw HandlerError("game_result_error","FString release is unconfirmed; do not repeat the request");
-            json response={{"function",function_name},{"return_type",return_type},{"result",result},{"executed",true},
+            json response={{"function",function_name},{"return_type",return_type},{"result",result},{"executed",true},{"process_event_returned",true},
                 {"thread_id",GetCurrentThreadId()},{"cleanup_confirmed",true},{"return_cleanup_confirmed",true}};
             if(contains_string_input)response["input_cleanup_confirmed"]=true;
             if(contains_object_array) {
@@ -3106,7 +3027,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
                 {{"executed",true},{"may_have_executed",true},{"do_not_retry",true},{"cause_code","result_processing_failed"},{"cleanup_confirmed",true}});
         }
         return append_pod_results({{"function",function_name},{"return_type",return_type},{"result",result},
-                {"executed",true},{"thread_id",GetCurrentThreadId()},{"cleanup_confirmed",true}});
+                {"executed",true},{"process_event_returned",true},{"thread_id",GetCurrentThreadId()},{"cleanup_confirmed",true}});
     }
     try {
         if(return_type=="SetProperty") {
@@ -3140,7 +3061,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
         if(contains_owned_containers){release_containers();record_container_cleanup(details);}
         throw HandlerError("game_result_error","The call executed but its result was not obtained; do not repeat the request",std::move(details));
     }
-    json response={{"function",function_name},{"return_type",return_type},{"result",result},{"executed",true},{"thread_id",GetCurrentThreadId()}};
+    json response={{"function",function_name},{"return_type",return_type},{"result",result},{"executed",true},{"process_event_returned",true},{"thread_id",GetCurrentThreadId()}};
     record_container_cleanup(response);
     if(!return_enum.is_null())response["return_enum"]=return_enum;
     if(contains_string_input || contains_string_output || contains_string_array_input) {
@@ -3157,8 +3078,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
     }
     return append_pod_results(std::move(response));
     } catch(const HandlerError& error) {
-        if(contains_owned_containers && string_event_completed && !script_errors.exception_count)release_containers();
-        if(error.code()=="angelscript_exception")throw;
+        if(contains_owned_containers && string_event_completed)release_containers();
         if(contains_object_array) {
             if(string_event_completed && !array_cleanup_done && !array_ledger.uncertain()) {
                 try{validate_array_inputs();}
@@ -3172,10 +3092,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
                 {"object_array_input_quarantined",object_array_inputs_quarantined_.load()}};
             release_mixed_strings(details);
             record_container_cleanup(details);
-            if(script_errors.exception_count) {
-                details["script_errors"]=as_exception_capture::describe(script_errors);
-                details["script_completion_confirmed"]=false;
-            }
+
             if(string_event_started || !details["cleanup_confirmed"].get<bool>())
                 throw HandlerError("game_result_error",string_event_completed?"The call executed; Object array processing or cleanup is incomplete":
                     string_event_started?"The call effect is unknown; Object array ownership is unconfirmed":"The call did not execute; Object array ownership is unconfirmed",std::move(details));
@@ -3201,7 +3118,7 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
             try{validate_string_inputs();}
             catch(...) {string_ledger.mark_uncertain();string_quarantine_cause=3;}
         }
-        if(!script_errors.exception_count && string_event_completed && !string_cleanup_done && return_type=="StrProperty" && !string_return_registered && !string_ledger.uncertain()) {
+        if(string_event_completed && !string_cleanup_done && return_type=="StrProperty" && !string_return_registered && !string_ledger.uncertain()) {
             StringHeader header{};
             try {
                 if(!copy_memory(&header,buffer+return_offset,sizeof(header)))throw HandlerError("invalid_string_storage","The FString result is unavailable");
@@ -3214,17 +3131,13 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
             {"input_cleanup_confirmed",cleanup.confirmed},{"cleanup_state",cleanup.confirmed?"released":"unknown"},
             {"string_input_quarantined",string_inputs_quarantined_.load()}};
         record_container_cleanup(details);
-        if(script_errors.exception_count) {
-            details["script_errors"]=as_exception_capture::describe(script_errors);
-            details["script_completion_confirmed"]=false;
-            if(return_type=="StrProperty")details["return_cleanup_confirmed"]=false;
-        }
+
         if(string_event_started || !cleanup.confirmed)
             throw HandlerError("game_result_error",string_event_completed?"The call executed; FString processing or cleanup is incomplete":
                 string_event_started?"The call effect is unknown; FString ownership is unconfirmed":"The call did not execute; FString ownership is unconfirmed",std::move(details));
         throw HandlerError(error.code(),error.what(),std::move(details));
     } catch(...) {
-        if(contains_owned_containers && string_event_completed && !script_errors.exception_count)release_containers();
+        if(contains_owned_containers && string_event_completed)release_containers();
         if(contains_object_array) {
             if(string_event_completed && !array_cleanup_done && !array_ledger.uncertain()) {
                 try{validate_array_inputs();}
@@ -3237,62 +3150,34 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
                 {"object_array_input_quarantined",object_array_inputs_quarantined_.load()}};
             release_mixed_strings(details);
             record_container_cleanup(details);
-            if(script_errors.exception_count) {
-                details["process_event_returned"]=string_event_completed;details["script_completion_confirmed"]=false;
-                details["script_errors"]={{"source","observed_logging_entry"},{"exception_count",script_errors.exception_count},
-                    {"full_capture",false},{"messages",json::array()},{"stack_captured",false}};
-                throw HandlerError("angelscript_exception","An AngelScript exception was recorded; the complete report could not be prepared",std::move(details));
-            }
+
             throw HandlerError("game_result_error","Object array processing is incomplete; do not repeat the request",std::move(details));
         }
         if(contains_string_output) {
             json details={{"executed",string_event_completed},{"may_have_executed",string_event_started},
                 {"do_not_retry",true},{"cause_code","result_processing_failed"}};
             release_mixed_strings(details);record_container_cleanup(details);
-            if(script_errors.exception_count) {
-                details["process_event_returned"]=string_event_completed;details["script_completion_confirmed"]=false;
-                details["script_errors"]={{"exception_count",script_errors.exception_count},{"full_capture",false}};
-                throw HandlerError("angelscript_exception","An AngelScript exception was recorded; the complete report could not be prepared",std::move(details));
-            }
+
             throw HandlerError("game_result_error","FString output processing or cleanup is incomplete; do not repeat the request",std::move(details));
         }
         if(!contains_string_input) {
             if(contains_owned_containers) {
                 json details={{"executed",string_event_completed},{"may_have_executed",string_event_started},{"do_not_retry",true},{"cause_code","result_processing_failed"}};
                 record_container_cleanup(details);
-                if(script_errors.exception_count) {
-                    details["process_event_returned"]=string_event_completed;details["script_completion_confirmed"]=false;
-                    details["script_errors"]={{"exception_count",script_errors.exception_count},{"full_capture",false}};
-                    throw HandlerError("angelscript_exception","An AngelScript exception was recorded; the complete report could not be prepared",std::move(details));
-                }
+
                 throw HandlerError("game_result_error","Object container processing is incomplete; do not repeat the request",std::move(details));
             }
-            if(script_errors.exception_count)
-                throw HandlerError("angelscript_exception","An AngelScript exception was recorded; the complete report could not be prepared",
-                    {{"executed",true},{"may_have_executed",true},{"do_not_retry",true},{"process_event_returned",string_event_completed},
-                     {"script_completion_confirmed",false},{"script_errors",{{"source","observed_logging_entry"},
-                        {"exception_count",script_errors.exception_count},{"full_capture",false},{"messages",json::array()},{"stack_captured",false}}}});
             throw;
         }
         if(string_event_completed && !string_cleanup_done && !string_ledger.uncertain()) {
             try{validate_string_inputs();}
             catch(...) {string_ledger.mark_uncertain();string_quarantine_cause=3;}
         }
-        if(!script_errors.exception_count && string_event_completed && !string_cleanup_done && return_type=="StrProperty" && !string_return_registered) {
+        if(string_event_completed && !string_cleanup_done && return_type=="StrProperty" && !string_return_registered) {
             string_ledger.mark_uncertain();string_quarantine_cause=4;
         }
         const auto cleanup=release_strings();
-        if(script_errors.exception_count) {
-            json details=
-                {{"executed",true},{"may_have_executed",true},{"do_not_retry",true},{"process_event_returned",string_event_completed},
-                 {"script_completion_confirmed",false},{"script_errors",{{"source","observed_logging_entry"},
-                    {"exception_count",script_errors.exception_count},{"full_capture",false},{"messages",json::array()},{"stack_captured",false}}},
-                 {"input_cleanup_confirmed",cleanup.confirmed},{"cleanup_confirmed",cleanup.confirmed && !contains_owned_containers},
-                 {"return_cleanup_confirmed",return_type!="StrProperty" && !contains_container_return}};
-            record_container_cleanup(details);
-            throw HandlerError("angelscript_exception","An AngelScript exception was recorded; the complete report could not be prepared",
-                std::move(details));
-        }
+
         json details=
             {{"executed",string_event_completed},{"may_have_executed",string_event_started},{"do_not_retry",true},{"cause_code","result_processing_failed"},
              {"cleanup_attempted",cleanup.attempted},{"cleanup_confirmed",cleanup.confirmed && (!contains_owned_containers || container_return_cleanup_confirmed)},
@@ -3303,8 +3188,56 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
             std::move(details));
     }
 }
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+json GameAccess::development_uint64_fixture(const json& params) {
+    auto object=resolve(params.at("handle").get<std::string>());
+    const auto identity=serial_identity(validate_object(object));
+    const auto function_name=params.at("function").get<std::string>(),parameter_name=params.at("parameter").get<std::string>();
+    std::uintptr_t function{},parameter{};std::set<std::uintptr_t> owners;
+    for(auto klass=reinterpret_cast<std::uintptr_t>(validate_object(object).object_class);klass&&!function;klass=read<std::uintptr_t>(klass+0x40)) {
+        if(!owners.insert(klass).second)throw HandlerError("fixture_metadata_cycle","The function owner chain contains a cycle");
+        std::set<std::uintptr_t> fields;
+        for(auto child=read<std::uintptr_t>(klass+0x48);child;child=read<std::uintptr_t>(child+0x28)) {
+            if(!fields.insert(child).second)throw HandlerError("fixture_metadata_cycle","The UField chain contains a cycle");
+            if(object_name(reinterpret_cast<void*>(child))==function_name && class_is(reinterpret_cast<void*>(child),"/Script/CoreUObject.Function")){function=child;break;}
+        }
+    }
+    if(!function)throw HandlerError("function_not_found","The fixture's reflected function was not found");
+    std::set<std::uintptr_t> parameters;
+    for(auto field=read<std::uintptr_t>(function+0x50);field;field=read<std::uintptr_t>(field+0x18)) {
+        if(!parameters.insert(field).second)throw HandlerError("fixture_metadata_cycle","The parameter chain contains a cycle");
+        if(name(read<std::uint64_t>(field+0x20))==parameter_name){parameter=field;break;}
+    }
+    if(!parameter || field_type(parameter,[this](auto value){return name(value);})!="StructProperty")
+        throw HandlerError("unsupported_fixture_metadata","The uint64 fixture requires a reflected TimerHandle struct parameter");
+    const auto structure=read<std::uintptr_t>(parameter+0x70);
+    if(object_path(reinterpret_cast<void*>(structure))!="/Script/Engine.TimerHandle")
+        throw HandlerError("unsupported_fixture_metadata","The uint64 fixture requires exact Engine.TimerHandle metadata");
+    std::uintptr_t handle_field{};std::set<std::uintptr_t> children;
+    for(auto field=read<std::uintptr_t>(structure+0x50);field;field=read<std::uintptr_t>(field+0x18)) {
+        if(!children.insert(field).second)throw HandlerError("fixture_metadata_cycle","The TimerHandle field chain contains a cycle");
+        if(name(read<std::uint64_t>(field+0x20))=="Handle"){handle_field=field;break;}
+    }
+    if(!handle_field || field_type(handle_field,[this](auto value){return name(value);})!="UInt64Property"
+       || read<std::int32_t>(handle_field+0x34)!=8 || read<std::int32_t>(handle_field+0x30)!=1 || read<std::int32_t>(handle_field+0x44)!=0)
+        throw HandlerError("unsupported_fixture_metadata","TimerHandle.Handle is not an exact UInt64Property");
+    auto values=json::array();
+    for(const auto source:{std::uint64_t{},std::uint64_t{1},std::numeric_limits<std::uint64_t>::max()}) {
+        alignas(16) std::array<std::byte,8> storage{};std::memcpy(storage.data(),&source,sizeof(source));
+        values.push_back(property_value(reinterpret_cast<std::uintptr_t>(storage.data()),"UInt64Property",8,handle_field));
+    }
+    if(!same_serial_identity(identity,serial_identity(validate_object(object))))
+        throw HandlerError("fixture_metadata_changed","The fixture owner identity changed");
+    return {{"source","development_fixture"},{"thread_id",GetCurrentThreadId()},{"tick_count",ticks_.load()},
+        {"type","UInt64Property"},{"element_size",8},{"array_dim",1},{"metadata_source","Engine.TimerHandle.Handle"},
+        {"values",values},{"live_object_modified",false},{"engine_allocation_required",false},{"process_event_called",false}};
+}
+#endif
 json GameAccess::execute(const json& request) {
     auto op=request.at("op").get<std::string>();auto params=request.at("params");
+    if(GetCurrentThreadId()!=game_thread_.load())
+        throw HandlerError("inspection_wrong_thread","Reflection work requires the confirmed game Tick thread");
+    require_runtime_operation(op);
     auto session=request.at("session_id").get<std::string>();
     if(session!=handle_session_){observations_.disconnect(handle_session_);handles_.clear();signature_contracts_.clear();handle_session_=session;}
     const auto now=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3325,9 +3258,15 @@ json GameAccess::execute(const json& request) {
     if(op=="watch_forget")return observations_.forget(params.value("client_owner",session),params);
     if(op=="watch_list")return observations_.list(session,params.value("client_owner",session));
     if(op=="watch_resume")return observations_.resume(session,params.value("client_owner",session),params);
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+    if(op=="_development_sparse_fixture")return development_sparse_fixture(params);
+    if(op=="_development_uint64_fixture")return development_uint64_fixture(params);
+    if(op=="_development_array_fixture")return development_array_fixture(params);
+    if(op=="_development_owned_output_fixture")return development_owned_output_fixture(params);
+#endif
     if(op!="objects" && op!="properties" && op!="functions" && op!="invoke" && op!="read_array" && op!="read_set" && op!="read_map" && op!="read_struct")throw HandlerError("unknown_operation","The operation is unsupported");
     if(op=="objects") {
-        auto query=params.value("query",std::string{}),class_query=params.value("class_query",std::string{});const auto limit=limit_of(params);
+        auto query=params.value("query",std::string{}),class_query=params.value("class_query",std::string{});const auto limit=limit_of(params);const auto offset=offset_of(params);
         if(params.contains("exact_path") && !params.at("exact_path").is_string())
             throw HandlerError("invalid_query","exact_path requires a string");
         const auto exact_path=params.value("exact_path",std::string{});
@@ -3335,7 +3274,8 @@ json GameAccess::execute(const json& request) {
             throw HandlerError("invalid_query","exact_path must contain no NUL");
         auto count=read<int32_t>(base_+kObjects+0x14);if(count<0)throw HandlerError("invalid_registry","Invalid object registry");
         json items=json::array();int scanned=0,skipped=0;
-        for(int index=0;index<count;++index){++scanned;
+        const auto begin=static_cast<int>(std::min(offset,static_cast<std::size_t>(count)));
+        for(int index=begin;index<count;++index){++scanned;
             try {
                 auto object=slot(index);if(!object)continue;
                 const auto ptr=reinterpret_cast<uintptr_t>(object);
@@ -3351,7 +3291,10 @@ json GameAccess::execute(const json& request) {
             }
             catch(const HandlerError& error){if(error.code()=="handle_limit")throw;++skipped;}
         }
-        return {{"items",items},{"total_slots",count},{"scanned_slots",scanned},{"skipped",skipped},{"truncated",scanned<count},{"thread_id",GetCurrentThreadId()}};
+        const bool more=begin+scanned<count;
+        return {{"items",items},{"total_slots",count},{"scanned_slots",scanned},{"skipped",skipped},
+                {"offset",offset},{"offset_kind","registry_slot"},{"next_offset",more?json(begin+scanned):json(nullptr)},
+                {"truncated",more},{"scan_complete",!more},{"thread_id",GetCurrentThreadId()}};
     }
     if(op=="read_array")return read_array(params);
     if(op=="read_set")return read_set(params);
@@ -3374,7 +3317,7 @@ json GameAccess::execute(const json& request) {
                 limit=static_cast<std::size_t>(value.get<uint64_t>());
             }
             const auto before=serial_identity(validate_object(object));
-            auto result=properties(object,limit);
+            auto result=properties(object,limit,offset_of(params));
             if(resolve(params.at("handle").get<std::string>())!=object || !same_serial_identity(before,serial_identity(validate_object(object))))
                 throw HandlerError("stale_handle","Object identity changed while reading properties");
             return result;
@@ -3391,7 +3334,7 @@ json GameAccess::execute(const json& request) {
             throw HandlerError("invalid_query","function_query requires a string");
         const auto query=params.value("function_query",std::string{});
         if(!function_query::valid(query))throw HandlerError("invalid_query","function_query must contain no NUL");
-        return functions(object,limit_of(params),query,params.at("handle").get<std::string>());
+        return functions(object,limit_of(params),offset_of(params),query,params.at("handle").get<std::string>());
     }
     if(op=="invoke")return invoke(object,params.at("function").get<std::string>(),params.value("arguments",json::object()),
                                   params.at("handle").get<std::string>(),params.contains("expected_signature_token")?&params.at("expected_signature_token"):nullptr);

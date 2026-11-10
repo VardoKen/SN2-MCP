@@ -51,33 +51,33 @@ class NameCallFixture:
 
     async def call(self, name, arguments):
         self.calls.append((name, arguments))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "fixture-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.target]}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return functions()
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = arguments["function"]
             if method == "ReadMarker":
                 return {"executed": True, "result": 71}
             if method in ("ReadText", "ReadEmptyText"):
                 return {"executed": True, "result": "G1R MCP dev7" if method == "ReadText" else "", "cleanup_confirmed": not self.cleanup_unconfirmed}
             return {"executed": True, "result": "Wrong" if self.wrong_return else "Entry" if method == "ReadEntry" else "None"}
-        if name == "g1r_snapshot":
+        if name == "sn2_snapshot":
             return self.snapshot()
-        if name == "g1r_watch_start":
+        if name == "sn2_watch_start":
             self.active = True
             return {"watch_id": "watch-1"}
-        if name == "g1r_watch_read":
+        if name == "sn2_watch_read":
             events = [{"kind": "baseline", "snapshot": self.snapshot()}]
             if self.false_change:
                 events.append({"kind": "changed", "snapshot": self.snapshot()})
             return {"session_id": "fixture-owner", "state": "running", "events": events, "gap": False, "dropped_events": 0}
-        if name == "g1r_watch_stop":
+        if name == "sn2_watch_stop":
             self.active = False
             return {"cleanup_complete": True, "state": "stopped"}
-        if name == "g1r_watch_forget":
+        if name == "sn2_watch_forget":
             return {"cleanup_complete": True, "forgotten": True}
         raise AssertionError((name, arguments))
 
@@ -152,15 +152,15 @@ class NameInputCallFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, copy.deepcopy(arguments)))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "fixture-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.target], "truncated": False}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return copy.deepcopy(self.declarations)
-        if name == "g1r_snapshot":
+        if name == "sn2_snapshot":
             return self.snapshot()
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = arguments["function"]
             if method == "EchoName":
                 value = arguments["arguments"]["Input"]
@@ -189,7 +189,7 @@ class NameInputCallFixture:
         raise AssertionError((name, arguments, expected_error))
 
     def invoked_methods(self):
-        return [arguments["function"] for name, arguments in self.calls if name == "g1r_invoke"]
+        return [arguments["function"] for name, arguments in self.calls if name == "sn2_invoke"]
 
 
 class NameProbeTests(unittest.TestCase):
@@ -254,14 +254,14 @@ class NameProbeTests(unittest.TestCase):
                                             "ReadNone": {"text": "None", "repetitions": 3},
                                             "ReadText": {"text": "G1R MCP dev7", "repetitions": 3},
                                             "ReadEmptyText": {"text": "", "repetitions": 3}})
-        self.assertEqual(report["cleanup"], ["g1r_watch_stop", "g1r_watch_forget"])
+        self.assertEqual(report["cleanup"], ["sn2_watch_stop", "sn2_watch_forget"])
         self.assertFalse(fixture.active)
 
     def test_wrong_return_or_snapshot_owner_rejects_without_watch(self):
         for fixture in (NameCallFixture(wrong_return=True), NameCallFixture(wrong_owner=True)):
             with self.subTest(fixture=fixture), self.assertRaises(live.ProbeError):
                 asyncio.run(live.exercise(fixture.call))
-            self.assertFalse(any(name == "g1r_watch_start" for name, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_watch_start" for name, _ in fixture.calls))
 
     def test_false_change_rejects_but_still_cleans_observation(self):
         fixture = NameCallFixture(false_change=True)
@@ -269,14 +269,14 @@ class NameProbeTests(unittest.TestCase):
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(captured.exception.code, "probe_false_name_change")
         self.assertFalse(fixture.active)
-        self.assertEqual([name for name, _ in fixture.calls[-2:]], ["g1r_watch_stop", "g1r_watch_forget"])
+        self.assertEqual([name for name, _ in fixture.calls[-2:]], ["sn2_watch_stop", "sn2_watch_forget"])
 
     def test_fstring_cleanup_must_be_explicitly_confirmed(self):
         fixture = NameCallFixture(cleanup_unconfirmed=True)
         with self.assertRaises(live.ProbeError) as captured:
             asyncio.run(live.exercise(fixture.call))
         self.assertEqual(captured.exception.code, "probe_string_cleanup_unconfirmed")
-        self.assertFalse(any(name == "g1r_watch_start" for name, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_watch_start" for name, _ in fixture.calls))
 
     def test_cancelled_name_watch_cleanup_still_forgets_observation(self):
         async def scenario():
@@ -285,7 +285,7 @@ class NameProbeTests(unittest.TestCase):
 
             async def call(name, arguments):
                 result = await fixture.call(name, arguments)
-                if name == "g1r_watch_stop":
+                if name == "sn2_watch_stop":
                     started.set()
                     await release.wait()
                 return result
@@ -299,7 +299,7 @@ class NameProbeTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
             self.assertFalse(fixture.active)
-            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["g1r_watch_stop", "g1r_watch_forget"])
+            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["sn2_watch_stop", "sn2_watch_forget"])
         asyncio.run(scenario())
 
 
@@ -313,7 +313,7 @@ class NameInputProbeTests(unittest.TestCase):
         self.assertEqual(report["rejections"], [code for _, code, _ in fixture.rejections])
         self.assertEqual([count for _, _, count in fixture.rejections], [2] * 10)
         echo_args = [args["arguments"]["Input"] for name, args in fixture.calls
-                     if name == "g1r_invoke" and args["function"] == "EchoName"]
+                     if name == "sn2_invoke" and args["function"] == "EchoName"]
         self.assertEqual(echo_args[:2], [
             {"name_from": {"handle": "obj-1", "property_name": "StoredEntry"}},
             {"name_from": {"handle": "obj-1", "property_name": "StoredNone"}},
@@ -411,7 +411,7 @@ class NameInputProbeTests(unittest.TestCase):
 
                 async def call(name, arguments, *, expected_error=None):
                     result = await fixture.call(name, arguments, expected_error=expected_error)
-                    if name == "g1r_snapshot":
+                    if name == "sn2_snapshot":
                         counter = result["objects"][0]["properties"][2]
                         if value == "missing":
                             counter.pop("value")
@@ -436,7 +436,7 @@ class NameInputProbeTests(unittest.TestCase):
 
                 async def call(name, arguments, *, expected_error=None):
                     result = await fixture.call(name, arguments, expected_error=expected_error)
-                    if name == "g1r_invoke" and arguments["function"] == "ReadCallsCount":
+                    if name == "sn2_invoke" and arguments["function"] == "ReadCallsCount":
                         if mode == "missing":
                             result.pop("result")
                         elif mode == "null":
@@ -468,7 +468,7 @@ class NameInputProbeTests(unittest.TestCase):
 
         async def call(name, arguments, *, expected_error=None):
             result = await fixture.call(name, arguments, expected_error=expected_error)
-            if name == "g1r_invoke" and arguments["function"] == "EchoName":
+            if name == "sn2_invoke" and arguments["function"] == "EchoName":
                 raise ConnectionError("Потерян ответ после исполнения собственной fixture")
             return result
 
@@ -532,7 +532,7 @@ class NameInputProbeTests(unittest.TestCase):
             started, release = asyncio.Event(), asyncio.Event()
 
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     started.set()
                     await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -551,7 +551,7 @@ class NameInputProbeTests(unittest.TestCase):
                 await task
             self.assertEqual(fixture.count, 0)
             self.assertEqual(fixture.resets, 1)
-            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["g1r_snapshot", "g1r_invoke"])
+            self.assertEqual([name for name, _ in fixture.calls[-2:]], ["sn2_snapshot", "sn2_invoke"])
             self.assertEqual(fixture.invoked_methods()[-2:], ["ResetProbe", "ReadCallsCount"])
 
         asyncio.run(scenario())

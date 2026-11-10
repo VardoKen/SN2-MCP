@@ -110,26 +110,26 @@ async def exercise(call) -> dict:
     watch_id = None
     failure = None
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         if not status.get("ready"):
             raise ProbeError("game_not_ready", "Native game queue is not ready")
         session_id = status.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise ProbeError("probe_owner_unknown", "Native session owner is not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST, "limit": 50})
+        found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST, "limit": 50})
         exact = [item for item in found.get("items", []) if item.get("name") == "Default__" + HOST]
         if len(exact) != 1:
             raise ProbeError("probe_object_absent", "Owned class CDO was not found uniquely")
         host = check_target(exact[0], HOST, host=True)
-        functions = await call("g1r_object_functions", {"handle": host["handle"], "limit": 100})
+        functions = await call("sn2_object_functions", {"handle": host["handle"], "limit": 100})
         for method in SIGNATURES:
             check_signature(functions, method)
-        marker = await call("g1r_invoke", {"handle": host["handle"], "function": "ReadMarker", "arguments": {}})
+        marker = await call("sn2_invoke", {"handle": host["handle"], "function": "ReadMarker", "arguments": {}})
         if marker.get("executed") is not True or type(marker.get("result")) is not int or marker["result"] != 61:
             raise ProbeError("probe_marker_mismatch", "Owned CDO did not return marker 61")
         classes = {}
         for name in CLASS_NAMES:
-            found = await call("g1r_find_objects", {"query": name, "class_query": "", "limit": 100})
+            found = await call("sn2_find_objects", {"query": name, "class_query": "", "limit": 100})
             exact = [item for item in found.get("items", []) if item.get("name") == name]
             if len(exact) != 1:
                 raise ProbeError("probe_class_absent", "Owned class object was not found uniquely")
@@ -138,10 +138,10 @@ async def exercise(call) -> dict:
         report["checks"].append("exact_host_marker_classes_signatures")
 
         async def invoke(method, value=...):
-            return await call("g1r_invoke", {"handle": host["handle"], "function": method,
+            return await call("sn2_invoke", {"handle": host["handle"], "function": method,
                                              "arguments": {} if value is ... else {"Input": value}})
 
-        initial = await call("g1r_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
+        initial = await call("sn2_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
         if initial.get("session_id") != session_id:
             raise ProbeError("probe_snapshot_owner", "Initial snapshot belongs to a different session")
         for value in snapshot_values(initial, host).values():
@@ -153,27 +153,27 @@ async def exercise(call) -> dict:
                 check_result(await invoke(method, {"handle": target["handle"]}), target, session_id)
             check_result(await invoke(method, None), None, session_id)
         check_result(await invoke("EchoAnyClass", {"handle": other["handle"]}), other, session_id)
-        report["foreign_class"] = await call("g1r_invoke", {"handle": host["handle"], "function": "EchoTypedClass",
+        report["foreign_class"] = await call("sn2_invoke", {"handle": host["handle"], "function": "EchoTypedClass",
                                                              "arguments": {"Input": {"handle": other["handle"]}}},
                                              expected_error="incompatible_class_argument")
-        report["ordinary_object"] = await call("g1r_invoke", {"handle": host["handle"], "function": "EchoAnyClass",
+        report["ordinary_object"] = await call("sn2_invoke", {"handle": host["handle"], "function": "EchoAnyClass",
                                                                "arguments": {"Input": {"handle": host["handle"]}}},
                                                expected_error="invalid_class_argument")
         report["checks"].append("class_returns_base_derived_null_and_two_pre_execution_rejections")
         can_write = True
         await invoke("StoreAnyClass", None)
         await invoke("StoreTypedClass", None)
-        before = await call("g1r_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
+        before = await call("sn2_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
         if before.get("session_id") != session_id:
             raise ProbeError("probe_snapshot_owner", "Snapshot belongs to a different session")
         if any(value is not None for value in snapshot_values(before, host).values()):
             raise ProbeError("probe_initial_state", "Owned class fields are not normalized to null")
-        watch = await call("g1r_watch_start", {"handle": host["handle"], "properties": PROPERTIES,
+        watch = await call("sn2_watch_start", {"handle": host["handle"], "properties": PROPERTIES,
                                                 "duration_ms": 5000, "interval_ms": 50, "capacity": 16})
         watch_id = watch["watch_id"]
         await invoke("StoreAnyClass", {"handle": other["handle"]})
         await invoke("StoreTypedClass", {"handle": derived["handle"]})
-        after = await call("g1r_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
+        after = await call("sn2_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
         if after.get("session_id") != session_id:
             raise ProbeError("probe_snapshot_owner", "Snapshot belongs to a different session")
         values = snapshot_values(after, host)
@@ -182,7 +182,7 @@ async def exercise(call) -> dict:
         observed = None
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            events = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+            events = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
             if events.get("dropped_events") != 0 or events.get("gap") is True:
                 raise ProbeError("probe_watch_loss", "Short probe lost events")
             changed = [event for event in events.get("events", []) if event.get("kind") == "changed"]
@@ -193,10 +193,10 @@ async def exercise(call) -> dict:
         if observed is None:
             raise ProbeError("probe_watch_change_absent", "Watch did not confirm class properties")
         await asyncio.sleep(0.2)
-        stable = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+        stable = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
         if stable.get("last_seq") != observed.get("last_seq"):
             raise ProbeError("probe_false_class_change", "Unchanged classes produced false events")
-        diff = await call("g1r_compare_snapshots", {"before": before, "after": after, "limit": 100})
+        diff = await call("sn2_compare_snapshots", {"before": before, "after": after, "limit": 100})
         if diff.get("value_changes") != 2:
             raise ProbeError("probe_snapshot_diff", "Comparison did not confirm two class changes")
         report["watch"] = {"changed_events": sum(event.get("kind") == "changed" for event in stable["events"]),
@@ -212,26 +212,26 @@ async def exercise(call) -> dict:
             if can_write:
                 for method in ("StoreAnyClass", "StoreTypedClass"):
                     try:
-                        result = await call("g1r_invoke", {"handle": host["handle"], "function": method, "arguments": {"Input": None}})
+                        result = await call("sn2_invoke", {"handle": host["handle"], "function": method, "arguments": {"Input": None}})
                         if result.get("executed") is not True:
                             raise ProbeError("probe_cleanup_unconfirmed", "Field cleanup execution is not confirmed")
                         report["cleanup"].append(method)
                     except BaseException as error:
                         cleanup_errors.append(f"{method}: {getattr(error, 'code', 'failed')}")
                 try:
-                    restored = await call("g1r_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
+                    restored = await call("sn2_snapshot", {"targets": [{"handle": host["handle"], "properties": PROPERTIES}]})
                     if any(value is not None for value in snapshot_values(restored, host, session_id).values()):
                         raise ProbeError("probe_restore_mismatch", "Owned class fields were not restored to null")
                     report["cleanup"].append("restored_null_snapshot")
                 except BaseException as error:
                     cleanup_errors.append(f"restore_snapshot: {getattr(error, 'code', 'failed')}")
             if watch_id is not None:
-                for method in ("g1r_watch_stop", "g1r_watch_forget"):
+                for method in ("sn2_watch_stop", "sn2_watch_forget"):
                     try:
                         result = await call(method, {"watch_id": watch_id})
                         if (result.get("cleanup_complete") is not True
-                                or method == "g1r_watch_forget" and result.get("forgotten") is not True
-                                or method == "g1r_watch_stop" and result.get("state") not in {"stopped", "completed", "failed"}):
+                                or method == "sn2_watch_forget" and result.get("forgotten") is not True
+                                or method == "sn2_watch_stop" and result.get("state") not in {"stopped", "completed", "failed"}):
                             raise ProbeError("probe_cleanup_unconfirmed", "Watch release is not confirmed")
                         report["cleanup"].append(method)
                     except BaseException as error:
@@ -251,7 +251,7 @@ async def exercise(call) -> dict:
 
 
 async def run_probe(args) -> dict:
-    parameters = StdioServerParameters(command=sys.executable, args=["-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+    parameters = StdioServerParameters(command=sys.executable, args=["-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
         "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):
         async with ClientSession(incoming, outgoing) as client:
@@ -262,8 +262,8 @@ async def run_probe(args) -> dict:
         async with ClientSession(incoming, outgoing) as client:
             await client.initialize()
             call = _caller(client)
-            await call("g1r_native_status", {})
-            report["new_session_rejection"] = await call("g1r_invoke", {"handle": report["previous_handle"], "function": "ReadMarker", "arguments": {}},
+            await call("sn2_native_status", {})
+            report["new_session_rejection"] = await call("sn2_invoke", {"handle": report["previous_handle"], "function": "ReadMarker", "arguments": {}},
                                                          expected_error="stale_handle")
     report.pop("previous_handle", None)
     report["checks"].append("old_session_handle_rejected_before_execution")

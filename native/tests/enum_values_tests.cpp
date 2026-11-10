@@ -1,10 +1,10 @@
-#include <g1r_mcp/enum_values.hpp>
+#include <sn2_mcp/enum_values.hpp>
 #include <array>
 #include <iostream>
 #include <limits>
 #include <string>
 
-using namespace g1r::enum_values;
+using namespace sn2_mcp::enum_values;
 
 static std::size_t checks = 0;
 static void require(bool condition, const char* reason) {

@@ -9,7 +9,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include "../include/g1r_mcp/process_identity.hpp"
+#include "../include/sn2_mcp/process_identity.hpp"
 
 namespace fs = std::filesystem;
 static_assert(sizeof(void*) == 8, "The loader requires Windows x64");
@@ -20,7 +20,7 @@ struct Handle {
     operator HANDLE() const { return value; }
 };
 std::wstring normalized(const fs::path& path) {
-    return g1r::loader::comparable_path(fs::canonical(path).wstring());
+    return sn2::loader::comparable_path(fs::canonical(path).wstring());
 }
 bool suffix(const std::wstring& path, const std::wstring& end) {
     return path.size() >= end.size() && path.compare(path.size() - end.size(), end.size(), end) == 0;
@@ -65,7 +65,7 @@ bool remote_identity_matches(HANDLE process, uintptr_t base, const PEIdentity& e
 bool already_loaded(const std::vector<MODULEENTRY32W>& list, const std::wstring& dll_path) {
     bool loaded = false;
     for (const auto& entry : list) {
-        if (_wcsicmp(entry.szModule, L"G1R_MCP.dll") != 0) continue;
+        if (_wcsicmp(entry.szModule, L"SN2_MCP.dll") != 0) continue;
         if (normalized(entry.szExePath) != dll_path) throw std::runtime_error("other_bridge_loaded");
         loaded = true;
     }
@@ -79,6 +79,7 @@ int error(const char* code, const char* message, bool unknown = false) {
 
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
+    bool load_started = false;
     try {
         DWORD pid{}; fs::path dll, expected_exe;
         std::uint64_t expected_created{};
@@ -99,22 +100,22 @@ int wmain(int argc, wchar_t** argv) {
                 has_expected_exe = true; expected_exe = argv[++index];
             } else if (argument == L"--expected-creation-filetime" && index + 1 < argc) {
                 if (has_expected_created) return error("invalid_arguments", "Creation time was specified more than once");
-                has_expected_created = true; expected_created = g1r::loader::parse_creation_filetime(argv[++index]);
+                has_expected_created = true; expected_created = sn2::loader::parse_creation_filetime(argv[++index]);
             } else return error("invalid_arguments", "Required: --pid PID --dll path; instance validation: --expected-exe path --expected-creation-filetime FILETIME");
         }
         if (has_expected_exe != has_expected_created ||
             (has_expected_exe && (expected_exe.empty() || !expected_exe.is_absolute())))
             return error("invalid_arguments", "Expected absolute EXE path and FILETIME must be supplied together");
-        if (!pid || dll.empty() || !dll.is_absolute() || !fs::is_regular_file(dll) || _wcsicmp(dll.filename().c_str(), L"G1R_MCP.dll") != 0)
-            return error("invalid_arguments", "An exact PID and absolute path to an existing G1R_MCP.dll are required");
+        if (!pid || dll.empty() || !dll.is_absolute() || !fs::is_regular_file(dll) || _wcsicmp(dll.filename().c_str(), L"SN2_MCP.dll") != 0)
+            return error("invalid_arguments", "An exact PID and absolute path to an existing SN2_MCP.dll are required");
         auto dll_path = normalized(dll); pe_identity(dll);
         Handle process{OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid)};
         if (!process.value) return error("open_process_failed", "Could not open the game process");
-        auto process_path = normalized(g1r::loader::process_image(process));
-        if (has_expected_exe && !g1r::loader::identity_matches(process_path, g1r::loader::creation_filetime(process),
+        auto process_path = normalized(sn2::loader::process_image(process));
+        if (has_expected_exe && !sn2::loader::identity_matches(process_path, sn2::loader::creation_filetime(process),
                                                            normalized(expected_exe), expected_created))
             return error("process_identity_mismatch", "The EXE path or creation time does not match the selected game instance");
-        if (!suffix(process_path, L"\\g1r\\binaries\\win64\\g1r-win64-shipping.exe")) return error("wrong_process", "PID does not belong to the Gothic 1 Remake internal Win64 executable");
+        if (!suffix(process_path, L"\\subnautica2\\binaries\\win64\\subnautica2-win64-shipping.exe")) return error("wrong_process", "PID does not belong to the Subnautica 2 internal Win64 executable");
         auto identity = pe_identity(process_path); (void)identity;
         USHORT process_machine{}, native_machine{};
         auto wow64 = reinterpret_cast<BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*)>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2"));
@@ -147,16 +148,17 @@ int wmain(int argc, wchar_t** argv) {
         if (!WriteProcessMemory(process, remote_buffer, dll_path.c_str(), bytes, &written) || written != bytes) { VirtualFreeEx(process, remote_buffer, 0, MEM_RELEASE); return error("write_failed", "Could not write the DLL path"); }
         Handle thread{CreateRemoteThread(process, nullptr, 0, remote_loader, remote_buffer, 0, nullptr)};
         if (!thread.value) { VirtualFreeEx(process, remote_buffer, 0, MEM_RELEASE); return error("thread_failed", "Could not start the DLL loader"); }
+        load_started = true;
         auto wait = WaitForSingleObject(thread, 10000);
         if (wait != WAIT_OBJECT_0) return error("load_outcome_unknown", "DLL loading wait timed out; the outcome is unknown and no retry will be made", true);
         VirtualFreeEx(process, remote_buffer, 0, MEM_RELEASE);
         if (!already_loaded(modules(pid), dll_path)) return error("load_failed", "DLL was not found among loaded modules after the loader completed");
         std::cout << "{\"ok\":true,\"status\":\"loaded\",\"pid\":" << pid << "}\n"; return 0;
     } catch (const fs::filesystem_error&) {
-        return error("path_check_failed", "Could not validate the file path");
+        return error("path_check_failed", "Could not validate the file path", load_started);
     } catch (const std::exception& exception) {
         std::string code = exception.what();
         if (code.empty() || !std::all_of(code.begin(), code.end(), [](unsigned char value) { return (value >= 'a' && value <= 'z') || value == '_'; })) code = "validation_failed";
-        return error(code.c_str(), "DLL validation or loading did not complete");
+        return error(code.c_str(), "DLL validation or loading did not complete", load_started);
     }
 }

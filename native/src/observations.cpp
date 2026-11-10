@@ -1,11 +1,11 @@
-#include <g1r_mcp/observations.hpp>
-#include <g1r_mcp/transport.hpp>
+#include <sn2_mcp/observations.hpp>
+#include <sn2_mcp/transport.hpp>
 #include <algorithm>
 #include <limits>
 #include <set>
 #include <utility>
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 namespace {
 using Json = nlohmann::json;
 std::uint64_t integer(const Json& params, const char* key, std::uint64_t minimum,
@@ -267,4 +267,4 @@ void Observations::pump(std::uint64_t now_ms, std::uint64_t tick, const Reader& 
     }
 }
 
-} // namespace g1r_mcp
+} // namespace sn2_mcp

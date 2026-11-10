@@ -1,5 +1,5 @@
-#include <g1r_mcp/movieplayer_jobs.hpp>
-#include <g1r_mcp/transport.hpp>
+#include <sn2_mcp/movieplayer_jobs.hpp>
+#include <sn2_mcp/transport.hpp>
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -7,9 +7,9 @@
 #include <thread>
 #include <vector>
 
-using g1r_mcp::HandlerError;
-using g1r_mcp::JobState;
-using g1r_mcp::MoviePlayerJobs;
+using sn2_mcp::HandlerError;
+using sn2_mcp::JobState;
+using sn2_mcp::MoviePlayerJobs;
 using nlohmann::json;
 namespace {
 void require(bool value, const char* message) {

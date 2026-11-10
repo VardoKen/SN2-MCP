@@ -114,7 +114,7 @@ def check_channel(result):
 async def helper_exercise(call):
     report = {"reflected_functions": {}, "trace": {"tested": False}, "raw_hit_result": "not_marshaled"}
     try:
-        found = await call("g1r_find_objects", {"query": HOST, "class_query": HOST, "limit": 100})
+        found = await call("sn2_find_objects", {"query": HOST, "class_query": HOST, "limit": 100})
         report["find_result"] = found
         if found.get("truncated") is not False or not isinstance(found.get("items"), list): raise ProbeError("probe_object_absent", "Helper object listing is incomplete")
         live, cdos = [], []
@@ -133,12 +133,12 @@ async def helper_exercise(call):
         report.update(target=target, cdo=cdos[0])
         tokens, sizes = {}, {}
         for name in METHODS:
-            listing = await call("g1r_object_functions", {"handle": target["handle"], "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": target["handle"], "function_query": name, "limit": 10})
             report["reflected_functions"][name] = listing
             _, tokens[name], sizes[name] = check_signature(listing, name)
         if len(set(tokens.values())) != len(tokens): raise ProbeError("probe_signature_token_alias", "Helper tokens match")
         async def invoke(name, arguments=None):
-            return await call("g1r_invoke", {"handle": target["handle"], "function": name,
+            return await call("sn2_invoke", {"handle": target["handle"], "function": name,
                 "arguments": {} if arguments is None else arguments, "expected_signature_token": tokens[name]})
         version = await invoke("GetHelperVersion")
         report["version_result"] = version

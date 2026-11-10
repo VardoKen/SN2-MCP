@@ -83,15 +83,15 @@ async def exercise(call, *, wait_seconds=10, clock=time.monotonic, sleep=asyncio
     touched, failure, restore_attempted = False, None, False
     lease, native_owner, helper, original, original_sha, changed_sha = None, None, None, None, None, None
     try:
-        lease = checked_launch(await call("g1r_development_processes", {}))
-        native = await call("g1r_native_status", {})
+        lease = checked_launch(await call("sn2_development_processes", {}))
+        native = await call("sn2_native_status", {})
         if (native.get("ready") is not True or native.get("process_id") != lease["process"]["pid"]
                 or not isinstance(native.get("session_id"), str) or not native["session_id"]):
             raise ProbeError("hotreload_native_invalid", "The native owner did not match the active process lease")
         native_owner = {"session_id": native["session_id"], "process_id": native["process_id"]}
-        helper = select_helper(await call("g1r_find_objects", {"query": HOST, "class_query": HOST, "limit": 100}))
-        source_text, source_sha = checked_text(await call("g1r_read_package_file_exact", {"relative_path": SOURCE_PACKAGE, "file_path": FILE}), SOURCE_PACKAGE)
-        original, original_sha = checked_text(await call("g1r_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
+        helper = select_helper(await call("sn2_find_objects", {"query": HOST, "class_query": HOST, "limit": 100}))
+        source_text, source_sha = checked_text(await call("sn2_read_package_file_exact", {"relative_path": SOURCE_PACKAGE, "file_path": FILE}), SOURCE_PACKAGE)
+        original, original_sha = checked_text(await call("sn2_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
         if original_sha != source_sha: raise ProbeError("hotreload_source_changed", "The staging helper already differs from the canonical source before the probe")
         matches = list(VERSION_BODY.finditer(original))
         if len(matches) != 1: raise ProbeError("hotreload_body_invalid", "The version getter was not uniquely found in the expected simple form")
@@ -103,16 +103,16 @@ async def exercise(call, *, wait_seconds=10, clock=time.monotonic, sleep=asyncio
                       staging_before_sha256=original_sha, staging_marker_sha256=changed_sha, baseline=baseline, temporary_marker=marker)
 
         async def assert_game():
-            current = checked_launch(await call("g1r_development_processes", {}))
+            current = checked_launch(await call("sn2_development_processes", {}))
             if current["process"] != lease["process"]:
                 raise ProbeError("hotreload_owner_changed", "The active game process changed")
 
         async def version_value():
             await assert_game()
-            helper = select_helper(await call("g1r_find_objects", {"query": HOST, "class_query": HOST, "limit": 100}))
-            listing = await call("g1r_object_functions", {"handle": helper["handle"], "function_query": "GetHelperVersion", "limit": 10})
+            helper = select_helper(await call("sn2_find_objects", {"query": HOST, "class_query": HOST, "limit": 100}))
+            listing = await call("sn2_object_functions", {"handle": helper["handle"], "function_query": "GetHelperVersion", "limit": 10})
             _, token, _ = check_signature(listing, "GetHelperVersion")
-            result = await call("g1r_invoke", {"handle": helper["handle"], "function": "GetHelperVersion", "arguments": {}, "expected_signature_token": token})
+            result = await call("sn2_invoke", {"handle": helper["handle"], "function": "GetHelperVersion", "arguments": {}, "expected_signature_token": token})
             if result.get("cleanup_confirmed") is not True:
                 raise ProbeError("hotreload_cleanup_unknown", "The FString getter did not confirm cleanup; calls were stopped")
             if result.get("executed") is not True or result.get("return_type") != "StrProperty" or not isinstance(result.get("result"), str):
@@ -132,14 +132,14 @@ async def exercise(call, *, wait_seconds=10, clock=time.monotonic, sleep=asyncio
         if await version_value() != baseline: raise ProbeError("hotreload_baseline_mismatch", "The runtime getter did not match the original staging body")
         await assert_game()
         touched = True
-        response = await call("g1r_write_package_file", {"relative_path": lease["package"], "file_path": FILE,
+        response = await call("sn2_write_package_file", {"relative_path": lease["package"], "file_path": FILE,
             "content": modified, "expected_sha256": original_sha})
         if response.get("written") is not True or response.get("sha256") != changed_sha:
             raise ProbeError("hotreload_write_unconfirmed", "The CAS marker write was not confirmed")
-        _, check_sha = checked_text(await call("g1r_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
+        _, check_sha = checked_text(await call("sn2_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
         if check_sha != changed_sha: raise ProbeError("hotreload_write_unconfirmed", "The staging readback did not match markerSHA")
         await poll(marker)
-        _, runtime_sha = checked_text(await call("g1r_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
+        _, runtime_sha = checked_text(await call("sn2_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
         report["staging_runtime_sha256"] = runtime_sha
         if runtime_sha != changed_sha: raise ProbeError("hotreload_staging_changed", "Staging changed while the runtime marker was being observed")
         report["checks"].append("function_body_hotreload_observed_in_same_game")
@@ -154,20 +154,20 @@ async def exercise(call, *, wait_seconds=10, clock=time.monotonic, sleep=asyncio
                 nonlocal restore_attempted
                 # Restore is a separate CAS operation, not a retry of the original write/getter.
                 await assert_game()
-                text, current_sha = checked_text(await call("g1r_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
+                text, current_sha = checked_text(await call("sn2_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
                 if current_sha == original_sha:
                     report["cleanup"].append("original_file_already_present_no_restore_write")
                 else:
                     if current_sha != changed_sha: raise ProbeError("hotreload_restore_conflict", "Staging changed after the marker; bytes written by others are not overwritten")
                     restore_attempted = True
-                    result = await call("g1r_write_package_file", {"relative_path": lease["package"], "file_path": FILE,
+                    result = await call("sn2_write_package_file", {"relative_path": lease["package"], "file_path": FILE,
                         "content": original, "expected_sha256": changed_sha})
                     if result.get("written") is not True or result.get("sha256") != original_sha:
                         raise ProbeError("hotreload_restore_unconfirmed", "The single staging restoration was not confirmed")
-                    _, restored_sha = checked_text(await call("g1r_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
+                    _, restored_sha = checked_text(await call("sn2_read_package_file_exact", {"relative_path": lease["package"], "file_path": FILE}), lease["package"])
                     if restored_sha != original_sha: raise ProbeError("hotreload_restore_unconfirmed", "The restored bytes did not match the original SHA")
                     report["cleanup"].append("original_staging_bytes_restored_once")
-                _, after_source = checked_text(await call("g1r_read_package_file_exact", {"relative_path": SOURCE_PACKAGE, "file_path": FILE}), SOURCE_PACKAGE)
+                _, after_source = checked_text(await call("sn2_read_package_file_exact", {"relative_path": SOURCE_PACKAGE, "file_path": FILE}), SOURCE_PACKAGE)
                 if after_source != source_sha: raise ProbeError("hotreload_source_changed", "The canonical helper source changed during the probe")
                 report["source_after_sha256"] = after_source
                 if getattr(failure, "code", None) in UNKNOWN_GAME or getattr(failure, "code", None) in {"game_result_error", "hotreload_cleanup_unknown"}:

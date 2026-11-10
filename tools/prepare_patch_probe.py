@@ -16,8 +16,8 @@ import tempfile
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
-from g1r_mcp.packages import PackageError, validate_package
-from g1r_mcp.workspace import (PackageWorkspace, WorkspaceError, _checked,
+from sn2_mcp.packages import PackageError, validate_package
+from sn2_mcp.workspace import (PackageWorkspace, WorkspaceError, _checked,
                                _destination_lock, _guard_directories, _read_bytes)
 
 PACKAGE_NAME = "G1RMCPPatchProbe"
@@ -94,7 +94,7 @@ def prepare_probe(workspace_root: Path, *, repository_root: Path = REPOSITORY_RO
         if os.path.lexists(target):
             raise PackageError("already_exists", "The probe package already exists")
         try:
-            stage = Path(tempfile.mkdtemp(prefix=".g1r-mcp-patch-probe-", dir=workspace))
+            stage = Path(tempfile.mkdtemp(prefix=".sn2-mcp-patch-probe-", dir=workspace))
             owned_directories["."] = _identity(stage)
             with _guard_directories(stage, workspace):
                 for relative in ("Script", "ScriptPatches"):

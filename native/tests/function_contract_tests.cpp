@@ -1,4 +1,4 @@
-#include <g1r_mcp/function_contract.hpp>
+#include <sn2_mcp/function_contract.hpp>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -6,7 +6,7 @@ namespace {
 int checks{};
 void require(bool good,const char* message){++checks;if(!good)throw std::runtime_error(message);}
 template<class Action>void reject(const char* code,Action&& action) {
-    try {action();}catch(const g1r_mcp::HandlerError& error) {
+    try {action();}catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный код отказа сигнатуры");
         require(error.details()==nlohmann::json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},"Отказ должен быть до исполнения");return;
     }
@@ -14,7 +14,7 @@ template<class Action>void reject(const char* code,Action&& action) {
 }
 }
 int main() {
-    using namespace g1r_mcp;using nlohmann::json;
+    using namespace sn2_mcp;using nlohmann::json;
     try {
         std::map<std::string,json> saved;std::uint64_t sequence{};
         const json base={{"session","native-1"},{"target_handle","obj-1"},{"function_name","ReadMarker"},

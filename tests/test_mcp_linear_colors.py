@@ -66,12 +66,11 @@ class MCPLinearColorTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    listed = await client.call_tool("g1r_object_functions", {"handle": handle, "function_query": "EchoColor"})
+                    listed = await client.call_tool("sn2_object_functions", {"handle": handle, "function_query": "EchoColor"})
                     self.assertFalse(listed.is_error, listed.content)
                     self.assertEqual(listed.structured_content, functions)
                     declaration = listed.structured_content["items"][0]
@@ -79,7 +78,7 @@ class MCPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(declaration["parameters"][1]["direction"], "return")
                     self.assertEqual(declaration["parameters"][0]["struct"], metadata)
                     token = declaration["signature_token"]
-                    response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoColor",
+                    response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoColor",
                         "arguments": {"Input": color}, "expected_signature_token": token})
                     self.assertFalse(response.is_error, response.content)
                     self.assertEqual(response.structured_content, result)
@@ -88,7 +87,7 @@ class MCPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.structured_content["result"]["R"], -0.5)
                     self.assertEqual(response.structured_content["result"]["B"], 8.0)
                     for offset, value in enumerate(invalid):
-                        response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoColor",
+                        response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoColor",
                             "arguments": {"Input": value}, "expected_signature_token": token})
                         self.assertTrue(response.is_error, response.content)
                         message = next(block.text for block in response.content if block.type == "text")
@@ -97,7 +96,7 @@ class MCPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(error["effect"], no_effect)
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], native.requests[2 + offset]["id"])
-                    response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoColor",
+                    response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoColor",
                         "arguments": {"Input": color}, "expected_signature_token": token})
                     self.assertTrue(response.is_error, response.content)
                     message = next(block.text for block in response.content if block.type == "text")
@@ -106,7 +105,7 @@ class MCPLinearColorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], unknown)
                     self.assertIs(error["may_have_executed"], True)
                     self.assertEqual(error["request_id"], native.requests[6]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

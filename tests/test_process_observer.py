@@ -3,7 +3,7 @@ import ctypes
 from ctypes import wintypes
 import unittest
 
-from g1r_mcp.process_observer import (ObservationError, PROCESS_OBSERVER_ACCESS, WAIT_FAILED,
+from sn2_mcp.process_observer import (ObservationError, PROCESS_OBSERVER_ACCESS, WAIT_FAILED,
                                       WAIT_OBJECT_0, WAIT_TIMEOUT, capture_checked_process)
 
 

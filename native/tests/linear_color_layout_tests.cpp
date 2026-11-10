@@ -1,4 +1,4 @@
-#include <g1r_mcp/linear_color_layout.hpp>
+#include <sn2_mcp/linear_color_layout.hpp>
 
 #include <algorithm>
 #include <array>
@@ -11,13 +11,13 @@
 #include <vector>
 
 namespace {
-using g1r_mcp::ObjectSerialIdentity;
-using g1r_mcp::linear_color_layout::Layout;
+using sn2_mcp::ObjectSerialIdentity;
+using sn2_mcp::linear_color_layout::Layout;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action> void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ раскладки FLinearColor");
         require(error.details()==nlohmann::json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Проверка раскладки FLinearColor не исполняет игровой вызов");return;
@@ -43,7 +43,7 @@ struct ReflectedMemory {
     }
     template<class T> T read(std::uintptr_t address) {
         ++read_count;const auto found=storage.find(address);
-        if(address==failing_address || found==storage.end())throw g1r_mcp::HandlerError("invalid_memory","Изолированные метаданные FLinearColor недоступны");
+        if(address==failing_address || found==storage.end())throw sn2_mcp::HandlerError("invalid_memory","Изолированные метаданные FLinearColor недоступны");
         T value{};std::memcpy(&value,found->second.data(),sizeof(value));return value;
     }
     void set_field(std::uintptr_t field,std::uintptr_t field_class,std::uint64_t name,int size,int offset,std::uintptr_t next) {
@@ -53,18 +53,18 @@ struct ReflectedMemory {
     }
     ReflectedMemory() {
         set_field(outer,outer_class,90,16,4,0);set(outer_class,std::uint64_t{1});set(outer+0x70,structure);
-        set(structure+0x50,head);set(structure+0x40,std::uintptr_t{});set(structure+0x58,std::int32_t{16});set(structure+0x5c,std::int32_t{4});
+        set(structure+0x50,head);set(structure+0x40,std::uintptr_t{});set(structure+0x58,std::int32_t{16});set(structure+0x5c,std::int32_t{0xA50000|(4)});
         set(scalar_class,std::uint64_t{2});for(int i=0;i<4;++i)
             set_field(head+static_cast<std::uintptr_t>(i)*0x100,scalar_class,static_cast<std::uint64_t>(11+i),4,i*4,
                 i==3?0:head+static_cast<std::uintptr_t>(i+1)*0x100);
     }
-    g1r_mcp::linear_color_layout::Snapshot capture(int size=16,int dim=1,std::uintptr_t field=outer) {
-        return g1r_mcp::linear_color_layout::capture(field,size,dim,
+    sn2_mcp::linear_color_layout::Snapshot capture(int size=16,int dim=1,std::uintptr_t field=outer) {
+        return sn2_mcp::linear_color_layout::capture(field,size,dim,
             [this]<class T>(std::uintptr_t address){return read<T>(address);},
             [this](std::uint64_t value){const auto found=names.find(value);return found==names.end()?std::string{}:found->second;},
-            [this](std::uintptr_t pointer){++identity_count;if(!pointer)throw g1r_mcp::HandlerError("invalid_memory","Null ScriptStruct");
+            [this](std::uintptr_t pointer){++identity_count;if(!pointer)throw sn2_mcp::HandlerError("invalid_memory","Null ScriptStruct");
                 require(pointer==structure || pointer==identity.object,"Identity запрошена для посторонней структуры");return identity;},
-            [this](std::uintptr_t pointer){++class_count;if(!valid_classes.contains(pointer))throw g1r_mcp::HandlerError("unsupported_linear_color_type","Неподтверждённый metaclass");},
+            [this](std::uintptr_t pointer){++class_count;if(!valid_classes.contains(pointer))throw sn2_mcp::HandlerError("unsupported_linear_color_type","Неподтверждённый metaclass");},
             [this](std::uintptr_t pointer){++path_count;require(pointer==identity.object,"Путь запрошен для другой структуры");return path;});
     }
 };
@@ -77,7 +77,7 @@ template<class Mutate> void changed_metadata(Mutate&& mutate) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const auto ordinary=layout();std::array<int,4> order{0,1,2,3};
         do {auto permuted=ordinary;for(int i=0;i<4;++i)permuted.components[static_cast<std::size_t>(i)]=ordinary.components[static_cast<std::size_t>(order[static_cast<std::size_t>(i)])];
@@ -127,7 +127,7 @@ int main() {
         {ReflectedMemory memory;memory.names[10]="Color";reject("unsupported_linear_color_type",[&]{memory.capture();});}
         {ReflectedMemory memory;memory.set(ReflectedMemory::structure+0x40,std::uintptr_t{0x9000});reject("unsupported_linear_color_layout",[&]{memory.capture();});}
         {ReflectedMemory memory;memory.set(ReflectedMemory::structure+0x58,std::int32_t{24});reject("unsupported_linear_color_layout",[&]{memory.capture();});}
-        {ReflectedMemory memory;memory.set(ReflectedMemory::structure+0x5c,std::int32_t{8});reject("unsupported_linear_color_layout",[&]{memory.capture();});}
+        {ReflectedMemory memory;memory.set(ReflectedMemory::structure+0x5c,std::int32_t{0xA50000|(8)});reject("unsupported_linear_color_layout",[&]{memory.capture();});}
         {ReflectedMemory memory;memory.set(ReflectedMemory::structure+0x50,std::uintptr_t{});reject("unsupported_linear_color_layout",[&]{memory.capture();});}
         for(const auto next:std::array<std::uintptr_t,3>{ReflectedMemory::head,ReflectedMemory::outer,ReflectedMemory::head+0x100}) {
             ReflectedMemory memory;memory.set(ReflectedMemory::head+0x118,next);reject("unsupported_linear_color_layout",[&]{memory.capture();});

@@ -1,4 +1,4 @@
-#include <g1r_mcp/object_serial.hpp>
+#include <sn2_mcp/object_serial.hpp>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -10,7 +10,7 @@ void require(bool condition,const char* message) {
 }
 }
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const ObjectSerialIdentity original{0x1000,0x2000,9,71,10,2,33,20};
         require(same_serial_identity(original,original),"Неизменённая identity потеряна");

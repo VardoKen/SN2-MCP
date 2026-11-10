@@ -38,12 +38,11 @@ class MCPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(source.parent.parent),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    tool = next(tool for tool in (await client.list_tools()).tools if tool.name == "g1r_object_properties")
+                    tool = next(tool for tool in (await client.list_tools()).tools if tool.name == "sn2_object_properties")
                     schema = tool.input_schema["properties"]
                     self.assertEqual(schema["limit"]["default"], 50)
                     names_schema = schema["property_names"]["anyOf"]
@@ -51,11 +50,11 @@ class MCPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(next(option for option in names_schema if option["type"] == "array")["items"]["type"], "string")
                     self.assertTrue(tool.annotations.read_only_hint)
                     for limit in limits:
-                        result = await client.call_tool("g1r_object_properties", {
+                        result = await client.call_tool("sn2_object_properties", {
                             "handle": handle, "limit": limit, "property_names": names})
                         self.assertFalse(result.is_error, result.content)
                         self.assertEqual(result.structured_content, selected)
-                    following = await client.call_tool("g1r_native_status", {})
+                    following = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(following.is_error, following.content)
                     self.assertEqual(following.structured_content, status)
             self.assertEqual(native.connections, 1)
@@ -120,14 +119,13 @@ class MCPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    properties_tool = tools["g1r_object_properties"]
-                    invoke_tool = tools["g1r_invoke"]
+                    properties_tool = tools["sn2_object_properties"]
+                    invoke_tool = tools["sn2_invoke"]
                     self.assertTrue(properties_tool.annotations.read_only_hint)
                     self.assertFalse(invoke_tool.annotations.read_only_hint)
                     self.assertTrue(invoke_tool.annotations.destructive_hint)
@@ -143,36 +141,36 @@ class MCPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(response.structured_content, expected)
                         return response.structured_content
 
-                    await successful("g1r_object_properties", {"handle": handle}, old_properties)
-                    await successful("g1r_invoke", {"handle": handle, "function": "ReadMarker"}, old_return)
-                    await successful("g1r_invoke", {"handle": handle, "function": "ReadMarker",
+                    await successful("sn2_object_properties", {"handle": handle}, old_properties)
+                    await successful("sn2_invoke", {"handle": handle, "function": "ReadMarker"}, old_return)
+                    await successful("sn2_invoke", {"handle": handle, "function": "ReadMarker",
                                      "arguments": None, "expected_signature_token": None}, old_return)
-                    read = await successful("g1r_object_functions", {"handle": handle, "function_query": "EchoName"}, signature)
+                    read = await successful("sn2_object_functions", {"handle": handle, "function_query": "EchoName"}, signature)
                     token = read["functions"][0]["signature_token"]
-                    await successful("g1r_invoke", {"handle": handle, "function": "EchoName", "arguments": arguments,
+                    await successful("sn2_invoke", {"handle": handle, "function": "EchoName", "arguments": arguments,
                                      "expected_signature_token": token}, echoed)
-                    selected_response = await successful("g1r_object_properties", {"handle": handle, "limit": 3, "property_names": names}, selected)
+                    selected_response = await successful("sn2_object_properties", {"handle": handle, "limit": 3, "property_names": names}, selected)
                     self.assertEqual([item["name"] for item in selected_response["items"]], names)
                     self.assertNotIn("properties", selected_response)
 
                     # Неверные типы остаются в schema-validation и не достигают native.
                     before = len(native.requests)
                     for tool, params in (
-                        ("g1r_invoke", {"handle": handle, "function": "EchoName", "expected_signature_token": True}),
-                        ("g1r_invoke", {"handle": handle, "function": "EchoName", "expected_signature_token": 17}),
-                        ("g1r_object_properties", {"handle": handle, "property_names": ["StoredEntry", 42]}),
-                        ("g1r_object_properties", {"handle": handle, "property_names": "StoredEntry"}),
+                        ("sn2_invoke", {"handle": handle, "function": "EchoName", "expected_signature_token": True}),
+                        ("sn2_invoke", {"handle": handle, "function": "EchoName", "expected_signature_token": 17}),
+                        ("sn2_object_properties", {"handle": handle, "property_names": ["StoredEntry", 42]}),
+                        ("sn2_object_properties", {"handle": handle, "property_names": "StoredEntry"}),
                     ):
                         response = await client.call_tool(tool, params)
                         self.assertTrue(response.is_error, response.content)
                     self.assertEqual(len(native.requests), before)
 
                     for index, tool, params, code in (
-                        (6, "g1r_invoke", {"handle": handle, "function": "EchoName", "arguments": arguments,
+                        (6, "sn2_invoke", {"handle": handle, "function": "EchoName", "arguments": arguments,
                                           "expected_signature_token": token}, "signature_changed"),
-                        (7, "g1r_invoke", {"handle": handle, "function": "EchoName", "arguments": arguments,
+                        (7, "sn2_invoke", {"handle": handle, "function": "EchoName", "arguments": arguments,
                                           "expected_signature_token": ""}, "invalid_signature_token"),
-                        (8, "g1r_object_properties", {"handle": handle, "property_names": []}, "invalid_property_names"),
+                        (8, "sn2_object_properties", {"handle": handle, "property_names": []}, "invalid_property_names"),
                     ):
                         response = await client.call_tool(tool, params)
                         self.assertTrue(response.is_error, response.content)
@@ -182,7 +180,7 @@ class MCPFunctionContractTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["effect"], no_effect)
                         self.assertEqual(error["request_id"], native.requests[index]["id"])
-                    await successful("g1r_native_status", {}, status)
+                    await successful("sn2_native_status", {}, status)
             self.assertEqual(native.connections, 1)
             self.assertEqual([request["op"] for request in native.requests], [step["op"] for step in steps])
             self.assertEqual(len({request["id"] for request in native.requests}), len(steps))

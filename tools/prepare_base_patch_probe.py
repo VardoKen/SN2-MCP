@@ -19,9 +19,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from g1r_mcp.packages import PackageError, validate_package
-from g1r_mcp.patches import ScriptPatchBuilder, PatchError
-from g1r_mcp.workspace import (PackageWorkspace, WorkspaceError, _checked,
+from sn2_mcp.packages import PackageError, validate_package
+from sn2_mcp.patches import ScriptPatchBuilder, PatchError
+from sn2_mcp.workspace import (PackageWorkspace, WorkspaceError, _checked,
                                _destination_lock, _guard_directories, _read_bytes)
 
 PACKAGE_NAME = "G1RMCPBasePatchProbe"

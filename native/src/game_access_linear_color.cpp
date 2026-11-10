@@ -1,8 +1,8 @@
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/game_memory.hpp"
-#include "g1r_mcp/linear_color_layout.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/game_memory.hpp"
+#include "sn2_mcp/linear_color_layout.hpp"
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 
 linear_color_layout::Snapshot GameAccess::capture_linear_color_parameter(std::uintptr_t field,int size,int dim) const {
     const auto capture=[&] {
@@ -20,4 +20,4 @@ linear_color_layout::Snapshot GameAccess::capture_linear_color_parameter(std::ui
     return before;
 }
 
-} // namespace g1r_mcp
+} // namespace sn2_mcp

@@ -8,8 +8,8 @@ from unittest.mock import patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -66,7 +66,7 @@ class HTTPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             backend = NativeClient(port=native.port)
             self.addCleanup(backend.close)
-            with patch("g1r_mcp.server.NativeClient", return_value=backend) as factory:
+            with patch("sn2_mcp.server.NativeClient", return_value=backend) as factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        transport="streamable-http")
             factory.assert_called_once_with(port=native.port)
@@ -111,9 +111,9 @@ class HTTPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
                     first_session = await initialize(first, "first-scalar-client")
                     second_session = await initialize(second, "second-scalar-client")
                     self.assertNotEqual(first_session, second_session)
-                    lease = await call(first, first_session, "g1r_session_status", {})
+                    lease = await call(first, first_session, "sn2_session_status", {})
                     self.assertFalse(lease["structuredContent"]["claimed"])
-                    success = await call(first, first_session, "g1r_invoke", {
+                    success = await call(first, first_session, "sn2_invoke", {
                         "handle": handle, "function": "WriteScalars", "arguments": arguments,
                         "expected_signature_token": token})
                     self.assertFalse(success.get("isError", False), success)
@@ -129,7 +129,7 @@ class HTTPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
                         (1, second, second_session, invalid_arguments, "invalid_argument", no_effect),
                         (2, first, first_session, arguments, "game_result_error", unknown_effect),
                     ):
-                        failed = await call(client, session, "g1r_invoke", {
+                        failed = await call(client, session, "sn2_invoke", {
                             "handle": handle, "function": "WriteScalars", "arguments": input_arguments,
                             "expected_signature_token": token})
                         self.assertTrue(failed["isError"])
@@ -139,11 +139,11 @@ class HTTPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(error["effect"], effect)
                         self.assertIs(error["may_have_executed"], effect["may_have_executed"])
                         self.assertEqual(error["request_id"], native.requests[index]["id"])
-                    after = await call(second, second_session, "g1r_native_status", {})
+                    after = await call(second, second_session, "sn2_native_status", {})
                     self.assertFalse(after.get("isError", False), after)
                     self.assertEqual(after["structuredContent"], status)
                     self.assertEqual(native.connections, 1)
-                    lease = await call(second, second_session, "g1r_session_status", {})
+                    lease = await call(second, second_session, "sn2_session_status", {})
                     self.assertFalse(lease["structuredContent"]["claimed"])
             self.assertEqual(native.connections, 1)
             self.assertEqual([item["op"] for item in native.requests], ["invoke", "invoke", "invoke", "status"])

@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from g1r_mcp.snapshots import SnapshotError, compare_snapshots
+from sn2_mcp.snapshots import SnapshotError, compare_snapshots
 
 
 def prop(name="Enabled", value=True, kind="BoolProperty"):
@@ -37,6 +37,24 @@ def enum_property(value=0, *, status="matched", label="EProbe::None", count=1,
 
 
 class SnapshotComparisonTests(unittest.TestCase):
+    def test_native_null_generations_and_reflection_changes(self):
+        before = snapshot()
+        before.update(world_generation=2, script_generation=None, reflection_generation=None)
+        same = compare_snapshots(before, copy.deepcopy(before))
+        self.assertTrue(same["equal_selected_values"])
+        self.assertIsNone(same["before_reflection_generation"])
+        after = copy.deepcopy(before)
+        after["reflection_generation"] = 1
+        changed = compare_snapshots(before, after)
+        self.assertFalse(changed["comparable"])
+        self.assertEqual(changed["reason"], "different_reflection_generation")
+        self.assertFalse(changed["coverage"]["complete"])
+        self.assertIsNone(changed["equal_selected_values"])
+        for invalid in (True, -1, 1.5, "1"):
+            malformed = copy.deepcopy(before)
+            malformed["reflection_generation"] = invalid
+            self.assert_invalid(malformed)
+
     def assert_invalid(self, candidate, code="invalid_snapshot"):
         with self.assertRaises(SnapshotError) as failure:
             compare_snapshots(candidate, snapshot())

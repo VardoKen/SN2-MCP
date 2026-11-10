@@ -9,9 +9,9 @@ from unittest.mock import Mock, call, patch
 
 from mcp.server.mcpserver.exceptions import ToolError
 
-from g1r_mcp.development import DevelopmentService
-from g1r_mcp.native_client import NativeError
-from g1r_mcp.server import create_server
+from sn2_mcp.development import DevelopmentService
+from sn2_mcp.native_client import NativeError
+from sn2_mcp.server import create_server
 
 
 class RuntimeCompileDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
@@ -38,10 +38,10 @@ class RuntimeCompileDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             modkit_root=self.modkit, game_root=self.game, executor=self.executor, powershell="isolated-powershell")
         self.addCleanup(self.service.close)
         self.native = Mock()
-        native_patch = patch("g1r_mcp.server.NativeClient", return_value=self.native)
+        native_patch = patch("sn2_mcp.server.NativeClient", return_value=self.native)
         self.native_factory = native_patch.start()
         self.addCleanup(native_patch.stop)
-        service_patch = patch("g1r_mcp.server.DevelopmentService", return_value=self.service)
+        service_patch = patch("sn2_mcp.server.DevelopmentService", return_value=self.service)
         service_patch.start()
         self.addCleanup(service_patch.stop)
         self.server = create_server(self.modkit, self.workspace, game_root=self.game,
@@ -51,7 +51,7 @@ class RuntimeCompileDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             "expected_manifest_sha256": self.manifest["manifest_sha256"], "show_script_errors": True}
 
     async def tool(self, arguments):
-        result = await self.server.call_tool("g1r_compile_diagnostics", arguments)
+        result = await self.server.call_tool("sn2_compile_diagnostics", arguments)
         self.assertFalse(result.is_error, result.content)
         return result.structured_content
 
@@ -232,7 +232,7 @@ class RuntimeCompileDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
         self.native.request.side_effect = NativeError("compiler_unavailable", "Нет runtime formatter",
                                                       False, "request-compiler-1", effect)
         with self.assertRaises(ToolError) as caught:
-            await self.server.call_tool("g1r_compile_diagnostics", self.arguments)
+            await self.server.call_tool("sn2_compile_diagnostics", self.arguments)
         rendered = str(caught.exception)
         error = json.loads(rendered[rendered.index("{"):])
         self.assertEqual(error["code"], "compiler_unavailable")

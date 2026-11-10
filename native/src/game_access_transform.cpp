@@ -1,8 +1,8 @@
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/game_memory.hpp"
-#include "g1r_mcp/transform_layout.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/game_memory.hpp"
+#include "sn2_mcp/transform_layout.hpp"
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 
 transform_layout::Snapshot GameAccess::capture_transform_parameter(std::uintptr_t field,int size,int dim) const {
     const auto capture=[&] {
@@ -20,4 +20,4 @@ transform_layout::Snapshot GameAccess::capture_transform_parameter(std::uintptr_
     return before;
 }
 
-} // namespace g1r_mcp
+} // namespace sn2_mcp

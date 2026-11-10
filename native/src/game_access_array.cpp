@@ -1,20 +1,173 @@
-#include "g1r_mcp/game_access.hpp"
-#include "g1r_mcp/game_memory.hpp"
-#include "g1r_mcp/array_page.hpp"
-#include "g1r_mcp/scalar_arguments.hpp"
-#include "g1r_mcp/scalar_struct_values.hpp"
-#include "g1r_mcp/object_array_parameter_layout.hpp"
-#include "g1r_mcp/string_return.hpp"
+#include "sn2_mcp/game_access.hpp"
+#include "sn2_mcp/game_memory.hpp"
+#include "sn2_mcp/array_page.hpp"
+#include "sn2_mcp/scalar_arguments.hpp"
+#include "sn2_mcp/scalar_struct_values.hpp"
+#include "sn2_mcp/object_array_parameter_layout.hpp"
+#include "sn2_mcp/string_return.hpp"
+#include "sn2_mcp/cleanup_once.hpp"
+#include "sn2_mcp/enum_arguments.hpp"
+#include "sn2_mcp/function_contract.hpp"
+#include "sn2_mcp/aligned_parameter_buffer.hpp"
+#include "sn2_mcp/string_input_lifetime.hpp"
 #include <array>
 #include <cstring>
 #include <limits>
+#include <functional>
 #include <optional>
 #include <set>
 #include <span>
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 using json=nlohmann::json;
 using game_memory::read;
+
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+namespace {
+bool array_fixture_allocate(std::uintptr_t address,std::size_t bytes,std::uint32_t alignment,void** result) noexcept {
+    __try{*result=reinterpret_cast<void*(__fastcall*)(void*,std::size_t,std::uint32_t)>(address)(nullptr,bytes,alignment);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+bool array_fixture_free(std::uintptr_t address,void* pointer) noexcept {
+    __try{reinterpret_cast<void(__fastcall*)(void*)>(address)(pointer);return true;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+}
+json GameAccess::development_array_fixture(const json& params) {
+    if(!bindings_.realloc.available() || !bindings_.free.available())
+        throw HandlerError("fixture_allocator_unavailable","The target fixture requires discovered engine Realloc and Free");
+    auto fixture=params;fixture["_isolated_array_fixture"]=true;
+    const auto names_before=name_constructions_started_.load();
+    try{return read_array(fixture);}
+    catch(const HandlerError& error) {
+        auto details=error.details();details["fixture"]=true;
+        if(name_constructions_started_.load()!=names_before)details["name_pool_may_have_changed"]=true;
+        throw HandlerError(error.code(),error.what(),std::move(details));
+    }catch(...) {
+        throw HandlerError("fixture_failed","The isolated array fixture did not complete",
+            {{"executed",false},{"may_have_executed",false},{"fixture",true},
+             {"name_pool_may_have_changed",name_constructions_started_.load()!=names_before}});
+    }
+}
+json GameAccess::development_owned_output_fixture(const json& params) {
+    if(!bindings_.realloc.available() || !bindings_.free.available())
+        throw HandlerError("fixture_allocator_unavailable","The fixture requires discovered engine Realloc and Free");
+    const auto handle=params.at("handle").get<std::string>(),function_name=params.at("function").get<std::string>();
+    const auto parameter_name=params.value("parameter",std::string("ReturnValue"));
+    auto object=resolve(handle);std::uintptr_t function{},owner{};std::set<std::uintptr_t> owners;
+    for(auto klass=reinterpret_cast<std::uintptr_t>(validate_object(object).object_class);klass&&!function;klass=read<std::uintptr_t>(klass+0x40)) {
+        if(!owners.insert(klass).second)throw HandlerError("fixture_metadata_cycle","The function owner chain contains a cycle");
+        std::set<std::uintptr_t> fields;
+        for(auto field=read<std::uintptr_t>(klass+0x48);field;field=read<std::uintptr_t>(field+0x28)) {
+            if(!fields.insert(field).second)throw HandlerError("fixture_metadata_cycle","The UFunction chain contains a cycle");
+            if(object_name(reinterpret_cast<void*>(field))==function_name
+               && class_is(reinterpret_cast<void*>(field),"/Script/CoreUObject.Function")){function=field;owner=klass;break;}
+        }
+    }
+    if(!function)throw HandlerError("function_not_found","The fixture's reflected UFunction was not found");
+    const auto contract=capture_function_contract(object,owner,function,handle);
+    std::uintptr_t field{};
+    for(const auto& captured:contract.at("fields"))
+        if((captured.at("flags").get<std::uint64_t>()&0x80) && name(captured.at("name").get<std::uint64_t>())==parameter_name)
+            field=captured.at("pointer").get<std::uintptr_t>();
+    if(!field || game_memory::field_type(field,[this](auto value){return name(value);})!="ArrayProperty")
+        throw HandlerError("unsupported_fixture_metadata","The fixture requires an actual ArrayProperty return or pure output");
+    const auto flags=read<std::uint64_t>(field+0x38);const bool output=!(flags&0x400);
+    const auto metadata=capture_scalar_array_return(field,read<int32_t>(field+0x34),read<int32_t>(field+0x30),output);
+    const auto type=metadata.at("scalar_type").get<std::string>();
+    const auto stride=metadata.at("inner").at("element_size").get<std::size_t>();
+    if(type!="IntProperty" && type!="StructProperty" && type!="NameProperty" && type!="StrProperty")
+        throw HandlerError("unsupported_fixture_element","The owned fixture supports actual int32, POD DTO, FName and FString arrays");
+    aligned_parameter_buffer::Buffer buffer(contract.at("header").at("computed_extent").get<std::size_t>());
+    const auto offset=metadata.at("outer").at("offset").get<std::size_t>();
+    if(offset>buffer.size() || buffer.size()-offset<sizeof(ArrayHeader))
+        throw HandlerError("unsupported_fixture_layout","The captured array header exceeds the parameter buffer");
+    std::vector<std::byte> payload(stride*3);
+    std::array<StringHeader,3> string_headers{};string_input_lifetime::Ledger strings;strings.prepare(0,3);
+    bool strings_registered=false;void* outer{};CleanupOnce<bool> cleanup;
+    const auto names_before=name_constructions_started_.load();
+    auto release=[&] {
+        return cleanup.run([&]() noexcept {
+            bool confirmed=true;
+            if(strings_registered)confirmed=strings.release([&](std::uintptr_t pointer){return array_fixture_free(base_+bindings_.free.rva,reinterpret_cast<void*>(pointer));}).confirmed;
+            else for(const auto& header:string_headers)
+                if(header.data && !array_fixture_free(base_+bindings_.free.rva,reinterpret_cast<void*>(header.data)))confirmed=false;
+            if(outer && !array_fixture_free(base_+bindings_.free.rva,outer))confirmed=false;
+            return confirmed;
+        });
+    };
+    auto allocate=[&](std::size_t bytes,std::uint32_t alignment,void** destination) {
+        if(!array_fixture_allocate(base_+bindings_.realloc.rva,bytes,alignment,destination))
+            throw HandlerError("fixture_allocator_fault","The target allocator raised an exception; allocation effect is unknown",
+                {{"executed",false},{"may_have_executed",false},{"do_not_retry",true},{"fixture_allocation_effect_unknown",true}});
+        if(!*destination)throw HandlerError("fixture_allocation_failed","The target allocator did not return fixture storage");
+    };
+    try {
+        for(std::size_t index=0;index<3;++index) {
+            auto* destination=payload.data()+index*stride;
+            if(type=="IntProperty") {
+                const auto integer=index==0?std::numeric_limits<std::int32_t>::min():index==1?0:std::numeric_limits<std::int32_t>::max();
+                std::memcpy(destination,&integer,sizeof(integer));
+            }else if(type=="NameProperty") {
+                const auto packed=encode_name_text({{"name","SN2MCPOwned"+std::to_string(index)}});std::memcpy(destination,&packed,sizeof(packed));
+            }else if(type=="StructProperty") {
+                const auto& captured=metadata.at("struct");std::function<json(const json&)> neutral;
+                neutral=[&](const json& child)->json {
+                    const auto child_type=child.at("type").get<std::string>();
+                    if(child_type=="StructProperty") {json value=json::object();for(const auto& component:child.at("children"))value[component.at("name").get<std::string>()]=neutral(component);return value;}
+                    if(child_type=="BoolProperty")return index==1;
+                    if(child_type=="NameProperty")return {{"name","SN2MCPOwned"+std::to_string(index)}};
+                    if(child_type=="FloatProperty" || child_type=="DoubleProperty")return index==0?1.25:index==1?-2.5:3.0;
+                    return index;
+                };
+                const auto encoded=encode_pod_struct(captured,neutral(captured));std::memcpy(destination,encoded.data(),encoded.size());
+            }else {
+                // Synthetic ownership follows from these allocations, not a
+                // claimed ProcessEvent. Empty strings retain the engine layout.
+                const std::u16string source=index==1?std::u16string{}:std::u16string(u"SN2 \u540d\u5b57");
+                auto& header=string_headers[index];
+                if(!source.empty()) {
+                    void* memory{};allocate((source.size()+1)*sizeof(char16_t),alignof(char16_t),&memory);
+                    header={reinterpret_cast<std::uintptr_t>(memory),static_cast<int32_t>(source.size()+1),static_cast<int32_t>(source.size()+1)};
+                    if(!game_memory::copy(memory,source.c_str(),static_cast<std::size_t>(header.count)*sizeof(char16_t)))
+                        throw HandlerError("invalid_fixture_memory","The fixture's FString allocation is unavailable");
+                }
+                std::memcpy(destination,&header,sizeof(header));
+            }
+        }
+        strings.add_owned_range(string_headers);strings_registered=true;
+        const auto alignment=type=="StructProperty"?metadata.at("struct").at("min_alignment").get<std::uint32_t>():16;
+        allocate(payload.size(),alignment,&outer);
+        if(!game_memory::copy(outer,payload.data(),payload.size()))throw HandlerError("invalid_fixture_memory","The fixture's array allocation is unavailable");
+        const ArrayHeader header{reinterpret_cast<std::uintptr_t>(outer),3,3};std::memcpy(buffer.data()+offset,&header,sizeof(header));
+        require_same_function_contract(contract,capture_function_contract(object,owner,function,handle));
+        const auto copied=read_scalar_array_return(field,reinterpret_cast<std::uintptr_t>(buffer.data()+offset),metadata);
+        require_same_function_contract(contract,capture_function_contract(object,owner,function,handle));
+        const bool released=release();
+        if(!released)throw HandlerError("fixture_cleanup_unconfirmed","The fixture's owned allocations could not be released",
+            {{"executed",false},{"may_have_executed",false},{"do_not_retry",true},{"fixture_cleanup_confirmed",false}});
+        return {{"source","development_fixture"},{"function",function_name},{"parameter",parameter_name},
+            {"direction",output?"output":"return"},{"array",metadata.at("public")},{"decoded",copied},
+            {"thread_id",GetCurrentThreadId()},{"tick_count",ticks_.load()},
+            {"fixture",{{"live_object_modified",false},{"process_event_called",false},{"cleanup_confirmed",true},
+                {"storage","engine_allocated_isolated_output_buffer"},{"string_allocations",type=="StrProperty"?2:0},
+                {"name_pool_may_have_changed",name_constructions_started_.load()!=names_before}}}};
+    }catch(const HandlerError& error) {
+        auto details=error.details();const bool released=release();
+        const bool unknown_allocation=details.value("fixture_allocation_effect_unknown",false);
+        details["known_fixture_allocations_cleanup_confirmed"]=released;
+        details["fixture_cleanup_confirmed"]=released&&!unknown_allocation;details["process_event_called"]=false;
+        details["name_pool_may_have_changed"]=name_constructions_started_.load()!=names_before;
+        if(!details.at("fixture_cleanup_confirmed").get<bool>())details["do_not_retry"]=true;
+        throw HandlerError(error.code(),error.what(),std::move(details));
+    }catch(...) {
+        const bool released=release();
+        throw HandlerError("fixture_failed","The isolated owned output fixture did not complete",
+            {{"executed",false},{"may_have_executed",false},{"do_not_retry",!released},{"fixture_cleanup_confirmed",released},
+             {"name_pool_may_have_changed",name_constructions_started_.load()!=names_before}});
+    }
+}
+#endif
 
 json GameAccess::capture_object_array_return(uintptr_t field,int size,int dim,bool output) const {
     const auto flags=read<uint64_t>(field+0x38);
@@ -291,7 +444,7 @@ json GameAccess::read_array(const json& params) {
             validate_class(reinterpret_cast<void*>(structure.identity.object_class));
             structure.path=object_path(reinterpret_cast<void*>(structure.structure));structure.struct_name=name(structure.identity.name);
             structure.head=read<uintptr_t>(structure.structure+0x50);structure.super=read<uintptr_t>(structure.structure+0x40);
-            structure.layout={read<int32_t>(structure.structure+0x58),read<int32_t>(structure.structure+0x5c),structure.super!=0,{}};
+            structure.layout={read<int32_t>(structure.structure+0x58),read<int16_t>(structure.structure+0x5c),structure.super!=0,{}};
             if(result.stride<1 || structure.layout.properties_size!=result.stride || structure.super || structure.layout.min_alignment<1
                || (structure.layout.min_alignment&(structure.layout.min_alignment-1)) || result.stride%structure.layout.min_alignment)
                 throw HandlerError("unsupported_array_layout","Struct elements require matching reflected size, alignment, and own fields");
@@ -367,7 +520,90 @@ json GameAccess::read_array(const json& params) {
     const auto object_address=reinterpret_cast<uintptr_t>(object);
     if(object_address>std::numeric_limits<uintptr_t>::max()-static_cast<uintptr_t>(metadata.offset)-16)
         throw HandlerError("invalid_array_header","The array header address overflows");
-    const auto header_address=object_address+metadata.offset;
+    auto header_address=object_address+metadata.offset;
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+    const bool fixture=params.value("_isolated_array_fixture",false);
+    const auto fixture_names_before=name_constructions_started_.load();
+    ArrayHeader isolated;void* fixture_memory{};CleanupOnce<bool> fixture_cleanup;
+    auto release_fixture=[&] {
+        return fixture_cleanup.run([&]() noexcept {return !fixture_memory || array_fixture_free(base_+bindings_.free.rva,fixture_memory);});
+    };
+    if(fixture) {
+        if(metadata.inner_offset!=0)
+            throw HandlerError("unsupported_fixture_layout","The isolated array fixture requires Inner offset zero");
+        // Reuse the actual Inner/struct metadata. Only the local read address
+        // changes; the selected UObject and every engine header stay untouched.
+        const auto bytes=static_cast<std::size_t>(metadata.stride)*3;
+        const auto alignment=metadata.element_struct?metadata.element_struct->layout.min_alignment:16;
+        std::vector<std::byte> payload(bytes);
+        json structure=nullptr;
+        if(metadata.element_struct)structure=capture_pod_struct_parameter(metadata.inner,metadata.stride,1);
+        std::function<json(const json&,std::size_t)> neutral;
+        neutral=[&](const json& captured,std::size_t ordinal)->json {
+            const auto type=captured.at("type").get<std::string>();
+            if(type=="StructProperty") {
+                json value=json::object();
+                for(const auto& child:captured.at("children"))value[child.at("name").get<std::string>()]=neutral(child,ordinal);
+                return value;
+            }
+            if(type=="BoolProperty")return ordinal==1;
+            if(type=="NameProperty")return {{"name","SN2MCPArray"+std::to_string(ordinal)}};
+            if(type=="FloatProperty" || type=="DoubleProperty")return ordinal==0?0.0:ordinal==1?1.25:-2.5;
+            if(type=="IntProperty")return ordinal==0?json(std::numeric_limits<std::int32_t>::min()):ordinal==1?json(0):json(std::numeric_limits<std::int32_t>::max());
+            if(type=="Int64Property")return ordinal==0?json(std::numeric_limits<std::int64_t>::min()):ordinal==1?json(0):json(std::numeric_limits<std::int64_t>::max());
+            if(type=="UInt32Property")return ordinal==0?json(std::uint32_t{}):ordinal==1?json(std::uint32_t{1}):json(std::numeric_limits<std::uint32_t>::max());
+            if(type=="UInt64Property")return ordinal==0?json(std::uint64_t{}):ordinal==1?json(std::uint64_t{1}):json(std::numeric_limits<std::uint64_t>::max());
+            if(type=="EnumProperty" || type=="ByteProperty")return ordinal==0?0:ordinal==1?1:255;
+            throw HandlerError("unsupported_fixture_element","The isolated array fixture requires supported scalar, FName, reference or POD DTO elements");
+        };
+        for(std::size_t ordinal=0;ordinal<3;++ordinal) {
+            auto* destination=payload.data()+ordinal*metadata.stride;
+            const auto write=[destination](auto value){std::memcpy(destination,&value,sizeof(value));};
+            const auto& type=metadata.element_type;
+            if(metadata.element_struct) {
+                const auto encoded=encode_pod_struct(structure,neutral(structure,ordinal));
+                std::memcpy(destination,encoded.data(),encoded.size());
+            }else if(type=="NameProperty")write(encode_name_text({{"name","SN2MCPArray"+std::to_string(ordinal)}}));
+            else if(type=="ObjectProperty") {
+                void* reference{};
+                if(ordinal!=1 && params.contains("value_handle") && !params.at("value_handle").is_null())reference=resolve(params.at("value_handle").get<std::string>());
+                if(reference && !is_compatible_object(reference,reinterpret_cast<void*>(metadata.auxiliary.at(0))))
+                    throw HandlerError("incompatible_fixture_reference","The fixture reference does not match the reflected property class");
+                write(reinterpret_cast<std::uintptr_t>(reference));
+            }else if(type=="BoolProperty") {
+                scalar_outputs::Layout boolean{type,metadata.stride,metadata.inner_dim};
+                boolean.field_size=read<std::uint8_t>(metadata.inner+0x70);boolean.byte_offset=read<std::uint8_t>(metadata.inner+0x71);
+                boolean.byte_mask=read<std::uint8_t>(metadata.inner+0x72);boolean.field_mask=read<std::uint8_t>(metadata.inner+0x73);
+                scalar_outputs::validate_layout(boolean);
+                destination[boolean.byte_offset]=static_cast<std::byte>(ordinal==1?boolean.byte_mask:0);
+            }else if(type=="IntProperty")write(int32_argument(neutral({{"type",type}},ordinal)));
+            else if(type=="Int64Property")write(int64_argument(neutral({{"type",type}},ordinal)));
+            else if(type=="UInt32Property")write(uint32_argument(neutral({{"type",type}},ordinal)));
+            else if(type=="UInt64Property")write(uint64_argument(neutral({{"type",type}},ordinal)));
+            else if(type=="FloatProperty")write(float_argument(neutral({{"type",type}},ordinal)));
+            else if(type=="DoubleProperty")write(double_argument(neutral({{"type",type}},ordinal)));
+            else if(type=="EnumProperty" || type=="ByteProperty") {
+                const auto layout=enum_layout(type,metadata.stride,metadata.inner);
+                const auto encoded=enum_arguments::encode_integer(layout.underlying_type,metadata.stride,neutral({{"type",type}},ordinal));
+                std::memcpy(destination,encoded.bytes.data(),encoded.size);
+            }else throw HandlerError("unsupported_fixture_element","The isolated array fixture element is unsupported");
+        }
+        if(!structure.is_null() && capture_pod_struct_parameter(metadata.inner,metadata.stride,1)!=structure)
+            throw HandlerError("fixture_metadata_changed","The fixture DTO metadata changed during preparation");
+        if(!array_fixture_allocate(base_+bindings_.realloc.rva,bytes,static_cast<std::uint32_t>(alignment),&fixture_memory))
+            throw HandlerError("fixture_allocator_fault","The target allocator raised an exception; allocation effect is unknown",
+                {{"executed",false},{"may_have_executed",false},{"do_not_retry",true},{"fixture_allocation_effect_unknown",true}});
+        if(!fixture_memory)throw HandlerError("fixture_allocation_failed","The target allocator did not return fixture storage");
+        if(!game_memory::copy(fixture_memory,payload.data(),payload.size())) {
+            const bool released=release_fixture();
+            throw HandlerError("invalid_fixture_memory","The target allocator returned unavailable fixture storage",
+                {{"executed",false},{"may_have_executed",false},{"do_not_retry",!released},{"fixture_cleanup_confirmed",released}});
+        }
+        isolated={reinterpret_cast<std::uintptr_t>(fixture_memory),3,3};
+        header_address=reinterpret_cast<std::uintptr_t>(&isolated);
+    }
+    try {
+#endif
     const auto header=read<ArrayHeader>(header_address);
     const auto page=array_page(header,metadata.stride,metadata.inner_dim,offset,limit);
     std::vector<std::byte> copied(page.bytes);
@@ -466,7 +702,32 @@ json GameAccess::read_array(const json& params) {
             {"properties_size",structure.layout.properties_size},{"min_alignment",structure.layout.min_alignment},
             {"components",std::move(components)}};
     }
+#if defined(SN2_MCP_DEVELOPMENT_PROBES)
+    if(fixture) {
+        const bool released=release_fixture();
+        result.update({{"source","development_fixture"},{"fixture",{{"live_object_modified",false},
+            {"storage","engine_allocated_isolated_array_header"},{"cleanup_confirmed",released},
+            {"name_pool_may_have_changed",name_constructions_started_.load()!=fixture_names_before},{"process_event_called",false}}}});
+        if(!released)throw HandlerError("fixture_cleanup_unconfirmed","The isolated array allocation could not be released",
+            {{"executed",false},{"may_have_executed",false},{"fixture_cleanup_confirmed",false},{"do_not_retry",true}});
+    }
     return result;
+    }catch(const HandlerError& error) {
+        if(!fixture)throw;
+        auto details=error.details();const bool released=release_fixture();details["fixture_cleanup_confirmed"]=released;
+        if(!released)details["do_not_retry"]=true;
+        throw HandlerError(error.code(),error.what(),std::move(details));
+    }catch(...) {
+        if(fixture) {
+            const bool released=release_fixture();
+            throw HandlerError("fixture_failed","The isolated array fixture did not complete",
+                {{"executed",false},{"may_have_executed",false},{"do_not_retry",!released},{"fixture_cleanup_confirmed",released}});
+        }
+        throw;
+    }
+#else
+    return result;
+#endif
 }
 
-} // namespace g1r_mcp
+} // namespace sn2_mcp

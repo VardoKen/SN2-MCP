@@ -64,13 +64,12 @@ class MCPStringInputTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    invoke_schema = tools["g1r_invoke"].input_schema
+                    invoke_schema = tools["sn2_invoke"].input_schema
                     self.assertEqual(set(invoke_schema["properties"]),
                                      {"handle", "function", "arguments", "expected_signature_token", "timeout_seconds"})
                     self.assertEqual(set(invoke_schema["required"]), {"handle", "function"})
@@ -80,17 +79,15 @@ class MCPStringInputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(invoke_schema["properties"]["arguments"], {
                         "anyOf": [{"additionalProperties": True, "type": "object"}, {"type": "null"}],
                         "default": None, "title": "Arguments"})
-                    capabilities = await client.call_tool("g1r_capabilities", {})
+                    capabilities = await client.call_tool("sn2_capabilities", {})
                     self.assertFalse(capabilities.is_error, capabilities.content)
-                    string_input = capabilities.structured_content["invoke_arguments"]["string"]
-                    self.assertEqual(string_input["input_shape"], "string")
-                    self.assertEqual(string_input["passing"], "value_or_const_reference")
-                    self.assertFalse(string_input["const_reference_required"])
-                    self.assertTrue(string_input["by_value_input_supported"])
-                    self.assertEqual(string_input["runtime_passing"], "normalized_const_reference")
-                    self.assertEqual(string_input["runtime_passing_source"],
-                                     "current_unreal_angelscript_function_builder")
-                    listed = await client.call_tool("g1r_object_functions", {"handle": handle, "function_query": "EchoString"})
+                    self.assertEqual(capabilities.structured_content["accepted_types"], {})
+                    self.assertEqual(capabilities.structured_content["capabilities"]["target_abi"]["state"], "unverified")
+                    contract = next(entry for entry in capabilities.structured_content["tool_contracts"]
+                                    if entry["name"] == "sn2_invoke")
+                    self.assertIn("reflected_function_signature", contract["context"]["requires"])
+                    self.assertFalse(contract["availability"]["checked"])
+                    listed = await client.call_tool("sn2_object_functions", {"handle": handle, "function_query": "EchoString"})
                     self.assertFalse(listed.is_error, listed.content)
                     self.assertEqual(listed.structured_content, functions)
                     declaration = listed.structured_content["items"][0]
@@ -103,7 +100,7 @@ class MCPStringInputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(parameter["argument_constraints"], constraints)
                     token = declaration["signature_token"]
                     for index, value in enumerate(strings):
-                        response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoString",
+                        response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoString",
                             "arguments": {"Input": value}, "expected_signature_token": token})
                         self.assertFalse(response.is_error, response.content)
                         self.assertEqual(response.structured_content, results[index])
@@ -117,7 +114,7 @@ class MCPStringInputTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(received.encode("utf-16-le"), value.encode("utf-16-le"))
                     self.assertEqual(len(strings[-1].encode("utf-16-le")) // 2, 65536)
                     for offset, (value, code) in enumerate(rejected):
-                        response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoString",
+                        response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoString",
                             "arguments": {"Input": value}, "expected_signature_token": token})
                         self.assertTrue(response.is_error, response.content)
                         message = next(block.text for block in response.content if block.type == "text")
@@ -127,7 +124,7 @@ class MCPStringInputTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], native.requests[5 + offset]["id"])
                         self.assertEqual(native.requests[5 + offset]["params"]["arguments"]["Input"], value)
-                    response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "EchoString",
+                    response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "EchoString",
                         "arguments": {"Input": "Ошибка очистки 🐉"}, "expected_signature_token": token})
                     self.assertTrue(response.is_error, response.content)
                     message = next(block.text for block in response.content if block.type == "text")
@@ -136,7 +133,7 @@ class MCPStringInputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], unclear_cleanup)
                     self.assertIs(error["may_have_executed"], True)
                     self.assertEqual(error["request_id"], native.requests[7]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

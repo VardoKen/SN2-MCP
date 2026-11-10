@@ -17,8 +17,8 @@ import tempfile
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
-from g1r_mcp.packages import PackageError, validate_package
-from g1r_mcp.workspace import PackageWorkspace, WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
+from sn2_mcp.packages import PackageError, validate_package
+from sn2_mcp.workspace import PackageWorkspace, WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
 
 PACKAGE_NAME = "G1RMCPProbe"
 CLASS_NAME = "UG1RMCPCompileProbe"
@@ -126,7 +126,7 @@ def prepare_probe(workspace_root: Path, *, phase: str = "baseline",
             try:
                 if package.exists():
                     raise PackageError("already_exists", "The probe package already exists")
-                stage = Path(tempfile.mkdtemp(prefix=".g1r-mcp-probe-", dir=workspace))
+                stage = Path(tempfile.mkdtemp(prefix=".sn2-mcp-probe-", dir=workspace))
                 _checked_artifacts_path(stage, repository_root)
                 owned_directories["."] = _file_identity(stage)
                 with _guard_directories(stage, workspace):
@@ -188,7 +188,7 @@ def prepare_probe(workspace_root: Path, *, phase: str = "baseline",
         "reloaded": False,
         "launch_options": [f"-ModsDirectory={workspace.as_posix()}", f"-Mods={PACKAGE_NAME}"],
         "launch_options_effect": "Only the probe package from an external directory is selected in the current session",
-        "existing_launcher": str(REPOSITORY_ROOT / "tools" / "start_g1r_development.ps1"),
+        "existing_launcher": str(REPOSITORY_ROOT / "tools" / "start_sn2_development.ps1"),
         "launcher_accepts_package_options": True,
         "launcher_parameters": {"ModsDirectory": str(workspace), "Mods": [PACKAGE_NAME]},
         "expected": {
@@ -200,9 +200,9 @@ def prepare_probe(workspace_root: Path, *, phase: str = "baseline",
         },
         "verification_recipe": [
             "Enable the package using the specified launch_options during development launch through Steam",
-            "After the main menu, attach the existing DLL and confirm ready through g1r_native_status",
+            "After the main menu, attach the existing DLL and confirm ready through sn2_native_status",
             "Find the exact CDO by the expected object_name and class; absence means loading is unverified",
-            "Read g1r_object_functions and verify the name, absence of inputs, and an IntProperty return of size 4 before calling",
+            "Read sn2_object_functions and verify the name, absence of inputs, and an IntProperty return of size 4 before calling",
             "Call only ReadProbeValue with empty arguments; compare the result with expected.value",
             "For the explicit reload phase, replace only return 1 with return 2 using the baseline hash, then repeat signature/call verification",
         ],

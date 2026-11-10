@@ -10,9 +10,9 @@ from unittest.mock import Mock, patch
 import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
-from g1r_mcp.development import CommandResult, DevelopmentService
-from g1r_mcp.native_client import NativeClient
-from g1r_mcp.server import create_server
+from sn2_mcp.development import CommandResult, DevelopmentService
+from sn2_mcp.native_client import NativeClient
+from sn2_mcp.server import create_server
 from tests.test_mcp_observations import SessionNativeFixture
 
 
@@ -31,10 +31,10 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
             repository, workspace, modkit, game = (
                 root / "repository", root / "workspace", root / "Modkit", root / "game")
             (repository / "tools").mkdir(parents=True)
-            for name in ("game_process_state.ps1", "start_g1r_development.ps1",
-                         "stop_g1r_development.ps1", "load_native.ps1"):
+            for name in ("game_process_state.ps1", "start_sn2_development.ps1",
+                         "stop_sn2_development.ps1", "load_native.ps1"):
                 (repository / "tools" / name).write_text("# isolated executor\n", encoding="utf-8")
-            dll = repository / "build" / "native" / "Release" / "G1R_MCP.dll"
+            dll = repository / "build" / "native" / "Release" / "SN2_MCP.dll"
             dll.parent.mkdir(parents=True)
             dll.write_bytes(b"isolated companion DLL")
             workspace.mkdir()
@@ -73,10 +73,10 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(arguments[arguments.index("-ExpectedPid") + 1], str(current_process["pid"]))
                     return CommandResult(0, json.dumps({"state": "loaded", "process": current_process,
                         "dll_sha256": arguments[arguments.index("-ExpectedDllSha256") + 1]}))
-                if script == "stop_g1r_development.ps1":
+                if script == "stop_sn2_development.ps1":
                     stopped, current_process = current_process, None
                     return CommandResult(0, json.dumps({"state": "stopped", "process": stopped}))
-                self.assertEqual(script, "start_g1r_development.ps1")
+                self.assertEqual(script, "start_sn2_development.ps1")
                 self.assertIn("-ModsCsv", arguments)
                 self.assertNotIn("-Mods", arguments)
                 if launch_count:
@@ -109,8 +109,8 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
             replacement_backends = [NativeClient(port=native.port) for _ in range(3)]
             for replacement in replacement_backends:
                 self.addCleanup(replacement.close)
-            with patch("g1r_mcp.server.NativeClient", side_effect=[backend, *replacement_backends]) as native_factory, \
-                    patch("g1r_mcp.server.DevelopmentService", return_value=service) as service_factory:
+            with patch("sn2_mcp.server.NativeClient", side_effect=[backend, *replacement_backends]) as native_factory, \
+                    patch("sn2_mcp.server.DevelopmentService", return_value=service) as service_factory:
                 server = create_server(modkit, workspace, native_port=native.port,
                                        game_root=game, transport="streamable-http")
                 native_factory.assert_called_once_with(port=native.port)
@@ -157,11 +157,11 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
                         first_session = await initialize(first, "companion-first")
                         second_session = await initialize(second, "companion-second")
                         self.assertNotEqual(first_session, second_session)
-                        self.assertEqual(await call(first, first_session, "g1r_native_status"), native_status)
+                        self.assertEqual(await call(first, first_session, "sn2_native_status"), native_status)
                         recipe_arguments = {"relative_package": "mods/Primary",
                                             "companion_packages": ["helpers/Companion"]}
-                        recipe = await call(first, first_session, "g1r_development_recipe", recipe_arguments)
-                        observed_recipe = await call(second, second_session, "g1r_development_recipe", recipe_arguments)
+                        recipe = await call(first, first_session, "sn2_development_recipe", recipe_arguments)
+                        observed_recipe = await call(second, second_session, "sn2_development_recipe", recipe_arguments)
                         self.assertEqual(recipe["manifest"], observed_recipe["manifest"])
                         manifest = recipe["manifest"]
                         self.assertEqual(manifest["composition"], "explicit_companion_packages")
@@ -178,7 +178,7 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
                         start_arguments = {**recipe_arguments,
                                            "expected_manifest_sha256": manifest["manifest_sha256"]}
                         self.assertFalse((workspace / "artifacts").exists())
-                        started = await call(second, second_session, "g1r_development_start", start_arguments)
+                        started = await call(second, second_session, "sn2_development_start", start_arguments)
                         self.assertEqual(started["state"], "launch_requested")
                         self.assertEqual(started["manifest_sha256"], manifest["manifest_sha256"])
                         self.assertIs(started["compiled"], False)
@@ -207,7 +207,7 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
                                 original_packages[item["source_package_path"]])
                             self.assertEqual(item["manifest_sha256_at_launch"], item["manifest"]["manifest_sha256"])
                         launch_calls = [arguments for arguments, _ in executor_calls
-                            if Path(arguments[arguments.index("-File") + 1]).name == "start_g1r_development.ps1"]
+                            if Path(arguments[arguments.index("-File") + 1]).name == "start_sn2_development.ps1"]
                         self.assertEqual(len(launch_calls), 1)
                         self.assertEqual(launch_calls[0][launch_calls[0].index("-ModsCsv") + 1], "Primary,Companion")
                         self.assertEqual(launch_calls[0][launch_calls[0].index("-ModsDirectory") + 1], staging["mods_directory"])
@@ -215,7 +215,7 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
                         original_file = canonical_file.read_bytes()
                         changed_file = b"class UPrimary { int Marker = 2; }\r\n"
                         canonical_file.write_bytes(changed_file)
-                        applied = await call(first, first_session, "g1r_apply_staged_file", {
+                        applied = await call(first, first_session, "sn2_apply_staged_file", {
                             "relative_package": "mods/Primary", "file_path": "Script/Fixture.as",
                             "expected_source_sha256": hashlib.sha256(changed_file).hexdigest(),
                             "expected_staged_sha256": hashlib.sha256(original_file).hexdigest(),
@@ -226,27 +226,27 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
                         staged_primary = next(item for item in staging["packages"] if item["role"] == "main")
                         self.assertEqual((workspace / staged_primary["relative_package"] / "Script" / "Fixture.as").read_bytes(), changed_file)
                         canonical_file.write_bytes(original_file)
-                        loaded = await call(first, first_session, "g1r_native_load", {
+                        loaded = await call(first, first_session, "sn2_native_load", {
                             "expected_process": identities[0], "expected_dll_sha256": recipe["native_artifact"]["sha256"]})
                         self.assertEqual(loaded["process"], identities[0])
                         before_stages = set(stage_directory.parent.iterdir())
-                        restarted = await call(first, first_session, "g1r_development_start", {
+                        restarted = await call(first, first_session, "sn2_development_start", {
                             **start_arguments, "restart": True, "expected_process": identities[0]})
                         self.assertEqual(restarted["state"], "launch_requested")
                         self.assertEqual(len(set(stage_directory.parent.iterdir()) - before_stages), 1)
                         self.assertNotEqual(restarted["development_staging"]["relative_directory"], staging["relative_directory"])
-                        stale_information = await call(second, second_session, "g1r_session_acquire", {
+                        stale_information = await call(second, second_session, "sn2_session_acquire", {
                             "reason": "Retained information about the previous process", "expected_process": identities[0]})
                         self.assertEqual(stale_information["claim"]["process"], identities[0])
                         self.assertFalse(stale_information["control_required"])
-                        reloaded = await call(second, second_session, "g1r_native_load", {
+                        reloaded = await call(second, second_session, "sn2_native_load", {
                             "expected_process": identities[1], "expected_dll_sha256": recipe["native_artifact"]["sha256"]})
                         self.assertEqual(reloaded["process"], identities[1])
-                        stopped = await call(second, second_session, "g1r_development_stop", {"expected_process": identities[1]})
+                        stopped = await call(second, second_session, "sn2_development_stop", {"expected_process": identities[1]})
                         self.assertEqual(stopped["tool_result"], {"state": "stopped", "process": identities[1]})
                         self.assertFalse(stopped["outcome_unknown"])
                         self.assertIsNone(current_process)
-                        self.assertEqual(await call(second, second_session, "g1r_native_status"), native_status)
+                        self.assertEqual(await call(second, second_session, "sn2_native_status"), native_status)
                 service_factory.assert_called_once()
                 self.assertEqual(native_factory.call_args_list, [unittest.mock.call(port=native.port)] * 4)
                 self.assertEqual(native.connections, 2)
@@ -256,8 +256,8 @@ class HTTPDevelopmentCompanionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len({request["id"] for request in native.requests}), 2)
             mutating_scripts = [Path(arguments[arguments.index("-File") + 1]).name
                 for arguments, _ in executor_calls if Path(arguments[arguments.index("-File") + 1]).name != "game_process_state.ps1"]
-            self.assertEqual(mutating_scripts, ["start_g1r_development.ps1", "load_native.ps1",
-                "start_g1r_development.ps1", "load_native.ps1", "stop_g1r_development.ps1"])
+            self.assertEqual(mutating_scripts, ["start_sn2_development.ps1", "load_native.ps1",
+                "start_sn2_development.ps1", "load_native.ps1", "stop_sn2_development.ps1"])
             self.assertEqual(source.read_bytes(), original_source)
             for relative, original in original_packages.items():
                 package = workspace / relative

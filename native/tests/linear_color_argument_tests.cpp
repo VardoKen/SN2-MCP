@@ -1,4 +1,4 @@
-#include <g1r_mcp/linear_color_arguments.hpp>
+#include <sn2_mcp/linear_color_arguments.hpp>
 
 #include <algorithm>
 #include <array>
@@ -12,25 +12,25 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::linear_color_arguments::EncodedLinearColor;
+using sn2_mcp::linear_color_arguments::EncodedLinearColor;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action> void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ аргумента FLinearColor");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Чистая проверка POD не должна приписывать исполнение игровому вызову");return;
     }
     throw std::runtime_error("Ожидался отказ аргумента FLinearColor");
 }
-g1r_mcp::linear_color_layout::Layout layout() {return {16,4,false,{{"R","FloatProperty",4,0,1},
+sn2_mcp::linear_color_layout::Layout layout() {return {16,4,false,{{"R","FloatProperty",4,0,1},
     {"G","FloatProperty",4,4,1},{"B","FloatProperty",4,8,1},{"A","FloatProperty",4,12,1}}};}
 float read(const EncodedLinearColor& color,int offset) {float value{};std::memcpy(&value,color.bytes.data()+offset,sizeof(value));return value;}
 void check_roundtrip(const json& value) {
-    const auto reflected=layout();const auto encoded=g1r_mcp::linear_color_arguments::encode(reflected,value);
+    const auto reflected=layout();const auto encoded=sn2_mcp::linear_color_arguments::encode(reflected,value);
     require(encoded.size==16 && encoded.bytes.size()==16,"FLinearColor занимает ровно 16 байт");
-    const auto output=g1r_mcp::linear_color_arguments::decode(reflected,encoded.bytes);
+    const auto output=sn2_mcp::linear_color_arguments::decode(reflected,encoded.bytes);
     require(output.is_object() && output.size()==4,"FLinearColor decode возвращает только четыре компонента");
     for(const auto& component:reflected.components) {
         const auto expected=static_cast<float>(value.at(component.name).get<double>());
@@ -41,7 +41,7 @@ void check_roundtrip(const json& value) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     using namespace linear_color_arguments;
     static_assert(alignof(EncodedLinearColor)>=4);
     try {

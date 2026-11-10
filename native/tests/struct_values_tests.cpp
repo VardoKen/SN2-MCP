@@ -1,4 +1,4 @@
-#include <g1r_mcp/struct_values.hpp>
+#include <sn2_mcp/struct_values.hpp>
 #include <algorithm>
 #include <array>
 #include <iostream>
@@ -9,12 +9,12 @@ namespace {
 int checks=0;
 void require(bool condition,const char* message) {++checks;if(!condition)throw std::runtime_error(message);}
 template<class Operation>void rejects(const char* code,Operation operation) {
-    try {operation();}catch(const g1r_mcp::HandlerError& error){require(error.code()==code,"Неверный код отказа");return;}
+    try {operation();}catch(const sn2_mcp::HandlerError& error){require(error.code()==code,"Неверный код отказа");return;}
     throw std::runtime_error("Ожидался отказ struct layout");
 }
 }
 int main() {
-    using namespace g1r_mcp::struct_values;
+    using namespace sn2_mcp::struct_values;
     try {
         const Layout vector{12,4,false,{{"X","FloatProperty",4,0,1},{"Y","FloatProperty",4,4,1},{"Z","FloatProperty",4,8,1}}};
         const std::array<float,3> values{1.25f,-2.5f,3.0f};

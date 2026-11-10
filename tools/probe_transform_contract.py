@@ -158,11 +158,11 @@ async def exercise(call, *, const_reference=False, native_probe=None) -> dict:
               "rotation_verification": "Euler Pitch/Yaw/Roll semantic equivalence; quaternion component bits are checked by native unit tests",
               "euler_tolerance_degrees": 1e-4}
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Tick and native session are not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + host, "class_query": host,
+        found = await call("sn2_find_objects", {"query": "Default__" + host, "class_query": host,
             "exact_path": "/Script/Angelscript.Default__" + host, "limit": 2})
         if (found.get("truncated") is not False or not isinstance(found.get("items"), list) or len(found["items"]) != 1):
             raise ProbeError("probe_object_absent", "Exact owned Transform CDO was not found uniquely")
@@ -177,7 +177,7 @@ async def exercise(call, *, const_reference=False, native_probe=None) -> dict:
             target = check_target(item)
         handle, methods, tokens = target["handle"], {}, {}
         for name in method_names:
-            listing = await call("g1r_object_functions", {"handle": handle, "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": handle, "function_query": name, "limit": 10})
             report["reflected_functions"][name] = listing
             methods[name], tokens[name] = check_signature(listing, name, const_reference=const_reference)
         if len(set(tokens.values())) != len(tokens):
@@ -186,7 +186,7 @@ async def exercise(call, *, const_reference=False, native_probe=None) -> dict:
         async def invoke(name, arguments=None, *, expected_error=None):
             supplied = {} if arguments is None else arguments
             json.dumps(supplied, allow_nan=False)
-            return await call("g1r_invoke", {"handle": handle, "function": name, "arguments": supplied,
+            return await call("sn2_invoke", {"handle": handle, "function": name, "arguments": supplied,
                               "expected_signature_token": tokens[name]}, expected_error=expected_error)
 
         async def verify(translation, scale, euler):
@@ -278,7 +278,7 @@ async def run(args) -> dict:
                 initialized = await session.initialize()
                 return {"server_version": initialized.server_info.version, **await exercise(make_caller(session))}
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):
         async with ClientSession(incoming, outgoing) as session:

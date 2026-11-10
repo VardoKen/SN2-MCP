@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 import unittest
 
-from g1r_mcp.packages import validate_package
+from sn2_mcp.packages import validate_package
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_RELATIVE = "development/helpers/G1RMCPDevelopmentHelpers"

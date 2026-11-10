@@ -11,9 +11,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from g1r_mcp.development import (CommandResult, DevelopmentError, DevelopmentService,
+from sn2_mcp.development import (CommandResult, DevelopmentError, DevelopmentService,
                                  execute_command, PROCESS_TIMEOUT_SECONDS)
-from g1r_mcp.window_input import WindowInputError
+from sn2_mcp.window_input import WindowInputError
 
 
 class DevelopmentTests(unittest.TestCase):
@@ -23,8 +23,8 @@ class DevelopmentTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.repository = self.root / "repository"
         (self.repository / "tools").mkdir(parents=True)
-        for name in ("game_process_state.ps1", "start_g1r_development.ps1",
-                     "stop_g1r_development.ps1", "load_native.ps1"):
+        for name in ("game_process_state.ps1", "start_sn2_development.ps1",
+                     "stop_sn2_development.ps1", "load_native.ps1"):
             (self.repository / "tools" / name).write_text("# isolated", encoding="utf-8")
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
@@ -53,11 +53,11 @@ class DevelopmentTests(unittest.TestCase):
             return CommandResult(0, json.dumps({"processes": self.processes}))
         if script in self.responses:
             return self.responses[script]
-        if script == "start_g1r_development.ps1":
+        if script == "start_sn2_development.ps1":
             result = {"state": "launch_requested", "package_name": "Probe",
                       "mods": arguments[arguments.index("-ModsCsv") + 1].split(","),
                       "mods_directory": arguments[arguments.index("-ModsDirectory") + 1]}
-        elif script == "stop_g1r_development.ps1":
+        elif script == "stop_sn2_development.ps1":
             result = {"state": "stopped", "process": self.identity}
         else:
             result = {"state": "loaded", "process": self.identity,
@@ -203,7 +203,7 @@ class DevelopmentTests(unittest.TestCase):
                                 {"message": "WM_KEYUP", "queued": True}],
                    "handling_confirmed": False, "outcome_unknown": False, "do_not_retry": False}
         with patch.object(self.service, "process_state", return_value={"processes": [self.identity]}), \
-                patch("g1r_mcp.development.queue_key", return_value=receipt) as queued:
+                patch("sn2_mcp.development.queue_key", return_value=receipt) as queued:
             result = self.service.queue_key(self.identity, 0x1B, expected_window=window)
         queued.assert_called_once_with(self.identity, 0x1B, expected_window=window)
         self.assertEqual(result, receipt)
@@ -215,7 +215,7 @@ class DevelopmentTests(unittest.TestCase):
 
     def test_queue_key_rejects_changed_identity_and_closed_service_before_dispatch(self):
         with patch.object(self.service, "process_state", return_value={"processes": [self.identity]}) as observed, \
-                patch("g1r_mcp.development.queue_key") as queued:
+                patch("sn2_mcp.development.queue_key") as queued:
             for expected, code in (
                 ({**self.identity, "pid": 124}, "process_changed"),
                 ({**self.identity, "creation_time": "2026-10-30T01:02:03.0000000Z"}, "process_changed"),
@@ -245,7 +245,7 @@ class DevelopmentTests(unittest.TestCase):
                    "handling_confirmed": False, "outcome_unknown": True, "do_not_retry": True}
         failure = WindowInputError("key_up_queue_failed", "Не удалось поставить отпускание в очередь", receipt)
         with patch.object(self.service, "process_state", return_value={"processes": [self.identity]}), \
-                patch("g1r_mcp.development.queue_key", side_effect=failure) as queued:
+                patch("sn2_mcp.development.queue_key", side_effect=failure) as queued:
             with self.assertRaises(DevelopmentError) as captured:
                 self.service.queue_key(self.identity, 0x1B)
         queued.assert_called_once_with(self.identity, 0x1B, expected_window=None)
@@ -261,7 +261,7 @@ class DevelopmentTests(unittest.TestCase):
         self.processes = [self.identity]
         result = self.service.stop(self.identity)
         self.assertEqual(result["process"], self.identity)
-        dll = self.repository / "build" / "native" / "Release" / "G1R_MCP.dll"
+        dll = self.repository / "build" / "native" / "Release" / "SN2_MCP.dll"
         dll.parent.mkdir(parents=True)
         dll.write_bytes(b"isolated dll")
         digest = hashlib.sha256(dll.read_bytes()).hexdigest()
@@ -281,7 +281,7 @@ class DevelopmentTests(unittest.TestCase):
     def test_bootstrap_stop_accepted_but_load_and_restart_rejected(self):
         bootstrap = {**self.identity, "executable": str(self.service.bootstrap_executable)}
         self.processes = [bootstrap]
-        self.responses["stop_g1r_development.ps1"] = CommandResult(0, json.dumps({
+        self.responses["stop_sn2_development.ps1"] = CommandResult(0, json.dumps({
             "state": "stopped", "process": bootstrap, "cleanup": [], "outcome_unknown": False}))
         result = self.service.stop(bootstrap)
         self.assertEqual(result["process"], bootstrap)
@@ -305,17 +305,17 @@ class DevelopmentTests(unittest.TestCase):
                       {**bootstrap, "executable": str(self.game / "unrelated.exe")}):
             with self.subTest(expected=wrong), self.assertRaises(DevelopmentError):
                 self.service.stop(wrong)
-        self.assertFalse(any("stop_g1r_development.ps1" in argument for call, _ in self.calls for argument in call))
+        self.assertFalse(any("stop_sn2_development.ps1" in argument for call, _ in self.calls for argument in call))
 
     def test_protocol_failure_after_mutation_does_not_repeat_and_marks_unknown(self):
-        self.responses["start_g1r_development.ps1"] = CommandResult(0, "not-json")
+        self.responses["start_sn2_development.ps1"] = CommandResult(0, "not-json")
         recipe = self.recipe()
         with self.assertRaises(DevelopmentError) as captured:
             self.service.start("Nested/Probe", recipe["manifest"]["manifest_sha256"])
         self.assertTrue(captured.exception.outcome_unknown)
-        starts = [args for args, _ in self.calls if any("start_g1r_development.ps1" in argument for argument in args)]
+        starts = [args for args, _ in self.calls if any("start_sn2_development.ps1" in argument for argument in args)]
         self.assertEqual(len(starts), 1)
-        self.responses["start_g1r_development.ps1"] = CommandResult(0, "{}")
+        self.responses["start_sn2_development.ps1"] = CommandResult(0, "{}")
         with self.assertRaises(DevelopmentError) as captured:
             self.service.start("Nested/Probe", recipe["manifest"]["manifest_sha256"])
         self.assertTrue(captured.exception.outcome_unknown)
@@ -359,13 +359,13 @@ class DevelopmentTests(unittest.TestCase):
             onerror(PermissionError("isolated denied directory"))
             return iter(())
 
-        with patch("g1r_mcp.development.os.walk", side_effect=failing_walk):
+        with patch("sn2_mcp.development.os.walk", side_effect=failing_walk):
             with self.assertRaises(DevelopmentError) as captured:
                 self.recipe()
         self.assertEqual(captured.exception.code, "access_error")
 
     def test_manifest_ties_validation_to_exact_hashed_descriptor(self):
-        from g1r_mcp.packages import validate_package
+        from sn2_mcp.packages import validate_package
         original = validate_package
         calls = 0
 
@@ -377,7 +377,7 @@ class DevelopmentTests(unittest.TestCase):
                 (self.package / "GothicMod.json").write_text("invalid-json", encoding="utf-8")
             return result
 
-        with patch("g1r_mcp.development.validate_package", side_effect=change_after_validation):
+        with patch("sn2_mcp.development.validate_package", side_effect=change_after_validation):
             with self.assertRaises(DevelopmentError) as captured:
                 self.recipe()
         self.assertIn(captured.exception.code, ("package_changed", "invalid_json"))
@@ -401,14 +401,14 @@ class DevelopmentTests(unittest.TestCase):
         from unittest.mock import Mock
         process = Mock(stdout=io.BytesIO(b'{"ok":true}'), stderr=io.BytesIO())
         process.wait.return_value = 0
-        with patch("g1r_mcp.development.subprocess.Popen", return_value=process) as run:
+        with patch("sn2_mcp.development.subprocess.Popen", return_value=process) as run:
             result = execute_command(["fixed", "argument"], PROCESS_TIMEOUT_SECONDS)
         self.assertEqual(result.stdout, '{"ok":true}')
         process.wait.assert_called_once_with(timeout=30)
         self.assertNotIn("shell", run.call_args.kwargs)
         process = Mock(stdout=io.BytesIO(), stderr=io.BytesIO())
         process.wait.side_effect = [subprocess.TimeoutExpired(["fixed"], 30), 0]
-        with patch("g1r_mcp.development.subprocess.Popen", return_value=process):
+        with patch("sn2_mcp.development.subprocess.Popen", return_value=process):
             with self.assertRaises(DevelopmentError) as captured:
                 execute_command(["fixed"], 30)
         self.assertTrue(captured.exception.outcome_unknown)
@@ -419,7 +419,7 @@ class DevelopmentTests(unittest.TestCase):
         output = b"x" * (256 * 1024 + 1)
         process = Mock(stdout=io.BytesIO(output), stderr=io.BytesIO())
         process.wait.return_value = 0
-        with patch("g1r_mcp.development.subprocess.Popen", return_value=process):
+        with patch("sn2_mcp.development.subprocess.Popen", return_value=process):
             result = execute_command(["fixed"], 30)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, output.decode("utf-8"))
@@ -430,7 +430,7 @@ class DevelopmentTests(unittest.TestCase):
         from unittest.mock import Mock
         process = Mock(stdout=io.BytesIO(), stderr=io.BytesIO())
         process.wait.side_effect = [KeyboardInterrupt(), 0]
-        with patch("g1r_mcp.development.subprocess.Popen", return_value=process) as created:
+        with patch("sn2_mcp.development.subprocess.Popen", return_value=process) as created:
             with self.assertRaises(KeyboardInterrupt) as captured:
                 execute_command(["fixed"], 30)
         created.assert_called_once()

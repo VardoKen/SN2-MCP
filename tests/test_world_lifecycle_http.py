@@ -31,16 +31,16 @@ class Calls:
     async def call(self, name, args):
         self.calls.append((name, args))
         handle = f"obj-{self.generation + 1}"
-        if name in {"g1r_status", "g1r_capabilities"}:
+        if name in {"sn2_status", "sn2_capabilities"}:
             return {}
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"process_id": 123, "session_id": "native"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [{"class": live.HOST, "name": live.HOST + f"_{self.generation}",
                                "path": "/Game/Menu." + live.HOST, "handle": handle}]}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return {"items": [{"name": args["function_query"], "signature_token": "sig-1"}]}
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = args["function"]
             if method == "ReloadCurrentMap":
                 self.generation += int(self.baseline_recovers)
@@ -51,13 +51,13 @@ class Calls:
                 observed["return_enum"] = {"path": "/Script/G1R.ELoadingScreenType",
                     "value_name": "ELoadingScreenType::BlackScreen" if self.black_screen else "ELoadingScreenType::Default"}
             return observed
-        if name == "g1r_object_properties":
+        if name == "sn2_object_properties":
             if args["handle"] != handle:
                 raise live.ProbeError("stale_handle", "old world")
             return {"items": [{"name": live.COUNT, "supported": True, "value": self.count}]}
-        if name == "g1r_watch_start":
+        if name == "sn2_watch_start":
             return {"watch_id": "watch-1", "state": "running"}
-        if name == "g1r_watch_read":
+        if name == "sn2_watch_read":
             if self.terminal_error and self.generation == 2:
                 raise live.ProbeError("native_disconnected", "read failed")
             if self.generation == 2:
@@ -70,7 +70,7 @@ class Calls:
                     "events": [{"kind": "baseline", "snapshot": {"process_id": 123, "session_id": "native",
                         "objects": [{"handle": handle, "properties": [{"name": live.COUNT, "value": 1, "supported": True}]}]}}]
                         if self.watch_baseline else []}
-        if name in {"g1r_watch_stop", "g1r_watch_forget"}:
+        if name in {"sn2_watch_stop", "sn2_watch_forget"}:
             return {"cleanup_complete": not self.cleanup_fails, "forgotten": not self.cleanup_fails}
         raise AssertionError((name, args))
 
@@ -88,30 +88,30 @@ class WorldLifecycleHTTPTests(unittest.TestCase):
         report = self.exercise(fixture)
         self.assertEqual(report["status"], "completed")
         names = [name for name, _ in fixture.calls]
-        reloads = [i for i, (name, args) in enumerate(fixture.calls) if name == "g1r_invoke" and args["function"] == "ReloadCurrentMap"]
+        reloads = [i for i, (name, args) in enumerate(fixture.calls) if name == "sn2_invoke" and args["function"] == "ReloadCurrentMap"]
         self.assertEqual(len(reloads), 2)
-        self.assertLess(reloads[0], names.index("g1r_watch_start"))
-        self.assertLess(names.index("g1r_watch_start"), reloads[1])
-        self.assertEqual(names[-2:], ["g1r_watch_stop", "g1r_watch_forget"])
+        self.assertLess(reloads[0], names.index("sn2_watch_start"))
+        self.assertLess(names.index("sn2_watch_start"), reloads[1])
+        self.assertEqual(names[-2:], ["sn2_watch_stop", "sn2_watch_forget"])
         self.assertTrue(report["watch_trial"]["watch_cleanup_confirmed"])
 
     def test_failed_baseline_does_not_start_watch_or_second_reload(self):
         fixture = Calls(baseline_recovers=False)
         self.assertEqual(self.exercise(fixture)["status"], "baseline_failed")
-        self.assertFalse(any(name.startswith("g1r_watch_") for name, _ in fixture.calls))
-        self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls), 1)
+        self.assertFalse(any(name.startswith("sn2_watch_") for name, _ in fixture.calls))
+        self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls), 1)
 
     def test_uninitialized_counter_does_not_reload(self):
         fixture = Calls(count=0)
         self.assertEqual(self.exercise(fixture)["status"], "baseline_failed")
-        self.assertFalse(any(name == "g1r_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls))
+        self.assertFalse(any(name == "sn2_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls))
 
     def test_transport_error_is_not_watch_invalidation(self):
         fixture = Calls(terminal_error=True)
         report = self.exercise(fixture)
         self.assertEqual(report["status"], "error")
         self.assertEqual(report["error"]["code"], "native_disconnected")
-        self.assertEqual([name for name, _ in fixture.calls][-2:], ["g1r_watch_stop", "g1r_watch_forget"])
+        self.assertEqual([name for name, _ in fixture.calls][-2:], ["sn2_watch_stop", "sn2_watch_forget"])
 
     def test_cleanup_failure_prevents_completed(self):
         self.assertEqual(self.exercise(Calls(cleanup_fails=True))["status"], "observed_different")
@@ -119,13 +119,13 @@ class WorldLifecycleHTTPTests(unittest.TestCase):
     def test_black_screen_enum_must_match_actual_name(self):
         fixture = Calls(black_screen=False)
         self.assertEqual(self.exercise(fixture)["status"], "baseline_failed")
-        self.assertFalse(any(name == "g1r_watch_start" for name, _ in fixture.calls))
+        self.assertFalse(any(name == "sn2_watch_start" for name, _ in fixture.calls))
 
     def test_missing_watch_baseline_prevents_second_reload(self):
         fixture = Calls(watch_baseline=False)
         self.assertEqual(self.exercise(fixture)["status"], "watch_baseline_not_confirmed")
-        self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls), 1)
-        self.assertEqual([name for name, _ in fixture.calls][-2:], ["g1r_watch_stop", "g1r_watch_forget"])
+        self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls), 1)
+        self.assertEqual([name for name, _ in fixture.calls][-2:], ["sn2_watch_stop", "sn2_watch_forget"])
 
     def test_nested_stale_handle_code_is_not_terminal_reason(self):
         self.assertEqual(self.exercise(Calls(terminal_reason="stale_handle"))["status"], "observed_different")
@@ -134,15 +134,15 @@ class WorldLifecycleHTTPTests(unittest.TestCase):
         fixture = Calls(delayed_terminal=True)
         self.assertEqual(self.exercise(fixture)["status"], "completed")
         self.assertEqual(fixture.terminal_reads, 2)
-        self.assertEqual(sum(name == "g1r_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls), 2)
+        self.assertEqual(sum(name == "sn2_invoke" and args["function"] == "ReloadCurrentMap" for name, args in fixture.calls), 2)
 
     def run_client(self, *, reload=False, acquire_error=False, release_ok=True):
         calls = []
         async def call(name, args):
             calls.append(name)
-            if name == "g1r_session_acquire" and acquire_error:
+            if name == "sn2_session_acquire" and acquire_error:
                 raise live.ProbeError("game_session_owned", "another session")
-            return {"released": release_ok} if name == "g1r_session_release" else {}
+            return {"released": release_ok} if name == "sn2_session_release" else {}
         class Client:
             async def initialize(self):
                 return SimpleNamespace(server_info=SimpleNamespace(version="dev"))
@@ -166,13 +166,13 @@ class WorldLifecycleHTTPTests(unittest.TestCase):
 
     def test_reload_claim_and_release_wrap_exercise(self):
         _, calls = self.run_client(reload=True)
-        self.assertEqual(calls, ["g1r_status", "g1r_capabilities", "g1r_session_acquire", "exercise", "g1r_session_release"])
+        self.assertEqual(calls, ["sn2_status", "sn2_capabilities", "sn2_session_acquire", "exercise", "sn2_session_release"])
 
     def test_foreign_claim_refusal_does_not_invoke_or_release(self):
         error, calls = self.run_client(reload=True, acquire_error=True)
         self.assertEqual(error.code, "game_session_owned")
         self.assertNotIn("exercise", calls)
-        self.assertNotIn("g1r_session_release", calls)
+        self.assertNotIn("sn2_session_release", calls)
 
     def test_unconfirmed_release_does_not_return_completed(self):
         error, _ = self.run_client(reload=True, release_ok=False)

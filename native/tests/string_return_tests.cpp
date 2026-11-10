@@ -1,4 +1,4 @@
-#include <g1r_mcp/string_return.hpp>
+#include <sn2_mcp/string_return.hpp>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -10,14 +10,14 @@ void require(bool condition,const char* message) {
     ++checks;if(!condition)throw std::runtime_error(message);
 }
 template<class Operation>
-g1r_mcp::HandlerError failure(Operation&& operation) {
+sn2_mcp::HandlerError failure(Operation&& operation) {
     try {operation();}
-    catch(const g1r_mcp::HandlerError& error) {return error;}
+    catch(const sn2_mcp::HandlerError& error) {return error;}
     throw std::runtime_error("Ожидался отказ FString");
 }
 }
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         const StringHeader value{0x1000,3,3};
         int decoded=0,released=0;

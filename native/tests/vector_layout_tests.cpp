@@ -1,4 +1,4 @@
-#include <g1r_mcp/vector_layout.hpp>
+#include <sn2_mcp/vector_layout.hpp>
 
 #include <algorithm>
 #include <cstring>
@@ -13,7 +13,7 @@ int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action>void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ reflected FVector");
         require(error.details()==nlohmann::json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Отказ reflected FVector должен быть до исполнения");
@@ -21,12 +21,12 @@ template<class Action>void reject(const char* code,Action&& action) {
     }
     throw std::runtime_error("Ожидался отказ reflected FVector");
 }
-g1r_mcp::struct_values::Layout layout(int width) {
+sn2_mcp::struct_values::Layout layout(int width) {
     const std::string type=width==4?"FloatProperty":"DoubleProperty";
     return {width*3,width,false,{{"X",type,width,0,1},{"Y",type,width,width,1},{"Z",type,width,2*width,1}}};
 }
-void validate(const g1r_mcp::struct_values::Layout& value) {
-    g1r_mcp::vector_layout::validate("/Script/CoreUObject.Vector","Vector",value);
+void validate(const sn2_mcp::struct_values::Layout& value) {
+    sn2_mcp::vector_layout::validate("/Script/CoreUObject.Vector","Vector",value);
 }
 
 struct ReflectedMemory {
@@ -34,7 +34,7 @@ struct ReflectedMemory {
         structure_class=0x4000,scalar_class=0x5000;
     std::map<std::uintptr_t,std::array<std::byte,8>> storage;
     std::map<std::uintptr_t,int> reads;
-    g1r_mcp::ObjectSerialIdentity identity{structure,structure_class,4,10,0,7,40,0};
+    sn2_mcp::ObjectSerialIdentity identity{structure,structure_class,4,10,0,7,40,0};
     std::string path="/Script/CoreUObject.Vector";
     int class_checks{};
     template<class T>void set(std::uintptr_t address,T value) {
@@ -50,7 +50,7 @@ struct ReflectedMemory {
         set(outer+0x34,std::int32_t{3*width});set(outer+0x30,std::int32_t{1});set(outer+0x70,structure);
         set(outer_class,std::uint64_t{1});
         set(structure+0x50,std::uintptr_t{0x6000});set(structure+0x40,std::uintptr_t{0});
-        set(structure+0x58,std::int32_t{3*width});set(structure+0x5c,std::int32_t{width});
+        set(structure+0x58,std::int32_t{3*width});set(structure+0x5c,std::int32_t{0xA50000|(width)});
         set(scalar_class,std::uint64_t{width==4?2ULL:3ULL});
         for(int index=0;index<3;++index) {
             const auto field=std::uintptr_t{0x6000}+static_cast<std::uintptr_t>(index)*0x100;
@@ -60,7 +60,7 @@ struct ReflectedMemory {
             set(field+0x34,std::int32_t{width});set(field+0x44,std::int32_t{index*width});set(field+0x30,std::int32_t{1});
         }
     }
-    g1r_mcp::vector_layout::Snapshot capture(int size=24,int dim=1) {
+    sn2_mcp::vector_layout::Snapshot capture(int size=24,int dim=1) {
         const auto name=[](std::uint64_t value)->std::string {
             switch(value) {
                 case 1:case 101:return "StructProperty";
@@ -73,7 +73,7 @@ struct ReflectedMemory {
                 default:return "Other";
             }
         };
-        return g1r_mcp::vector_layout::capture(outer,size,dim,
+        return sn2_mcp::vector_layout::capture(outer,size,dim,
             [this]<class T>(std::uintptr_t address){return read<T>(address);},name,
             [this](std::uintptr_t address){require(address==structure,"ObjectCapture получил неверный Struct");return identity;},
             [this](std::uintptr_t address){++class_checks;require(address==structure_class,"ClassValidator получил неверный metaclass");},
@@ -83,7 +83,7 @@ struct ReflectedMemory {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         for(const int width:{4,8}) {
             const auto ordinary=layout(width);validate(ordinary);

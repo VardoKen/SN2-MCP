@@ -83,7 +83,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
                         "show_script_errors": show_script_errors}
     if companion_packages is not None:
         recipe_arguments["companion_packages"] = companion_packages
-    recipe = await call("g1r_development_recipe", recipe_arguments)
+    recipe = await call("sn2_development_recipe", recipe_arguments)
     manifest = recipe.get("manifest")
     artifact = recipe.get("native_artifact")
     if (not isinstance(manifest, dict) or not isinstance(manifest.get("game_root"), str)
@@ -92,7 +92,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
             or not isinstance(artifact, dict) or artifact.get("available") is not True
             or not isinstance(artifact.get("sha256"), str) or not _SHA.fullmatch(artifact["sha256"])):
         raise ProbeError("recipe_incomplete", "Recipe did not confirm the complete package and available DLL")
-    initial = await call("g1r_development_processes", {})
+    initial = await call("sn2_development_processes", {})
     if not isinstance(initial.get("processes"), list) or initial["processes"]:
         raise ProbeError("game_already_running", "Probe requires a closed game; an existing process is not modified")
     stage("recipe_checked")
@@ -108,7 +108,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
                 "enable_ingame_tools": enable_ingame_tools, "show_script_errors": show_script_errors}
             if companion_packages is not None:
                 launch_arguments["companion_packages"] = companion_packages
-            launch = await call("g1r_development_start", launch_arguments)
+            launch = await call("sn2_development_start", launch_arguments)
             if launch.get("state") != "launch_requested" or launch.get("outcome_unknown") is not False:
                 raise ProbeError("launch_unconfirmed", "Launch request is not confirmed; it is not retried automatically")
             stage("launch_requested")
@@ -120,7 +120,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
             raise
         deadline = clock() + startup_timeout
         while clock() < deadline:
-            state = await call("g1r_development_processes", {})
+            state = await call("sn2_development_processes", {})
             candidate_bootstrap = select_process(state, manifest["game_root"], bootstrap=True)
             if owned_bootstrap is None and candidate_bootstrap is not None:
                 owned_bootstrap = candidate_bootstrap
@@ -138,13 +138,13 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
     try:
         await settle_task(asyncio.create_task(start_and_identify()), min(115, 65 + startup_timeout), "development startup")
         # Rechecking the recipe ties loading to the current package and DLL.
-        current = await call("g1r_development_recipe", recipe_arguments)
+        current = await call("sn2_development_recipe", recipe_arguments)
         if current.get("manifest", {}).get("manifest_sha256") != manifest["manifest_sha256"]:
             raise ProbeError("package_changed", "Package changed during startup")
         current_artifact = current.get("native_artifact", {})
         if current_artifact.get("available") is not True or current_artifact.get("sha256") != artifact["sha256"]:
             raise ProbeError("dll_changed", "DLL changed during startup")
-        loaded = await call("g1r_native_load", {"expected_process": owned,
+        loaded = await call("sn2_native_load", {"expected_process": owned,
                           "expected_dll_sha256": artifact["sha256"]})
         if (loaded.get("state") != "load_result" or loaded.get("process") != owned
                 or loaded.get("dll_sha256") != artifact["sha256"] or loaded.get("outcome_unknown") is not False):
@@ -154,7 +154,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
         deadline = clock() + min(10, ready_timeout)
         while True:
             try:
-                status = await call("g1r_native_status", {})
+                status = await call("sn2_native_status", {})
                 break
             except ProbeError as error:
                 if error.code not in {"native_unavailable", "native_timeout", "native_connection_failed"} or clock() >= deadline:
@@ -165,7 +165,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
         observations = [{key: status.get(key) for key in
                          ("process_id", "hook_installed", "ready", "tick_count", "game_thread_id", "startup_error")}]
         if not status.get("hook_installed"):
-            enabled = await call("g1r_native_enable", {})
+            enabled = await call("sn2_native_enable", {})
             if enabled.get("process_id") != owned["pid"]:
                 raise ProbeError("native_process_mismatch", "Enable result refers to a different process")
             status = enabled
@@ -174,7 +174,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
         deadline = clock() + ready_timeout
         while not status.get("ready") and clock() < deadline:
             await sleep(.1)
-            status = await call("g1r_native_status", {})
+            status = await call("sn2_native_status", {})
             if status.get("process_id") != owned["pid"]:
                 raise ProbeError("native_process_mismatch", "Native channel process changed")
             selected = {key: status.get(key) for key in
@@ -193,7 +193,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
             return report
         deadline = clock() + ready_timeout
         while True:
-            found = await call("g1r_find_objects", {"query": "Default__G1RMCPCompileProbe",
+            found = await call("sn2_find_objects", {"query": "Default__G1RMCPCompileProbe",
                                "class_query": "G1RMCPCompileProbe", "limit": 20})
             matches = [item for item in found.get("items", [])
                        if item.get("name") == "Default__G1RMCPCompileProbe"
@@ -205,9 +205,9 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
         if len(matches) != 1:
             raise ProbeError("probe_object_absent", "Exact probe package CDO was not found uniquely")
         target = matches[0]
-        signature = check_signature(await call("g1r_object_functions", {"handle": target["handle"], "limit": 100}))
+        signature = check_signature(await call("sn2_object_functions", {"handle": target["handle"], "limit": 100}))
         stage("signature_verified")
-        result = await call("g1r_invoke", {"handle": target["handle"], "function": "ReadProbeValue", "arguments": {}})
+        result = await call("sn2_invoke", {"handle": target["handle"], "function": "ReadProbeValue", "arguments": {}})
         if result.get("executed") is not True or type(result.get("result")) is not int or result["result"] != expected_value:
             raise ProbeError("probe_value_mismatch", "Probe method did not return the expected constant")
         report.update({"compiled_probe": True, "probe_value": result["result"],
@@ -221,21 +221,21 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
         if cleanup_process is not None:
             async def stop_owned() -> None:
                 try:
-                    stopped = await call("g1r_development_stop", {"expected_process": cleanup_process})
+                    stopped = await call("sn2_development_stop", {"expected_process": cleanup_process})
                     if (stopped.get("state") != "stop_result" or stopped.get("process") != cleanup_process
                             or stopped.get("tool_result", {}).get("state") != "stopped"):
                         raise ProbeError("stop_unconfirmed", "Owned process stop is not confirmed")
                 except Exception:
                     # The compiler may exit the game before stop. An empty snapshot
                     # confirms that the game is absent, but not that stop succeeded.
-                    after_error = await call("g1r_development_processes", {})
+                    after_error = await call("sn2_development_processes", {})
                     if after_error.get("processes") != []:
                         raise
                     report["stop_confirmed"] = True
                     report["stop_outcome"] = "already_exited"
                     stage("game_already_exited")
                     return
-                state = await call("g1r_development_processes", {})
+                state = await call("sn2_development_processes", {})
                 if state.get("processes") != []:
                     raise ProbeError("game_lingering", "Game processes remain after stop")
                 report["stop_confirmed"] = True
@@ -252,7 +252,7 @@ async def development_cycle(call: Call, relative_package: str, expected_value: i
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)]
              + (["--game-root", str(args.game_root)] if args.game_root else []),
         cwd=str(ROOT), env={"PYTHONUTF8": "1"})
@@ -260,8 +260,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         async with ClientSession(incoming, outgoing) as session:
             initialized = await session.initialize()
             tools = (await session.list_tools()).tools
-            required = {"g1r_development_recipe", "g1r_development_processes", "g1r_development_start",
-                        "g1r_development_stop", "g1r_native_load", "g1r_native_status", "g1r_native_enable"}
+            required = {"sn2_development_recipe", "sn2_development_processes", "sn2_development_start",
+                        "sn2_development_stop", "sn2_native_load", "sn2_native_status", "sn2_native_enable"}
             if not required <= {tool.name for tool in tools}:
                 raise ProbeError("development_tools_absent", "MCP does not provide the complete development cycle")
 

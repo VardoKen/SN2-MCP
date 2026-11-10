@@ -49,13 +49,13 @@ class IntegerFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, arguments, expected_error))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.target], "truncated": False}
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return self.functions(arguments["function_query"])
-        if name != "g1r_invoke":
+        if name != "sn2_invoke":
             raise AssertionError((name, arguments))
         method = arguments["function"]
         if arguments["expected_signature_token"] != self.tokens[method]:
@@ -96,7 +96,7 @@ class WideIntegerProbeTests(unittest.TestCase):
         self.assertEqual(report["cleanup"], ["ResetProbe_and_confirmed_zero_counter_marker151"])
         invalid = [arguments for name, arguments, expected in fixture.calls if expected]
         self.assertTrue(any(type(item["arguments"]["Input"]) is float for item in invalid))
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"} for name, _, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"} for name, _, _ in fixture.calls))
 
     def test_signature_token_marker_and_initial_count_fail_before_echo(self):
         for kwargs, code in (({"missing_token": True}, "probe_signature_token_absent"),
@@ -107,7 +107,7 @@ class WideIntegerProbeTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(probe.ProbeError) as caught:
                 asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(caught.exception.code, code)
-            self.assertFalse(any(name == "g1r_invoke" and arguments["function"].startswith("Echo") for name, arguments, _ in fixture.calls))
+            self.assertFalse(any(name == "sn2_invoke" and arguments["function"].startswith("Echo") for name, arguments, _ in fixture.calls))
             self.assertEqual(fixture.resets, 0)
 
     def test_precision_loss_after_started_echo_triggers_one_reset(self):
@@ -151,7 +151,7 @@ class WideIntegerProbeTests(unittest.TestCase):
                     return SimpleNamespace(is_error=True, structured_content=None,
                                            content=[SimpleNamespace(type="text", text=json.dumps(payload))])
             session = Session()
-            result = await probe.make_caller(session)("g1r_invoke", {"Input": -1}, expected_error="invalid_argument")
+            result = await probe.make_caller(session)("sn2_invoke", {"Input": -1}, expected_error="invalid_argument")
             self.assertNotIn("executed", result)
             self.assertEqual(result["effect"], payload["effect"])
             probe.check_integer_rejection(result, "EchoUInt64", -1)
@@ -188,10 +188,10 @@ class WideIntegerProbeTests(unittest.TestCase):
             fixture = IntegerFixture()
             reset_started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"].startswith("Echo") and not expected_error:
+                if name == "sn2_invoke" and arguments["function"].startswith("Echo") and not expected_error:
                     await fixture.call(name, arguments, expected_error=expected_error)
                     raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     reset_started.set()
                     await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -204,7 +204,7 @@ class WideIntegerProbeTests(unittest.TestCase):
                 await task
             self.assertEqual(fixture.resets, 1)
             self.assertEqual(fixture.count, 0)
-            echoes = [arguments for name, arguments, expected in fixture.calls if name == "g1r_invoke" and arguments["function"].startswith("Echo")]
+            echoes = [arguments for name, arguments, expected in fixture.calls if name == "sn2_invoke" and arguments["function"].startswith("Echo")]
             self.assertEqual(len(echoes), 1)
         asyncio.run(scenario())
 

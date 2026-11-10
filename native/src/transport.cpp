@@ -1,4 +1,4 @@
-#include <g1r_mcp/transport.hpp>
+#include <sn2_mcp/transport.hpp>
 
 #include <Windows.h>
 #include <ws2tcpip.h>
@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace g1r_mcp {
+namespace sn2_mcp {
 namespace {
 
 nlohmann::json error_response(const nlohmann::json& id, const std::string& session,
@@ -372,4 +372,4 @@ void Transport::run() {
     running_.store(false);
 }
 
-} // namespace g1r_mcp
+} // namespace sn2_mcp

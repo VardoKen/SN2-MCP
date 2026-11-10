@@ -28,7 +28,7 @@ MARKER = 111
 async def exercise(call, *, wait_seconds=3, clock=time.monotonic, sleep=asyncio.sleep):
     # A separate instance of the existing read-only check preserves its boundaries,
     # without changing the global state of the IngameTool probe or its fixture.
-    spec = importlib.util.spec_from_file_location("_g1r_world_lifecycle_observation", REPOSITORY_ROOT / "tools" / "probe_lifecycle_mcp.py")
+    spec = importlib.util.spec_from_file_location("_sn2_world_lifecycle_observation", REPOSITORY_ROOT / "tools" / "probe_lifecycle_mcp.py")
     implementation = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(implementation)
     implementation.TOOL = HOST
@@ -55,14 +55,14 @@ async def exercise_reload_watch(call, *, wait_seconds=120, clock=time.monotonic,
     report, watch_id = {"status": "started", "watch_trial": {"status": "not_started"}}, None
 
     async def find_live():
-        found = await call("g1r_find_objects", {"query": HOST, "class_query": HOST, "limit": 100})
+        found = await call("sn2_find_objects", {"query": HOST, "class_query": HOST, "limit": 100})
         return [item for item in found["items"] if item.get("class") == HOST
                 and item.get("name", "").startswith(HOST) and item.get("path", "").startswith("/Game/")]
 
     async def invoke(target, name):
-        listing = await call("g1r_object_functions", {"handle": target["handle"], "function_query": name, "limit": 20})
+        listing = await call("sn2_object_functions", {"handle": target["handle"], "function_query": name, "limit": 20})
         method = next(item for item in listing["items"] if item["name"] == name)
-        result = await call("g1r_invoke", {"handle": target["handle"], "function": name,
+        result = await call("sn2_invoke", {"handle": target["handle"], "function": name,
                             "arguments": {}, "expected_signature_token": method["signature_token"]})
         return {"signature": method, "result": result}
 
@@ -70,7 +70,7 @@ async def exercise_reload_watch(call, *, wait_seconds=120, clock=time.monotonic,
         return {"target": target, "map": await invoke(target, "GetCurrentMapName"),
                 "loading_type": await invoke(target, "GetCurrentLoadingScreenType"),
                 "marker": await invoke(target, "ReadMarker"),
-                "counter": await call("g1r_object_properties", {"handle": target["handle"], "property_names": [COUNT]})}
+                "counter": await call("sn2_object_properties", {"handle": target["handle"], "property_names": [COUNT]})}
 
     def initialized(observed):
         return (observed["marker"]["result"].get("result") == MARKER
@@ -94,10 +94,10 @@ async def exercise_reload_watch(call, *, wait_seconds=120, clock=time.monotonic,
             await sleep(.5)
         trial["after"] = await observe(new_target) if new_target is not None else {}
         try:
-            trial["old_handle"] = await call("g1r_object_properties", {"handle": target["handle"], "property_names": [COUNT]})
+            trial["old_handle"] = await call("sn2_object_properties", {"handle": target["handle"], "property_names": [COUNT]})
         except Exception as error:
             trial["old_handle"] = {"error": {"code": getattr(error, "code", None), "message": str(error)}}
-        trial["native_after"] = await call("g1r_native_status", {})
+        trial["native_after"] = await call("sn2_native_status", {})
         trial["checks"] = {"reload_executed": trial["reload"]["result"].get("executed") is True,
                            "same_game": trial["native_after"].get("process_id") == native_before.get("process_id"),
                            "same_native_session": trial["native_after"].get("session_id") == native_before.get("session_id"),
@@ -112,19 +112,19 @@ async def exercise_reload_watch(call, *, wait_seconds=120, clock=time.monotonic,
         return trial, new_target
 
     try:
-        report["bridge_status"] = await call("g1r_status", {})
-        report["capabilities"] = await call("g1r_capabilities", {})
-        native = report["native_before"] = await call("g1r_native_status", {})
+        report["bridge_status"] = await call("sn2_status", {})
+        report["capabilities"] = await call("sn2_capabilities", {})
+        native = report["native_before"] = await call("sn2_native_status", {})
         baseline, target = await reload_trial((await find_live())[0], native)
         report["baseline_without_watch"] = baseline
         if baseline["status"] != "completed":
             report["status"] = "baseline_failed"
             return report
         watched = report["watch_trial"] = {"status": "started", "target": target}
-        watched["watch_started"] = await call("g1r_watch_start", {"handle": target["handle"], "properties": [COUNT],
+        watched["watch_started"] = await call("sn2_watch_start", {"handle": target["handle"], "properties": [COUNT],
                                                                "duration_ms": 180000, "interval_ms": 50, "capacity": 32})
         watch_id = watched["watch_started"]["watch_id"]
-        watched["watch_before"] = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+        watched["watch_before"] = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
         watched["baseline_confirmed"] = (watched["watch_started"].get("state") == "running"
             and watched["watch_before"].get("state") == "running"
             and any(event.get("kind") == "baseline" and event.get("snapshot", {}).get("process_id") == native.get("process_id")
@@ -141,7 +141,7 @@ async def exercise_reload_watch(call, *, wait_seconds=120, clock=time.monotonic,
         watched["reload_trial"] = trial
         deadline = clock() + wait_seconds
         while True:
-            watched["watch_after"] = await call("g1r_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
+            watched["watch_after"] = await call("sn2_watch_read", {"watch_id": watch_id, "after_seq": 0, "limit": 100})
             if watched["watch_after"].get("state") != "running" or clock() >= deadline:
                 break
             await sleep(.05)
@@ -158,7 +158,7 @@ async def exercise_reload_watch(call, *, wait_seconds=120, clock=time.monotonic,
                 cleaned = report["watch_trial"]["watch_cleanup"] = {}
                 for action in ("stop", "forget"):
                     try:
-                        cleaned[action] = await call("g1r_watch_" + action, {"watch_id": watch_id})
+                        cleaned[action] = await call("sn2_watch_" + action, {"watch_id": watch_id})
                     except Exception as error:
                         cleaned[action] = {"error": {"code": getattr(error, "code", None), "message": str(error)}}
                 return (cleaned["stop"].get("cleanup_complete") is True
@@ -177,7 +177,7 @@ async def connect_client(args):
             async with ClientSession(connection[0], connection[1]) as client:
                 yield client
     else:
-        parameters = StdioServerParameters(command=sys.executable, args=["-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        parameters = StdioServerParameters(command=sys.executable, args=["-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
             "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
         async with stdio_client(parameters) as (incoming, outgoing):
             async with ClientSession(incoming, outgoing) as client:
@@ -190,13 +190,13 @@ async def run_probe(args):
             initialized = await client.initialize()
             call = _caller(client)
             if getattr(args, "reload_and_watch", False):
-                await call("g1r_status", {})
-                await call("g1r_capabilities", {})
-                await call("g1r_session_acquire", {"reason": "Owned PostInitialize check: baseline reload and watch invalidation"})
+                await call("sn2_status", {})
+                await call("sn2_capabilities", {})
+                await call("sn2_session_acquire", {"reason": "Owned PostInitialize check: baseline reload and watch invalidation"})
                 try:
                     report = await exercise_reload_watch(call, wait_seconds=args.wait_seconds)
                 finally:
-                    released = await settle_task(asyncio.create_task(call("g1r_session_release", {})), 45, "world lifecycle ownership release")
+                    released = await settle_task(asyncio.create_task(call("sn2_session_release", {})), 45, "world lifecycle ownership release")
                     if released.get("released") is not True:
                         raise ProbeError("ownership_release_unconfirmed", "The lifecycle probe claim was not released")
             else:

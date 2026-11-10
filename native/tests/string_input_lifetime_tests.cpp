@@ -1,4 +1,4 @@
-#include <g1r_mcp/string_input_lifetime.hpp>
+#include <sn2_mcp/string_input_lifetime.hpp>
 
 #include <iostream>
 #include <limits>
@@ -8,13 +8,13 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::StringHeader;
-using g1r_mcp::string_input_lifetime::Ledger;
+using sn2_mcp::StringHeader;
+using sn2_mcp::string_input_lifetime::Ledger;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action>void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ учёта FString");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Чистый helper должен сообщать ранний отказ; эффект вызова учитывается caller отдельно");return;
@@ -29,7 +29,7 @@ void no_free(Ledger& ledger) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     using namespace string_input_lifetime;
     static_assert(!std::is_copy_constructible_v<Ledger> && !std::is_copy_assignable_v<Ledger>);
     static_assert(!std::is_move_constructible_v<Ledger> && !std::is_move_assignable_v<Ledger>);

@@ -1,4 +1,4 @@
-#include <g1r_mcp/object_query.hpp>
+#include <sn2_mcp/object_query.hpp>
 
 #include <iostream>
 #include <stdexcept>
@@ -11,7 +11,7 @@ void require(bool result, const char* message) {
 }
 
 int main() {
-    using namespace g1r_mcp::object_query;
+    using namespace sn2_mcp::object_query;
     try {
         require(valid_exact_path(""), "Пустой exact_path разрешён");
         require(valid_exact_path(std::string(8192, 'x')), "Граница 8192 байт разрешена");

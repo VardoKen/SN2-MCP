@@ -1,4 +1,4 @@
-#include <g1r_mcp/function_contract.hpp>
+#include <sn2_mcp/function_contract.hpp>
 
 #include <iostream>
 #include <limits>
@@ -14,7 +14,7 @@ void require(bool good,const char* message) {
 }
 template<class Action>void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный код отказа");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Отказ должен явно исключать исполнение");
@@ -31,7 +31,7 @@ json contract(const std::string& name) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     try {
         std::map<std::string,json> saved;
         std::uint64_t sequence{};

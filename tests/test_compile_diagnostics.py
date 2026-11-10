@@ -4,8 +4,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from g1r_mcp.compile_diagnostics import parse_report, read_report
-from g1r_mcp.development import DevelopmentService, DevelopmentError
+from sn2_mcp.compile_diagnostics import parse_report, read_report
+from sn2_mcp.development import DevelopmentService, DevelopmentError
 
 
 class CompileDiagnosticsTests(unittest.TestCase):

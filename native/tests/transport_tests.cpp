@@ -1,4 +1,4 @@
-#include <g1r_mcp/transport.hpp>
+#include <sn2_mcp/transport.hpp>
 #include <ws2tcpip.h>
 
 #include <array>
@@ -10,7 +10,7 @@
 #include <thread>
 
 using namespace std::chrono_literals;
-using g1r_mcp::Transport;
+using sn2_mcp::Transport;
 using nlohmann::json;
 
 namespace {
@@ -64,7 +64,7 @@ struct Client {
         std::uint32_t size = (static_cast<std::uint32_t>(header[0]) << 24)
                            | (static_cast<std::uint32_t>(header[1]) << 16)
                            | (static_cast<std::uint32_t>(header[2]) << 8) | header[3];
-        require(size > 0 && size <= g1r_mcp::MaxFrameBytes, "Недопустимый размер тестового ответа");
+        require(size > 0 && size <= sn2_mcp::MaxFrameBytes, "Недопустимый размер тестового ответа");
         std::string payload(size, '\0');
         read_exact(payload.data(), size);
         return json::parse(payload);
@@ -125,7 +125,7 @@ void request_errors_and_handler_errors() {
     std::atomic_int calls{0};
     Transport transport([&](const json& input) -> json {
         ++calls;
-        if (input.at("op") == "reject") throw g1r_mcp::HandlerError("not_ready", "Мир не готов");
+        if (input.at("op") == "reject") throw sn2_mcp::HandlerError("not_ready", "Мир не готов");
         if (input.at("op") == "throw") throw std::runtime_error("Скрытая ошибка");
         if (input.at("op") == "scalar") return 1;
         return {{"ok", true}};
@@ -165,8 +165,8 @@ void request_errors_and_handler_errors() {
 void execution_error_metadata() {
     Transport transport([](const json& envelope)->json {
         if(envelope.at("op")=="pre_event")
-            throw g1r_mcp::HandlerError("invalid_object_argument","До вызова");
-        throw g1r_mcp::HandlerError("game_result_error","После вызова",
+            throw sn2_mcp::HandlerError("invalid_object_argument","До вызова");
+        throw sn2_mcp::HandlerError("game_result_error","После вызова",
             {{"executed",true},{"may_have_executed",true},{"do_not_retry",true},{"cause_code","stale_handle"}});
     },0);
     require(transport.start(),"Транспорт метаданных эффекта не запущен");

@@ -1,4 +1,4 @@
-#include <g1r_mcp/object_array_parameter_layout.hpp>
+#include <sn2_mcp/object_array_parameter_layout.hpp>
 
 #include <array>
 #include <cstring>
@@ -10,13 +10,13 @@
 #include <vector>
 
 namespace {
-using g1r_mcp::ObjectSerialIdentity;
+using sn2_mcp::ObjectSerialIdentity;
 using nlohmann::json;
 int checks{};
 void require(bool good,const char* message) {++checks;if(!good)throw std::runtime_error(message);}
 template<class Action> void reject(const char* code,Action&& action) {
     try {action();}
-    catch(const g1r_mcp::HandlerError& error) {
+    catch(const sn2_mcp::HandlerError& error) {
         require(error.code()==code,"Неверный отказ раскладки объектного массива");
         require(error.details()==json{{"executed",false},{"may_have_executed",false},{"do_not_retry",false}},
                 "Проверка метаданных не должна приписывать исполнение игровому вызову");return;
@@ -26,8 +26,8 @@ template<class Action> void reject(const char* code,Action&& action) {
 struct ReflectedMemory {
     static constexpr std::uintptr_t outer=0x1000,outer_class=0x2000,inner=0x3000,
         inner_class=0x4000,property_class=0x5000,metaclass=0x6000;
-    static constexpr auto flags=g1r_mcp::parameter_direction::parm|g1r_mcp::parameter_direction::const_parm|
-        g1r_mcp::parameter_direction::reference_parm;
+    static constexpr auto flags=sn2_mcp::parameter_direction::parm|sn2_mcp::parameter_direction::const_parm|
+        sn2_mcp::parameter_direction::reference_parm;
     std::map<std::uintptr_t,std::array<std::byte,8>> storage;
     std::map<std::uint64_t,std::string> names{{1,"ArrayProperty"},{2,"ObjectProperty"},{3,"ClassProperty"},
         {4,"WeakObjectProperty"},{5,"SoftObjectProperty"},{6,"StructProperty"},{7,"IntProperty"},
@@ -47,7 +47,7 @@ struct ReflectedMemory {
     template<class T> T read(std::uintptr_t address) {
         ++read_count;const auto found=storage.find(address);
         if(address==failing_address || found==storage.end())
-            throw g1r_mcp::HandlerError("invalid_memory","Изолированная память метаданных недоступна");
+            throw sn2_mcp::HandlerError("invalid_memory","Изолированная память метаданных недоступна");
         T result{};std::memcpy(&result,found->second.data(),sizeof(result));return result;
     }
     void set_field(std::uintptr_t field,std::uintptr_t field_class,std::uint64_t name,int size,int offset,std::uint64_t value_flags) {
@@ -61,12 +61,12 @@ struct ReflectedMemory {
         set_field(inner,inner_class,91,8,0,0);set(inner_class,std::uint64_t{2});set(inner+0x70,property_class);
     }
     json capture(int size=16,int dim=1,std::uint64_t expected_flags=flags,std::uintptr_t field=outer) {
-        return g1r_mcp::object_array_parameter_layout::capture(field,size,dim,expected_flags,
+        return sn2_mcp::object_array_parameter_layout::capture(field,size,dim,expected_flags,
             [this]<class T>(std::uintptr_t address){return read<T>(address);},
             [this](std::uint64_t value){const auto found=names.find(value);return found==names.end()?std::string{}:found->second;},
             [this](std::uintptr_t pointer){++identity_count;require(pointer==property_class || pointer==identity.object,"Identity запрошена для постороннего объекта");return identity;},
             [this](std::uintptr_t pointer){class_checks.push_back(pointer);if(!valid_classes.contains(pointer))
-                throw g1r_mcp::HandlerError("unsupported_object_array_type","Изолированный класс не подтверждён");},
+                throw sn2_mcp::HandlerError("unsupported_object_array_type","Изолированный класс не подтверждён");},
             [this](std::uintptr_t pointer){++path_count;require(pointer==identity.object,"Путь запрошен для другого класса");return path;});
     }
 };
@@ -78,7 +78,7 @@ template<class Mutate> void changed_metadata(Mutate&& mutate) {
 }
 
 int main() {
-    using namespace g1r_mcp;
+    using namespace sn2_mcp;
     using namespace parameter_direction;
     try {
         {ReflectedMemory memory;const auto snapshot=memory.capture();

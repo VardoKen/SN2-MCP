@@ -100,14 +100,14 @@ async def exercise(call) -> dict:
     report = {"checks": [], "echoes": [], "rejections": [], "cleanup": [], "reflected_functions": {},
               "native_math": {"tested": False}, "game_launched": False, "dll_loaded": False, "inout": "not_tested"}
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Tick and current native session are not confirmed")
 
         async def find(native=False):
             host = NATIVE_CLASS if native else HOST
-            found = await call("g1r_find_objects", {"query": "Default__" + host, "class_query": host,
+            found = await call("sn2_find_objects", {"query": "Default__" + host, "class_query": host,
                 "exact_path": NATIVE_PATH if native else "/Script/Angelscript.Default__" + HOST, "limit": 2})
             if (found.get("truncated") is not False or not isinstance(found.get("items"), list) or len(found["items"]) != 1):
                 raise ProbeError("probe_object_absent", "Exact const-vector/native-math CDO was not found uniquely")
@@ -115,10 +115,10 @@ async def exercise(call) -> dict:
 
         target = await find()
         handle = target["handle"]
-        layout = check_layout(await call("g1r_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
+        layout = check_layout(await call("sn2_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
         methods, tokens = {}, {}
         for name in METHODS:
-            listing = await call("g1r_object_functions", {"handle": handle, "function_query": name, "limit": 10})
+            listing = await call("sn2_object_functions", {"handle": handle, "function_query": name, "limit": 10})
             report["reflected_functions"][name] = listing
             methods[name], tokens[name] = check_signature(listing, name, layout["size"])
         if len(set(tokens.values())) != len(tokens):
@@ -127,7 +127,7 @@ async def exercise(call) -> dict:
         async def invoke(name, arguments=None, *, expected_error=None):
             payload = {} if arguments is None else arguments
             json.dumps(payload, allow_nan=False)
-            return await call("g1r_invoke", {"handle": handle, "function": name, "arguments": payload,
+            return await call("sn2_invoke", {"handle": handle, "function": name, "arguments": payload,
                               "expected_signature_token": tokens[name]}, expected_error=expected_error)
 
         check_scalar(await invoke("ReadMarker"), "IntProperty", MARKER)
@@ -172,17 +172,17 @@ async def exercise(call) -> dict:
             else:
                 raise ProbeError("probe_nonfinite_transport", "Nonfinite JSON was sent to MCP instead of being rejected locally")
         report["local_nonfinite_json_rejections"] = local_nonfinite
-        check_layout(await call("g1r_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
+        check_layout(await call("sn2_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
         report["checks"].append("malformed_const_vector_missing_unknown_and_nonfinite_json_refused_without_counter_change")
 
         native_target = await find(native=True)
-        native_listing = await call("g1r_object_functions", {"handle": native_target["handle"], "function_query": NATIVE_METHOD, "limit": 10})
+        native_listing = await call("sn2_object_functions", {"handle": native_target["handle"], "function_query": NATIVE_METHOD, "limit": 10})
         report["native_math"].update(target=native_target, reflected_functions=native_listing)
         native_method, native_token = check_signature(native_listing, NATIVE_METHOD, layout["size"], native=True)
         input_name = next(field["name"] for field in native_method["parameters"] if field["return"] is False)
         results = []
         for value, expected in (({"X": 0, "Y": 0, "Z": 0}, True), (STORED, False)):
-            result = await call("g1r_invoke", {"handle": native_target["handle"], "function": NATIVE_METHOD,
+            result = await call("sn2_invoke", {"handle": native_target["handle"], "function": NATIVE_METHOD,
                 "arguments": {input_name: value}, "expected_signature_token": native_token})
             check_scalar(result, "BoolProperty", expected)
             results.append({"input": value, "result": expected})
@@ -205,7 +205,7 @@ async def exercise(call) -> dict:
                     check_scalar(await invoke("ResetProbe"), "", None)
                     check_scalar(await invoke("ReadCallsCount"), "IntProperty", 0)
                     check_scalar(await invoke("ReadMarker"), "IntProperty", MARKER)
-                    check_layout(await call("g1r_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
+                    check_layout(await call("sn2_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
                     report["cleanup"].append("ResetProbe_zero_counter_marker181_unchanged_stored_vector")
                 try:
                     await settle_task(asyncio.create_task(finish_cleanup()), timeout=30, label="const-vector contract cleanup")
@@ -224,7 +224,7 @@ async def run(args) -> dict:
                 initialized = await session.initialize()
                 return {"server_version": initialized.server_info.version, **await exercise(make_caller(session))}
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):
         async with ClientSession(incoming, outgoing) as session:

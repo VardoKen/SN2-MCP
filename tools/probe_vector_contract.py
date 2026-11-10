@@ -190,20 +190,20 @@ async def exercise(call) -> dict:
     report = {"checks": [], "echoes": [], "rejections": [], "cleanup": [],
               "game_launched": False, "dll_loaded": False, "inout": "not_tested"}
     try:
-        status = await call("g1r_native_status", {})
+        status = await call("sn2_native_status", {})
         session_id = status.get("session_id")
         if status.get("ready") is not True or not isinstance(session_id, str) or not session_id:
             raise ProbeError("game_not_ready", "Tick and current native session are not confirmed")
-        found = await call("g1r_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
+        found = await call("sn2_find_objects", {"query": "Default__" + HOST, "class_query": HOST,
                                                 "exact_path": "/Script/Angelscript.Default__" + HOST, "limit": 2})
         if (found.get("truncated") is not False or not isinstance(found.get("items"), list) or len(found["items"]) != 1):
             raise ProbeError("probe_object_absent", "Owned FVector CDO was not found uniquely")
         target = check_target(found["items"][0])
         handle = target["handle"]
-        layout = check_layout(await call("g1r_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
+        layout = check_layout(await call("sn2_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
         tokens = {}
         for method in METHODS:
-            _, tokens[method] = check_signature(await call("g1r_object_functions", {"handle": handle, "function_query": method, "limit": 10}), method, layout["size"])
+            _, tokens[method] = check_signature(await call("sn2_object_functions", {"handle": handle, "function_query": method, "limit": 10}), method, layout["size"])
         if len(set(tokens.values())) != len(tokens):
             raise ProbeError("probe_signature_token_alias", "Different FVector methods received the same token")
 
@@ -211,7 +211,7 @@ async def exercise(call) -> dict:
             arguments = arguments or {}
             # JSON NaN/Infinity must not be sent to transport and reported as a native rejection.
             json.dumps(arguments, allow_nan=False)
-            return await call("g1r_invoke", {"handle": handle, "function": method, "arguments": arguments,
+            return await call("sn2_invoke", {"handle": handle, "function": method, "arguments": arguments,
                               "expected_signature_token": tokens[method]}, expected_error=expected_error)
 
         count = 0
@@ -272,7 +272,7 @@ async def exercise(call) -> dict:
                 raise ProbeError("probe_nonfinite_transport", "Nonfinite JSON was sent to MCP instead of being rejected locally")
         report["local_nonfinite_json_rejections"] = local_nonfinite
         report["checks"].append("malformed_vector_and_out_marker_refused_without_counter_change")
-        check_layout(await call("g1r_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
+        check_layout(await call("sn2_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
         check_scalar(await invoke("ReadCallsCount"), "IntProperty", count)
         report["completed_mutating_calls"] = count
         return report
@@ -292,7 +292,7 @@ async def exercise(call) -> dict:
                 check_scalar(await invoke("ResetProbe"), "", None)
                 check_scalar(await invoke("ReadCallsCount"), "IntProperty", 0)
                 check_scalar(await invoke("ReadMarker"), "IntProperty", MARKER)
-                check_layout(await call("g1r_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
+                check_layout(await call("sn2_read_struct", {"handle": handle, "property_name": "StoredVector"}), target, session_id)
                 report["cleanup"].append("ResetProbe_zero_counter_marker161_unchanged_stored_vector")
             try:
                 if return_cleanup:
@@ -312,7 +312,7 @@ async def run(args) -> dict:
                 initialized = await session.initialize()
                 return {"server_version": initialized.server_info.version, **await exercise(make_caller(session))}
     parameters = StdioServerParameters(command=sys.executable,
-        args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(args.modkit_root),
+        args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(args.modkit_root),
               "--workspace-root", str(args.workspace_root), "--native-port", str(args.native_port)], cwd=str(REPOSITORY_ROOT))
     async with stdio_client(parameters) as (incoming, outgoing):
         async with ClientSession(incoming, outgoing) as session:

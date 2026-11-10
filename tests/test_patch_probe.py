@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from g1r_mcp.packages import PackageError
-from g1r_mcp.workspace import WorkspaceError
+from sn2_mcp.packages import PackageError
+from sn2_mcp.workspace import WorkspaceError
 
 spec = importlib.util.spec_from_file_location("prepare_patch_probe", ROOT / "tools/prepare_patch_probe.py")
 prepare = importlib.util.module_from_spec(spec)
@@ -42,7 +42,7 @@ class PatchProbeTests(unittest.TestCase):
             raw = (package / name).read_bytes()
             self.assertEqual(raw, (prepare.FIXTURE_ROOT / name).read_bytes())
             self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)
-        self.assertFalse(any(path.name.startswith(".g1r-mcp-") for path in self.workspace.rglob("*")))
+        self.assertFalse(any(path.name.startswith(".sn2-mcp-") for path in self.workspace.rglob("*")))
 
     def test_source_class_keyword_and_patch_context_are_consistent(self):
         source = (prepare.FIXTURE_ROOT / prepare.SCRIPT_RELATIVE).read_text(encoding="utf-8")

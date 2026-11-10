@@ -24,7 +24,7 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
         workspace.mkdir()
         game = root / "configured-game"
         parameters = StdioServerParameters(command=sys.executable,
-            args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
+            args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(modkit),
                   "--workspace-root", str(workspace), "--game-root", str(game)])
         return modkit, workspace, game, parameters
 
@@ -55,41 +55,41 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     initialized = await client.initialize()
                     instructions = initialized.instructions
                     self.assertIsInstance(instructions, str)
-                    for important in ("GothicMod.json", "SHA-256", "g1r_native_enable", "g1r_native_status",
-                                      "g1r_development_start", "g1r_native_load", "g1r_read_source_exact",
-                                      "g1r_read_package_file_exact", "reconnect", "do not automatically retry"):
+                    for important in ("GothicMod.json", "SHA-256", "sn2_native_enable", "sn2_native_status",
+                                      "sn2_development_start", "sn2_native_load", "sn2_read_source_exact",
+                                      "sn2_read_package_file_exact", "reconnect", "do not automatically retry"):
                         self.assertIn(important, instructions)
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
                     self.assertEqual(len(tools), 64)
-                    self.assertTrue(tools["g1r_list_source_functions"].annotations.read_only_hint)
-                    self.assertTrue(tools["g1r_source_identity"].annotations.read_only_hint)
-                    self.assertTrue(tools["g1r_verify_source_game"].annotations.read_only_hint)
-                    status = await self.call_ok(client, "g1r_status")
+                    self.assertTrue(tools["sn2_list_source_functions"].annotations.read_only_hint)
+                    self.assertTrue(tools["sn2_source_identity"].annotations.read_only_hint)
+                    self.assertTrue(tools["sn2_verify_source_game"].annotations.read_only_hint)
+                    status = await self.call_ok(client, "sn2_status")
                     self.assertEqual(status["server"]["runtime_root"], str(runtime))
                     self.assertEqual(status["sources"]["root"], str(modkit))
-                    self.assertEqual(status["sources"]["identity_tool"], "g1r_source_identity")
+                    self.assertEqual(status["sources"]["identity_tool"], "sn2_source_identity")
                     self.assertEqual(status["workspace"]["root"], str(workspace))
                     self.assertEqual(status["game"]["configured_root"], str(game))
                     self.assertFalse(status["game"]["connection_checked"])
                     self.assertFalse(status["game"]["ready_known"])
                     self.assertFalse(game.exists())
-                    catalog = await self.call_ok(client, "g1r_capabilities")
+                    catalog = await self.call_ok(client, "sn2_capabilities")
                     contracts = {item["name"]: item for item in catalog["tool_contracts"]}
                     local_tools = {item["name"]: item for item in catalog["local_tools"]}
-                    runtime_mutations = {"g1r_save_list", "g1r_save_load", "g1r_modlist_dialog",
-                                         "g1r_debug_attach", "g1r_debug_detach", "g1r_debug_breakpoints",
-                                         "g1r_debug_control", "g1r_debug_evaluate"}
+                    runtime_mutations = {"sn2_save_list", "sn2_save_load", "sn2_modlist_dialog",
+                                         "sn2_debug_attach", "sn2_debug_detach", "sn2_debug_breakpoints",
+                                         "sn2_debug_control", "sn2_debug_evaluate"}
                     for name in runtime_mutations:
                         self.assertEqual(local_tools[name]["effects"], "runtime_state_change")
                         self.assertEqual(local_tools[name]["validation"], "runtime_not_checked")
-                    for name in ("g1r_save_list", "g1r_save_load", "g1r_debug_attach", "g1r_debug_stack"):
+                    for name in ("sn2_save_list", "sn2_save_load", "sn2_debug_attach", "sn2_debug_stack"):
                         self.assertIsNone(local_tools[name]["available"])
-                    for name in ("g1r_save_status", "g1r_debug_status"):
+                    for name in ("sn2_save_status", "sn2_debug_status"):
                         self.assertTrue(local_tools[name]["available"])
                         self.assertEqual(local_tools[name]["effects"], "read_only")
                         self.assertEqual(local_tools[name]["validation"], "runtime_not_checked")
-                    self.assertEqual(local_tools["g1r_read_source"]["validation"], "local_only")
-                    self.assertTrue(local_tools["g1r_read_source"]["available"])
+                    self.assertEqual(local_tools["sn2_read_source"]["validation"], "local_only")
+                    self.assertTrue(local_tools["sn2_read_source"]["available"])
                     self.assertEqual(len(catalog["tool_contracts"]), len(tools))
                     self.assertEqual(set(contracts), set(tools))
                     for name, tool in tools.items():
@@ -102,28 +102,28 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(contract["effects"]["read_only"], tool.annotations.read_only_hint)
                         self.assertEqual(contract["effects"]["idempotent"], tool.annotations.idempotent_hint)
                         self.assertEqual(contract["effects"]["destructive"], tool.annotations.destructive_hint)
-                        self.assertEqual(contract["source"]["handler"], "src/g1r_mcp/server.py:" + name)
+                        self.assertEqual(contract["source"]["handler"], "src/sn2_mcp/server.py:" + name)
                         self.assertEqual(contract["source"]["verification_kind"], "source")
                         self.assertTrue(contract["source"]["implementation"])
                         self.assertFalse(contract["availability"]["checked"])
                         self.assertIsNone(contract["availability"]["current"])
                         self.assertTrue(set(contract["context"]["state_tools"]) <= set(tools))
-                    self.assertTrue(contracts["g1r_invoke"]["result"]["dynamic_fields"])
-                    self.assertIn("current_game_tick", contracts["g1r_invoke"]["context"]["requires"])
-                    key_context = contracts["g1r_development_key"]["context"]["requires"]
+                    self.assertTrue(contracts["sn2_invoke"]["result"]["dynamic_fields"])
+                    self.assertIn("current_game_tick", contracts["sn2_invoke"]["context"]["requires"])
+                    key_context = contracts["sn2_development_key"]["context"]["requires"]
                     self.assertIn("exact_expected_process", key_context)
                     self.assertNotIn("current_game_tick", key_context)
                     self.assertNotIn("native_tcp_channel", key_context)
-                    self.assertFalse(contracts["g1r_development_key"]["effects"]["read_only"])
-                    self.assertIn("handling_confirmed", contracts["g1r_development_key"]["result"]["fields"])
-                    self.assertNotIn("native_tcp_channel", contracts["g1r_read_source_exact"]["context"]["requires"])
-                    watch_list = contracts["g1r_watch_list"]
+                    self.assertFalse(contracts["sn2_development_key"]["effects"]["read_only"])
+                    self.assertIn("handling_confirmed", contracts["sn2_development_key"]["result"]["fields"])
+                    self.assertNotIn("native_tcp_channel", contracts["sn2_read_source_exact"]["context"]["requires"])
+                    watch_list = contracts["sn2_watch_list"]
                     self.assertEqual(set(watch_list["args"].get("properties", {})), {"timeout_seconds"})
                     self.assertEqual(watch_list["args"].get("required", []), [])
                     self.assertEqual(watch_list["result"]["fields"], ["session_id", "current_client_owner", "items"])
                     self.assertTrue(watch_list["effects"]["read_only"])
                     self.assertNotIn("events", watch_list["result"]["fields"])
-                    watch_resume = contracts["g1r_watch_resume"]
+                    watch_resume = contracts["sn2_watch_resume"]
                     self.assertEqual(set(watch_resume["args"]["properties"]),
                                      {"watch_id", "expected_session_id", "expected_client_owner", "timeout_seconds"})
                     self.assertEqual(set(watch_resume["args"]["required"]), {"watch_id"})
@@ -131,7 +131,7 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(watch_resume["effects"]["target"], "native_observation_client_metadata")
                     self.assertNotIn("expected_previous_client_owner", watch_resume["context"]["requires"])
                     self.assertNotIn("mcp_client_identity", watch_resume["context"]["requires"])
-                    self.assertIn("g1r_watch_list", watch_resume["context"]["state_tools"])
+                    self.assertIn("sn2_watch_list", watch_resume["context"]["state_tools"])
                     self.assertIn("client_owner", watch_resume["result"]["fields"])
                     self.assertIn("oldest_seq", watch_resume["result"]["fields"])
                     compile_group = next(group for group in catalog["game_groups"] if group["name"] == "compile_diagnostics")
@@ -139,14 +139,14 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(compile_group["availability"], "caller_selected_file_or_native_compiler_manager")
                     self.assertEqual(compile_group["reason_code"], "current_availability_not_checked")
                     self.assertEqual(catalog["source_identity"], {
-                        "tool": "g1r_source_identity", "snapshot_kind": "sequential_git_reads",
+                        "tool": "sn2_source_identity", "snapshot_kind": "sequential_git_reads",
                         "source_only": True, "revision_source": "caller_label",
                         "worktree_scope": "repository", "game_compatibility_checked": False})
                     self.assertEqual(catalog["source_game_verification"], {
-                        "tool": "g1r_verify_source_game", "snapshot_kind": "sequential_file_reads",
+                        "tool": "sn2_verify_source_game", "snapshot_kind": "sequential_file_reads",
                         "correlation_scope": "modkit_script_subset_byte_equality", "paths": "server_configuration",
                         "runtime_compatibility_checked": False, "hash_executable_default": False})
-                    identity = await self.call_ok(client, "g1r_source_identity")
+                    identity = await self.call_ok(client, "sn2_source_identity")
                     self.assertIsInstance(identity["inspected_at"], str)
                     self.assertEqual(identity["snapshot_kind"], "sequential_git_reads")
                     self.assertIsNone(identity["configured_revision"])
@@ -160,20 +160,20 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(identity["git"]["read_status"]["head"], {"not_inspected", "unavailable"})
                     self.assertIn(identity["git"]["read_status"]["working_tree"], {"not_inspected", "unavailable"})
                     native_catalog = {item["name"]: item for item in catalog["native_tools"]}
-                    self.assertTrue(native_catalog["g1r_watch_list"]["read_only_hint"])
-                    self.assertFalse(native_catalog["g1r_watch_resume"]["read_only_hint"])
-                    for name in ("g1r_read_array", "g1r_read_struct"):
+                    self.assertTrue(native_catalog["sn2_watch_list"]["read_only_hint"])
+                    self.assertFalse(native_catalog["sn2_watch_resume"]["read_only_hint"])
+                    for name in ("sn2_read_array", "sn2_read_struct"):
                         self.assertTrue(native_catalog[name]["read_only_hint"])
                         self.assertTrue(tools[name].annotations.read_only_hint)
                     self.assertEqual(catalog["source_functions"], {
-                        "tool": "g1r_list_source_functions", "parser_kind": "lexical",
+                        "tool": "sn2_list_source_functions", "parser_kind": "lexical",
                         "result_field": "items", "prototype": "raw_source",
                         "item_fields": ["name", "owner", "namespace", "kind", "prototype", "path",
                                         "start_line", "end_line", "file_sha256", "root_kind"],
                         "runtime_signature_confirmed": False})
                     self.assertEqual(catalog["source_types"]["base_type"], "unresolved_source")
                     self.assertFalse(catalog["source_types"]["runtime_type_confirmed"])
-                    source_types = await self.call_ok(client, "g1r_list_source_types", {"query": "UOfficial"})
+                    source_types = await self.call_ok(client, "sn2_list_source_types", {"query": "UOfficial"})
                     self.assertEqual(source_types["parser_kind"], "lexical")
                     self.assertEqual(source_types["items"][0]["declaration"], "class UOfficial")
                     self.assertIsNone(source_types["items"][0]["base_type"])
@@ -204,7 +204,7 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(script_errors["stack_capture_supported"])
                     self.assertEqual(script_errors["stack_result_field"], "script_errors.stack_captured")
                     self.assertFalse(script_errors["absence_of_logged_errors_proves_script_completion"])
-                    functions = await self.call_ok(client, "g1r_list_source_functions", {
+                    functions = await self.call_ok(client, "sn2_list_source_functions", {
                         "query": "ReadValue", "relative_path": "Script/Official.as", "limit": 500, "offset": 0})
                     self.assertEqual(functions["parser_kind"], "lexical")
                     self.assertEqual(functions["total_matches"], 1)
@@ -214,10 +214,10 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                         "start_line": 3, "end_line": 3, "file_sha256": hashlib.sha256(before).hexdigest(),
                         "root_kind": "game_script"}])
                     development = catalog["development_tools"]["operations"]
-                    self.assertEqual(set(development), {"g1r_development_recipe", "g1r_development_processes",
-                                                       "g1r_development_start", "g1r_development_stop", "g1r_development_key", "g1r_native_load",
-                                                         "g1r_session_status", "g1r_session_acquire", "g1r_session_release", "g1r_compile_diagnostics",
-                                                         "g1r_apply_staged_file"})
+                    self.assertEqual(set(development), {"sn2_development_recipe", "sn2_development_processes",
+                                                       "sn2_development_start", "sn2_development_stop", "sn2_development_key", "sn2_native_load",
+                                                         "sn2_session_status", "sn2_session_acquire", "sn2_session_release", "sn2_compile_diagnostics",
+                                                         "sn2_apply_staged_file"})
                     catalogued = {item["name"] for group in ("local_tools", "native_tools", "workspace_tools")
                                   for item in catalog[group]}
                     catalogued.update(development)
@@ -234,21 +234,21 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(all(isinstance(step, dict) and step.get("condition") for step in sequence))
                     sequence_names = [step["tool"] for step in sequence]
                     self.assertTrue(set(sequence_names) <= set(tools))
-                    self.assertLess(sequence_names.index("g1r_development_recipe"), sequence_names.index("g1r_development_start"))
-                    self.assertLess(sequence_names.index("g1r_native_load"), sequence_names.index("g1r_native_enable"))
-                    self.assertLess(sequence_names.index("g1r_object_functions"), sequence_names.index("g1r_invoke"))
-                    self.assertEqual(sequence_names[-1], "g1r_development_stop")
+                    self.assertLess(sequence_names.index("sn2_development_recipe"), sequence_names.index("sn2_development_start"))
+                    self.assertLess(sequence_names.index("sn2_native_load"), sequence_names.index("sn2_native_enable"))
+                    self.assertLess(sequence_names.index("sn2_object_functions"), sequence_names.index("sn2_invoke"))
+                    self.assertEqual(sequence_names[-1], "sn2_development_stop")
                     self.assertTrue(set(bootstrap["existing_session_sequence"]) <= set(tools))
-                    self.assertFalse(set(bootstrap["existing_session_sequence"]) & {"g1r_development_start", "g1r_native_load"})
+                    self.assertFalse(set(bootstrap["existing_session_sequence"]) & {"sn2_development_start", "sn2_native_load"})
                     self.assertTrue(set(bootstrap["edit_tools"]) <= set(tools))
                     examples = bootstrap["argument_examples"]
                     self.assertTrue(set(examples) <= set(tools))
-                    self.assertEqual(set(examples["g1r_create_package"]["metadata"]), {"name", "title", "author", "modVersion"})
-                    target = examples["g1r_snapshot"]["targets"][0]
+                    self.assertEqual(set(examples["sn2_create_package"]["metadata"]), {"name", "title", "author", "modVersion"})
+                    target = examples["sn2_snapshot"]["targets"][0]
                     self.assertEqual(set(target), {"handle", "properties"})
                     self.assertTrue(target["properties"])
-                    self.assertEqual(examples["g1r_list_package_files"]["offset"], 0)
-                    self.assertEqual(examples["g1r_invoke"]["arguments"], {"use_reflected_parameter_name": None})
+                    self.assertEqual(examples["sn2_list_package_files"]["offset"], 0)
+                    self.assertEqual(examples["sn2_invoke"]["arguments"], {"use_reflected_parameter_name": None})
                     self.assertTrue(bootstrap["script_patch_engine_apply_confirmed"])
                     self.assertEqual(catalog["invoke_arguments"]["rotator"], {
                         "type": "FRotator", "struct_path": "/Script/CoreUObject.Rotator",
@@ -300,12 +300,12 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("session", bootstrap["ownership"])
                     self.assertIn("find_objects_again", bootstrap["reconnect"])
                     self.assertIn("never_automatically_retry", bootstrap["uncertain_effect"])
-                    for name in ("g1r_status", "g1r_capabilities", "g1r_development_recipe", "g1r_development_processes",
-                                 "g1r_native_status", "g1r_find_objects", "g1r_object_functions", "g1r_read_source_exact",
-                                 "g1r_read_package_file_exact"):
+                    for name in ("sn2_status", "sn2_capabilities", "sn2_development_recipe", "sn2_development_processes",
+                                 "sn2_native_status", "sn2_find_objects", "sn2_object_functions", "sn2_read_source_exact",
+                                 "sn2_read_package_file_exact"):
                         self.assertTrue(tools[name].annotations.read_only_hint)
-                    for name in ("g1r_development_start", "g1r_native_load", "g1r_native_enable",
-                                 "g1r_invoke", "g1r_development_stop", "g1r_write_package_file"):
+                    for name in ("sn2_development_start", "sn2_native_load", "sn2_native_enable",
+                                 "sn2_invoke", "sn2_development_stop", "sn2_write_package_file"):
                         self.assertFalse(tools[name].annotations.read_only_hint)
             self.assertEqual((modkit / "Script/Official.as").read_bytes(), before)
             self.assertEqual(list(workspace.iterdir()), [])
@@ -327,13 +327,13 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    tool = next(tool for tool in (await client.list_tools()).tools if tool.name == "g1r_list_package_files")
+                    tool = next(tool for tool in (await client.list_tools()).tools if tool.name == "sn2_list_package_files")
                     self.assertTrue(tool.annotations.read_only_hint)
                     self.assertIn("offset", tool.input_schema["properties"])
                     pages = []
                     offset = 0
                     for _ in range(4):
-                        page = await self.call_ok(client, "g1r_list_package_files", {
+                        page = await self.call_ok(client, "sn2_list_package_files", {
                             "relative_path": "LargePackage", "limit": 100, "offset": offset,
                         })
                         self.assertEqual(page["offset"], offset)
@@ -352,7 +352,7 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     expected = ["GothicMod.json"] + [f"Script/File{index:03}.as" for index in range(205)]
                     self.assertEqual(pages, expected)
                     self.assertEqual(len(set(pages)), 206)
-                    empty = await self.call_ok(client, "g1r_list_package_files", {
+                    empty = await self.call_ok(client, "sn2_list_package_files", {
                         "relative_path": "LargePackage", "limit": 100, "offset": 10001,
                     })
                     self.assertEqual(empty["items"], [])
@@ -361,7 +361,7 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(empty["next_offset"])
                     self.assertFalse(empty["has_more"])
                     self.assertTrue(empty["truncated"])
-                    await self.call_error(client, "g1r_list_package_files", {
+                    await self.call_error(client, "sn2_list_package_files", {
                         "relative_path": "LargePackage", "limit": 100, "offset": -1,
                     }, "invalid_arguments")
             self.assertEqual({str(path.relative_to(package)): path.read_bytes() for path in package.rglob("*") if path.is_file()}, before)
@@ -389,7 +389,7 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    report = await self.call_ok(client, "g1r_verify_source_game")
+                    report = await self.call_ok(client, "sn2_verify_source_game")
                     self.assertTrue(report["ok"])
                     self.assertEqual(report["manifest"]["appid"], "1297900")
                     self.assertEqual(report["manifest"]["buildid"], "26295476")
@@ -407,10 +407,10 @@ class MCPBootstrapTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsInstance(report["inspection_finished_at"], str)
                     self.assertFalse(report["source_identity"]["game_compatibility_checked"])
                     self.assertNotIn("executable", report)
-                    hashed = await self.call_ok(client, "g1r_verify_source_game", {"hash_executable": True})
+                    hashed = await self.call_ok(client, "sn2_verify_source_game", {"hash_executable": True})
                     self.assertEqual(hashed["executable"]["sha256"], hashlib.sha256(executable.read_bytes()).hexdigest())
                     (scripts / "Official.as").write_bytes(b"class UDifferent {}\n")
-                    mismatch = await self.call_ok(client, "g1r_verify_source_game")
+                    mismatch = await self.call_ok(client, "sn2_verify_source_game")
                     self.assertFalse(mismatch["subset_matches_game_scripts"])
                     self.assertEqual(mismatch["scripts"]["different_files"], ["Official.as"])
                     self.assertFalse(mismatch["runtime_compatibility_checked"])

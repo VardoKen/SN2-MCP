@@ -73,12 +73,11 @@ class MCPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             parameters = StdioServerParameters(command=sys.executable, args=[
-                "-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
-                "--workspace-root", str(workspace), "--native-port", str(native.port)])
+                "-B", "-m", "sn2_mcp.server", "--workspace-root", str(workspace), "--native-port", str(native.port)])
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
-                    response = await client.call_tool("g1r_invoke", {"handle": handle, "function": "WriteScalars",
+                    response = await client.call_tool("sn2_invoke", {"handle": handle, "function": "WriteScalars",
                         "arguments": arguments, "expected_signature_token": "sig-30"})
                     self.assertFalse(response.is_error, response.content)
                     self.assertEqual(response.structured_content, result)
@@ -91,7 +90,7 @@ class MCPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.structured_content["out_parameter_metadata"]["Enabled"]["bool_layout"],
                                      metadata["Enabled"]["bool_layout"])
                     for offset, rejected in enumerate(rejected_arguments):
-                        failed = await client.call_tool("g1r_invoke", {"handle": handle, "function": "WriteScalars",
+                        failed = await client.call_tool("sn2_invoke", {"handle": handle, "function": "WriteScalars",
                             "arguments": rejected, "expected_signature_token": "sig-30"})
                         self.assertTrue(failed.is_error, failed.content)
                         message = next(block.text for block in failed.content if block.type == "text")
@@ -100,7 +99,7 @@ class MCPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(error["effect"], no_effect)
                         self.assertIs(error["may_have_executed"], False)
                         self.assertEqual(error["request_id"], native.requests[1 + offset]["id"])
-                    failed = await client.call_tool("g1r_invoke", {"handle": handle, "function": "WriteScalarRef",
+                    failed = await client.call_tool("sn2_invoke", {"handle": handle, "function": "WriteScalarRef",
                         "arguments": {"Output": {"out": True}}, "expected_signature_token": "sig-31"})
                     self.assertTrue(failed.is_error, failed.content)
                     message = next(block.text for block in failed.content if block.type == "text")
@@ -109,7 +108,7 @@ class MCPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], no_effect)
                     self.assertIs(error["may_have_executed"], False)
                     self.assertEqual(error["request_id"], native.requests[5]["id"])
-                    failed = await client.call_tool("g1r_invoke", {"handle": handle, "function": "WriteScalars",
+                    failed = await client.call_tool("sn2_invoke", {"handle": handle, "function": "WriteScalars",
                         "arguments": arguments, "expected_signature_token": "sig-30"})
                     self.assertTrue(failed.is_error, failed.content)
                     message = next(block.text for block in failed.content if block.type == "text")
@@ -118,7 +117,7 @@ class MCPScalarOutputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error["effect"], unknown_effect)
                     self.assertIs(error["may_have_executed"], True)
                     self.assertEqual(error["request_id"], native.requests[6]["id"])
-                    checked = await client.call_tool("g1r_native_status", {})
+                    checked = await client.call_tool("sn2_native_status", {})
                     self.assertFalse(checked.is_error, checked.content)
                     self.assertEqual(checked.structured_content, status)
             self.assertEqual(native.connections, 1)

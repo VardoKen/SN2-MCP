@@ -70,15 +70,15 @@ class VectorFixture:
 
     async def call(self, name, arguments, *, expected_error=None):
         self.calls.append((name, arguments, expected_error))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "native-owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             return {"items": [self.target], "truncated": False}
-        if name == "g1r_read_struct":
+        if name == "sn2_read_struct":
             return self.layout()
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             return self.functions(arguments["function_query"])
-        if name != "g1r_invoke":
+        if name != "sn2_invoke":
             raise AssertionError((name, arguments))
         method = arguments["function"]
         if arguments["expected_signature_token"] != self.tokens[method]:
@@ -132,7 +132,7 @@ class VectorProbeTests(unittest.TestCase):
         self.assertEqual(fixture.count, 0)
         self.assertEqual(fixture.resets, 1)
         self.assertEqual(report["inout"], "not_tested")
-        self.assertFalse(any(name in {"g1r_development_start", "g1r_development_stop", "g1r_native_load"} for name, _, _ in fixture.calls))
+        self.assertFalse(any(name in {"sn2_development_start", "sn2_development_stop", "sn2_native_load"} for name, _, _ in fixture.calls))
 
     def test_float_layout_omits_large_double_case(self):
         fixture = VectorFixture(width=4)
@@ -148,7 +148,7 @@ class VectorProbeTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(probe.ProbeError):
                 asyncio.run(probe.exercise(fixture.call))
             self.assertEqual(fixture.resets, 0)
-            self.assertFalse(any(name == "g1r_invoke" and arguments["function"] in {"EchoVector", "WriteVector"}
+            self.assertFalse(any(name == "sn2_invoke" and arguments["function"] in {"EchoVector", "WriteVector"}
                                  for name, arguments, _ in fixture.calls))
 
     def test_bad_return_out_or_false_effect_restores_counter_once(self):
@@ -172,7 +172,7 @@ class VectorProbeTests(unittest.TestCase):
         async def scenario(code):
             fixture = VectorFixture()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "EchoVector":
+                if name == "sn2_invoke" and arguments["function"] == "EchoVector":
                     await fixture.call(name, arguments)
                     raise probe.ProbeError(code, "Результат исходного вызова неизвестен")
                 return await fixture.call(name, arguments, expected_error=expected_error)
@@ -182,7 +182,7 @@ class VectorProbeTests(unittest.TestCase):
             self.assertEqual(fixture.resets, 0)
             self.assertTrue(any("FVector cleanup skipped after an uncertain call or unavailable connection" in note
                                 for note in caught.exception.__notes__))
-            self.assertEqual(sum(name == "g1r_invoke" and arguments["function"] == "EchoVector" for name, arguments, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and arguments["function"] == "EchoVector" for name, arguments, _ in fixture.calls), 1)
         for code in ("game_timeout", "game_call_fault", "native_disconnected"):
             with self.subTest(code=code):
                 asyncio.run(scenario(code))
@@ -253,10 +253,10 @@ class VectorProbeTests(unittest.TestCase):
             fixture = VectorFixture()
             reset_started, release = asyncio.Event(), asyncio.Event()
             async def call(name, arguments, *, expected_error=None):
-                if name == "g1r_invoke" and arguments["function"] == "EchoVector" and not expected_error:
+                if name == "sn2_invoke" and arguments["function"] == "EchoVector" and not expected_error:
                     await fixture.call(name, arguments)
                     raise asyncio.CancelledError()
-                if name == "g1r_invoke" and arguments["function"] == "ResetProbe":
+                if name == "sn2_invoke" and arguments["function"] == "ResetProbe":
                     reset_started.set(); await release.wait()
                 return await fixture.call(name, arguments, expected_error=expected_error)
             task = asyncio.create_task(probe.exercise(call))
@@ -266,7 +266,7 @@ class VectorProbeTests(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertEqual(fixture.resets, 1)
             self.assertEqual(fixture.count, 0)
-            self.assertEqual(sum(name == "g1r_invoke" and arguments["function"] == "EchoVector" for name, arguments, _ in fixture.calls), 1)
+            self.assertEqual(sum(name == "sn2_invoke" and arguments["function"] == "EchoVector" for name, arguments, _ in fixture.calls), 1)
         asyncio.run(scenario())
 
 

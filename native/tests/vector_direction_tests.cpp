@@ -1,4 +1,4 @@
-#include <g1r_mcp/vector_parameter_direction.hpp>
+#include <sn2_mcp/vector_parameter_direction.hpp>
 
 #include <cstdint>
 #include <iostream>
@@ -7,8 +7,8 @@
 
 namespace {
 using nlohmann::json;
-using g1r_mcp::HandlerError;
-namespace direction = g1r_mcp::vector_parameter_direction;
+using sn2_mcp::HandlerError;
+namespace direction = sn2_mcp::vector_parameter_direction;
 int checks{};
 
 void require(bool condition,const char* message) {
@@ -50,7 +50,7 @@ int main() {
                     "Const FVector с Out или Reference должен быть input");
             require(classified!=direction::Direction::output,
                     "Const FVector input не должен требовать out-маркер или выдавать out_parameters");
-            rejects("unsupported_signature",[&]{g1r_mcp::parameter_direction::classify(flags);});
+            rejects("unsupported_signature",[&]{sn2_mcp::parameter_direction::classify(flags);});
         }
 
         // Возвращаемый FVector обрабатывается другим маршрутом, не input/out.

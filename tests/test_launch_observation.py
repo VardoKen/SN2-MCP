@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from g1r_mcp.development import CommandResult, DevelopmentError, DevelopmentService
+from sn2_mcp.development import CommandResult, DevelopmentError, DevelopmentService
 
 
 def timestamp(value):
@@ -42,7 +42,7 @@ class LaunchObservationTests(unittest.TestCase):
         self.repository = self.root / "repo"
         self.repository.mkdir()
         (self.repository / "tools").mkdir()
-        for tool in ("game_process_state.ps1", "start_g1r_development.ps1"):
+        for tool in ("game_process_state.ps1", "start_sn2_development.ps1"):
             (self.repository / "tools" / tool).write_text("fixture", encoding="utf-8")
         self.workspace = self.root / "workspace"
         package = self.workspace / "Probe"
@@ -255,12 +255,12 @@ class LaunchObservationTests(unittest.TestCase):
             raise OSError("mock close failure")
         lease.close = failed_close
         self.processes = []
-        calls = self.calls.count("start_g1r_development.ps1")
+        calls = self.calls.count("start_sn2_development.ps1")
         with self.assertRaises(DevelopmentError) as caught:
             self.start()
         self.assertEqual(caught.exception.code, "observer_close_failed")
         self.assertFalse(caught.exception.outcome_unknown)
-        self.assertEqual(self.calls.count("start_g1r_development.ps1"), calls)
+        self.assertEqual(self.calls.count("start_sn2_development.ps1"), calls)
         self.assertEqual(lease.close_count, 1)
         # Новый независимый HANDLE: error освобождения не меняет доказанный exit.
         self.start(); self.processes = [self.inner(pid=222)]
@@ -280,7 +280,7 @@ class LaunchObservationTests(unittest.TestCase):
         self.processes = []
         original = self.service.executor
         def failure(arguments, timeout):
-            if Path(arguments[arguments.index("-File") + 1]).name == "start_g1r_development.ps1":
+            if Path(arguments[arguments.index("-File") + 1]).name == "start_sn2_development.ps1":
                 return CommandResult(2, "mock failure")
             return original(arguments, timeout)
         self.service.executor = failure

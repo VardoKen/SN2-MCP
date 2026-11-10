@@ -47,9 +47,9 @@ class WorldLifecycleCalls:
 
     async def call(self, name, args):
         self.calls.append((name, copy.deepcopy(args)))
-        if name == "g1r_native_status":
+        if name == "sn2_native_status":
             return {"ready": True, "session_id": "owner"}
-        if name == "g1r_find_objects":
+        if name == "sn2_find_objects":
             if args["class_query"] != live.HOST:
                 raise AssertionError("Проверка запросила посторонний класс")
             self.samples += 1
@@ -59,7 +59,7 @@ class WorldLifecycleCalls:
             return {"items": items, "truncated": False}
         handle = args.get("handle", args.get("targets", [{}])[0].get("handle"))
         target = self.targets[handle]
-        if name == "g1r_object_functions":
+        if name == "sn2_object_functions":
             result = {
                 "scan_complete": True, "truncated": False,
                 "items": [{"name": method, "parameter_size": 4, "parameters_truncated": False,
@@ -71,7 +71,7 @@ class WorldLifecycleCalls:
             if self.invalid == "signature_incomplete":
                 result.pop("scan_complete")
             return result
-        if name == "g1r_invoke":
+        if name == "sn2_invoke":
             method = args["function"]
             if method not in {"ReadMarker", live.READ_METHOD} or args["arguments"]:
                 raise AssertionError("Callback или мутация вызваны через MCP")
@@ -83,7 +83,7 @@ class WorldLifecycleCalls:
             if self.invalid == "counter_decreased" and handle == "obj-2":
                 value = 0
             return {"executed": True, "result": value}
-        if name == "g1r_snapshot":
+        if name == "sn2_snapshot":
             field = {"name": live.COUNT, "type": "IntProperty", "supported": True,
                      "value": self.count(target)}
             if self.invalid == "value_missing":
@@ -147,8 +147,8 @@ class WorldLifecycleProbeTests(unittest.TestCase):
         self.assertFalse(report["gameplay_ready_confirmed"])
         self.assertFalse(report["callbacks_invoked_manually"])
         self.assertFalse(report["world_loaded"])
-        self.assertTrue(all(name in {"g1r_native_status", "g1r_find_objects", "g1r_object_functions",
-                                     "g1r_snapshot", "g1r_invoke"} for name, _ in fixture.calls))
+        self.assertTrue(all(name in {"sn2_native_status", "sn2_find_objects", "sn2_object_functions",
+                                     "sn2_snapshot", "sn2_invoke"} for name, _ in fixture.calls))
 
     def test_only_cdo_or_zero_counter_returns_not_tested_without_false_success(self):
         for fixture in (WorldLifecycleCalls(exists=False), WorldLifecycleCalls(trigger_after=99)):
@@ -172,7 +172,7 @@ class WorldLifecycleProbeTests(unittest.TestCase):
         self.assertEqual(report["status"], "completed")
         self.assertEqual(report["world"]["instances"][0]["counts"][live.COUNT], 1)
         live_snapshots = [args for name, args in fixture.calls
-                          if name == "g1r_snapshot" and args["targets"][0]["handle"] == "obj-2"]
+                          if name == "sn2_snapshot" and args["targets"][0]["handle"] == "obj-2"]
         self.assertEqual(len(live_snapshots), 2)
 
     def test_incomplete_metadata_and_invalid_values_are_errors_not_zero(self):

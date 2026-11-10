@@ -1,7 +1,7 @@
-#include "g1r_mcp/job_state.hpp"
+#include "sn2_mcp/job_state.hpp"
 #include <thread>
 #include <iostream>
-using g1r_mcp::JobState;
+using sn2_mcp::JobState;
 int main() {
     JobState cancelled;
     if(!cancelled.cancel()||cancelled.begin()||cancelled.cancel()||cancelled.get()!=JobState::cancelled)return 1;

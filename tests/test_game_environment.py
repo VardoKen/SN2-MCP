@@ -215,7 +215,7 @@ class SourceGameWrapperTests(unittest.TestCase):
                 for path in self.root.rglob("*") if path.is_file()}
 
     def test_matching_subset_excludes_game_only_scripts_and_keeps_unknown_git_identity(self):
-        from g1r_mcp.game_environment import verify_source_game
+        from sn2_mcp.game_environment import verify_source_game
         raw = "// реальная изолированная копия\r\nvoid Same() {}\r\n".encode("utf-8")
         (self.source / "same.as").write_bytes(raw)
         (self.target / "same.as").write_bytes(raw)
@@ -253,7 +253,7 @@ class SourceGameWrapperTests(unittest.TestCase):
         self.assertEqual(self.contents(), before)
 
     def test_wrapper_reports_mismatches_and_missing_files_with_optional_executable_hash(self):
-        from g1r_mcp.game_environment import verify_source_game
+        from sn2_mcp.game_environment import verify_source_game
         (self.source / "different.as").write_bytes(b"source")
         (self.target / "different.as").write_bytes(b"different")
         (self.source / "missing.as").write_bytes(b"source")

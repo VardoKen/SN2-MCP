@@ -37,14 +37,14 @@ class MCPDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             workspace.mkdir()
             parameters = StdioServerParameters(
                 command=sys.executable,
-                args=["-B", "-m", "g1r_mcp.server", "--modkit-root", str(modkit),
+                args=["-B", "-m", "sn2_mcp.server", "--modkit-root", str(modkit),
                       "--workspace-root", str(workspace), "--native-port", str(native.port)],
             )
             async with stdio_client(parameters) as (incoming, outgoing):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    tool = tools["g1r_find_objects"]
+                    tool = tools["sn2_find_objects"]
                     self.assertTrue(tool.annotations.read_only_hint)
                     self.assertEqual(tool.input_schema["properties"]["exact_path"]["default"], "")
                     cases = [
@@ -54,10 +54,10 @@ class MCPDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                         ({"limit": 2, "exact_path": "/script/CoreUObject.Class"}, empty),
                     ]
                     for arguments, expected in cases:
-                        result = await client.call_tool("g1r_find_objects", arguments)
+                        result = await client.call_tool("sn2_find_objects", arguments)
                         self.assertFalse(result.is_error)
                         self.assertEqual(result.structured_content, expected)
-                    result = await client.call_tool("g1r_find_objects", {"limit": 2, "exact_path": "x" * 8193})
+                    result = await client.call_tool("sn2_find_objects", {"limit": 2, "exact_path": "x" * 8193})
                     self.assertTrue(result.is_error)
             self.assertEqual(source.read_text(encoding="utf-8"), "class UProbe {}\n")
             self.assertEqual(list(workspace.iterdir()), [])

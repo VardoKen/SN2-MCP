@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from g1r_mcp.package_export import (ExportError, PackageError, WorkspaceError,
+from sn2_mcp.package_export import (ExportError, PackageError, WorkspaceError,
                                   _descriptor_metadata, _source_files,
                                   export_package, verify_export)
 
