@@ -145,7 +145,8 @@ async def run(args):
             await client.initialize()
             catalog = await client.list_tools()
             (output / "catalog.json").write_text(catalog.model_dump_json(indent=2), encoding="utf-8")
-            require(len(catalog.tools) == 22, "The registered initial runtime catalog differs")
+            required_runtime = {"sn2_find_objects", "sn2_object_functions", "sn2_invoke", "sn2_native_status"}
+            require(required_runtime.issubset({tool.name for tool in catalog.tools}), "The required runtime tools are missing")
             probe = Probe(client, output)
             processes = await probe.tool("sn2_target_processes", {})
             matches = [p for p in processes["processes"] if p["pid"] == args.expected_pid and

@@ -580,3 +580,202 @@ class PackageWorkspace:
             return _result(package_path=name, file_path="/".join(parts), written=True,
                            created=expected_sha256 is None, bytes=len(raw),
                            sha256=hashlib.sha256(raw).hexdigest(), validation=validation)
+
+
+class SourceWorkspace(PackageWorkspace):
+    """Adapt the donor's exact file operations to ordinary mod-development files.
+
+    No game package descriptor or source language is required. Development
+    outputs and repository internals are excluded from source enumeration.
+    """
+
+    _internal_directories = frozenset({
+        ".git", ".venv", ".trash", "build", "artifacts", "__pycache__", "nppbackup",
+    })
+
+    @classmethod
+    def _source_parts(cls, relative_path: str, *, root_allowed: bool = False) -> tuple[str, ...]:
+        parts = _parts(relative_path, root_allowed=root_allowed)
+        if any(part.casefold() in cls._internal_directories for part in parts):
+            raise WorkspaceError("unsupported_file", "Repository internals and development outputs are not source workspace entries")
+        return parts
+
+    def _selected(self, relative_path: str = ".") -> Path:
+        parts = self._source_parts(relative_path, root_allowed=True)
+        return self._unprotected(_checked(self.root.joinpath(*parts), self.root, directory=True))
+
+    @staticmethod
+    def _source_result(**values) -> dict:
+        return {"source": "workspace_source", "compiled": False,
+                "runtime_validation": "not_performed", **values}
+
+    def _entries(self, relative_path: str) -> list[dict]:
+        selected = self._selected(relative_path)
+        files = []
+
+        def failure(error: OSError) -> None:
+            raise WorkspaceError("access_error", "Could not enumerate the source workspace")
+
+        with _guard_directories(selected, self.root):
+            for directory, children, names in os.walk(selected, followlinks=False, onerror=failure):
+                parent = self._unprotected(_checked(Path(directory), self.root, directory=True))
+                children[:] = sorted(child for child in children if child.casefold() not in self._internal_directories)
+                for child in children:
+                    self._unprotected(_checked(parent / child, self.root, directory=True))
+                for child in names:
+                    if child.casefold() in self._internal_directories:
+                        continue
+                    path = self._unprotected(_checked(parent / child, self.root))
+                    if not path.is_file():
+                        raise WorkspaceError("invalid_path", "The source entry must be a regular file")
+                    files.append({"path": path.relative_to(self.root).as_posix(), "bytes": path.stat().st_size})
+        return sorted(files, key=lambda entry: entry["path"])
+
+    @staticmethod
+    def _pagination(offset: int, limit: int) -> None:
+        if type(offset) is not int or offset < 0 or type(limit) is not int or limit < 1:
+            raise WorkspaceError("invalid_arguments", "A nonnegative offset and positive limit are required")
+
+    def list_files(self, relative_path: str = ".", limit: int = 100, offset: int = 0) -> dict:
+        self._pagination(offset, limit)
+        with self._lock:
+            files = self._entries(relative_path)
+        items = files[offset:offset + limit]
+        next_offset = offset + len(items)
+        return self._source_result(items=items, total=len(files), offset=offset, limit=limit,
+            has_more=next_offset < len(files), next_offset=next_offset if next_offset < len(files) else None,
+            snapshot_kind="sequential_file_reads", excluded_directories=sorted(self._internal_directories))
+
+    def search_files(self, query: str, relative_path: str = ".", limit: int = 50, offset: int = 0) -> dict:
+        self._source_search_arguments(query, limit, offset)
+        with self._lock:
+            files = self._entries(relative_path)
+        matches = [entry for entry in files if query.casefold() in entry["path"].casefold()]
+        items = matches[offset:offset + limit]
+        next_offset = offset + len(items)
+        return self._source_result(items=items, total_matches=len(matches), scanned_files=len(files),
+            scan_complete=True, offset=offset, limit=limit, has_more=next_offset < len(matches),
+            next_offset=next_offset if next_offset < len(matches) else None, query_kind="literal_path")
+
+    def search_text(self, query: str, relative_path: str = ".", limit: int = 50,
+                    case_sensitive: bool = False, offset: int = 0) -> dict:
+        self._source_search_arguments(query, limit, offset)
+        if type(case_sensitive) is not bool:
+            raise WorkspaceError("invalid_arguments", "Case sensitivity must be a boolean")
+        needle = query if case_sensitive else query.casefold()
+        matches, skipped = [], []
+        total = 0
+        with self._lock:
+            files = self._entries(relative_path)
+            for entry in files:
+                try:
+                    value = self.read_file_exact(entry["path"])
+                except WorkspaceError as error:
+                    if error.code == "unsafe_path":
+                        raise
+                    skipped.append({"path": entry["path"], "error_code": error.code})
+                    continue
+                for number, line in enumerate(value["text"].splitlines(), 1):
+                    if needle in (line if case_sensitive else line.casefold()):
+                        if total >= offset and len(matches) < limit:
+                            matches.append({"path": entry["path"], "line": number, "text": line,
+                                            "sha256": value["sha256"]})
+                        total += 1
+        next_offset = offset + len(matches)
+        return self._source_result(items=matches, total_matches=total if not skipped else None,
+            total_matches_lower_bound=total, scanned_files=len(files), scan_complete=not skipped,
+            skipped_files=skipped, offset=offset, limit=limit, query_kind="literal",
+            next_offset=next_offset if next_offset < total else None, has_more=next_offset < total,
+            snapshot_kind="sequential_file_reads")
+
+    def read_file_exact(self, file_path: str) -> dict:
+        parts = self._source_parts(file_path)
+        with self._lock:
+            path = self._unprotected(_checked(self.root.joinpath(*parts), self.root))
+            with _guard_directories(path.parent, self.root):
+                raw = _read_bytes(path, self.root, None)
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise WorkspaceError("invalid_encoding", "The source file must be valid UTF-8") from None
+        return self._source_result(path="/".join(parts), text=text, bytes=len(raw),
+            sha256=hashlib.sha256(raw).hexdigest(), text_mode="exact", contains_bom=raw.startswith(b"\xef\xbb\xbf"),
+            content_truncated=False)
+
+    def read_file(self, file_path: str, start_line: int = 1, line_count: int = 100) -> dict:
+        if type(start_line) is not int or start_line < 1 or type(line_count) is not int or line_count < 1:
+            raise WorkspaceError("invalid_arguments", "The line number and line count must be positive integers")
+        value = self.read_file_exact(file_path)
+        lines = value["text"].removeprefix("\ufeff").splitlines()
+        selected = lines[start_line - 1:start_line - 1 + line_count]
+        return {**value, "text": "\n".join(selected), "text_mode": "display_lines", "start_line": start_line,
+                "total_lines": len(lines), "returned_lines": len(selected),
+                "content_truncated": start_line > 1 or start_line - 1 + len(selected) < len(lines)}
+
+    def create_directory(self, directory_path: str) -> dict:
+        parts = self._source_parts(directory_path)
+        with self._lock, _destination_lock(self.root):
+            current = self.root
+            created = []
+            for part in parts:
+                target = self._unprotected(current / part, forbid_ancestor=True)
+                with _guard_directories(current, self.root):
+                    if not os.path.lexists(target):
+                        try:
+                            target.mkdir()
+                            created.append(target.relative_to(self.root).as_posix())
+                        except OSError:
+                            raise WorkspaceError("access_error", "Could not create the source directory") from None
+                    current = _checked(target, self.root, directory=True)
+        return self._source_result(path="/".join(parts), created_paths=created, created=bool(created))
+
+    def write_file(self, file_path: str, content: str, expected_sha256: str | None = None) -> dict:
+        parts = self._source_parts(file_path)
+        if not isinstance(content, str) or "\0" in content:
+            raise WorkspaceError("invalid_arguments", "Content must be text without NUL")
+        if expected_sha256 is not None and (not isinstance(expected_sha256, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256)):
+            raise WorkspaceError("invalid_arguments", "The expected SHA-256 must contain 64 hexadecimal characters")
+        try:
+            raw = content.encode("utf-8")
+        except UnicodeEncodeError:
+            raise WorkspaceError("invalid_encoding", "Content must be valid UTF-8") from None
+        with self._lock:
+            parent = self._unprotected(_checked(self.root.joinpath(*parts[:-1]), self.root, directory=True))
+            target = self._unprotected(parent / parts[-1])
+            with _destination_lock(target), _guard_directories(parent, self.root):
+                def verify() -> None:
+                    exists = os.path.lexists(target)
+                    if expected_sha256 is None:
+                        if exists:
+                            raise WorkspaceError("conflict", "The file already exists; replacing it requires its SHA-256")
+                    elif not exists or hashlib.sha256(_read_bytes(target, self.root, None)).hexdigest() != expected_sha256.lower():
+                        raise WorkspaceError("conflict", "The file changed; read it again")
+                verify()
+                temporary = None
+                try:
+                    fd, name = tempfile.mkstemp(prefix=".sn2-source-", dir=parent)
+                    temporary = Path(name)
+                    with os.fdopen(fd, "wb") as stream:
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    verify()
+                    if expected_sha256 is None:
+                        try:
+                            os.link(temporary, target, follow_symlinks=False)
+                        except FileExistsError:
+                            raise WorkspaceError("conflict", "The file appeared during creation") from None
+                        temporary.unlink()
+                    else:
+                        os.replace(temporary, target)
+                    temporary = None
+                except WorkspaceError:
+                    raise
+                except OSError:
+                    raise WorkspaceError("access_error", "Could not write the source file") from None
+                finally:
+                    if temporary is not None:
+                        temporary.unlink(missing_ok=True)
+        return self._source_result(path="/".join(parts), written=True, created=expected_sha256 is None,
+                                  bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())

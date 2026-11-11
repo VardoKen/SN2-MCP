@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import hashlib
 import logging
 from pathlib import Path
 import sys
@@ -22,9 +23,12 @@ from .native_client import NativeClient, NativeError
 from .snapshots import SnapshotError, compare_snapshots
 from .development import DevelopmentError, RuntimeService
 from .tool_catalog import build_tool_contracts
+from .workspace import SourceWorkspace, WorkspaceError
+from .source_identity import inspect as inspect_source_identity
+from .package_export import ExportError, export_sources, verify_source_export
 
 
-def _tool_failure(error: SnapshotError | DevelopmentError) -> ToolError:
+def _tool_failure(error: SnapshotError | DevelopmentError | WorkspaceError | ExportError) -> ToolError:
     return ToolError(json.dumps({"code": error.code, "message": str(error)}, ensure_ascii=False))
 
 class _EnglishOperatingSystemLog(logging.Filter):
@@ -64,6 +68,21 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     service_lock = threading.Lock()
     runtime = None
     selected_target = None
+    sources = None
+
+    def source_workspace() -> SourceWorkspace:
+        nonlocal sources
+        with service_lock:
+            if sources is None:
+                protected = (configured_game_root,) if configured_game_root.is_dir() else ()
+                sources = SourceWorkspace(workspace_root, protected_roots=protected)
+            return sources
+
+    def source_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(source_workspace(), operation)(*args, **kwargs)
+        except WorkspaceError as error:
+            raise _tool_failure(error) from None
 
     def runtime_service() -> RuntimeService:
         nonlocal runtime
@@ -85,12 +104,15 @@ def create_server(workspace_root: Path, native_port: int = 27223,
                         runtime.close()
 
     server = MCPServer("Subnautica 2 MCP", version=__version__, log_level="WARNING", lifespan=server_lifespan,
-        instructions=("Native runtime bridge adapted from G1R. Begin with sn2_status and sn2_capabilities. "
+        instructions=("Research game interfaces and develop, prototype and debug mods using the G1R-based native bridge. "
+                      "Source tools operate on the configured workspace without assuming game source or a mod format. "
+                      "Begin with sn2_status and sn2_capabilities. "
                       "Inspect sn2_target_processes before selecting an exact target. DLL loading, transport, "
                       "discovery and observed Tick are distinct states. Read current object/function metadata "
                       "before an explicit sn2_invoke. Handles and observations belong to a native session; "
                       "refresh after reconnect. Investigate uncertain effects; never automatically replay commands."))
     read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+    source_write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 
     def watch_owner(ctx: Context | None) -> str:
         return "shared_native_connection"
@@ -126,6 +148,153 @@ def create_server(workspace_root: Path, native_port: int = 27223,
                 "runtime_root": str(configured_runtime_root), "game_root": str(configured_game_root),
                 "native": {"endpoint": f"127.0.0.1:{native_port}", "connection_checked": False},
                 "target_process": selected_target, "game_ready": False, "game_ready_known": False}
+
+    @server.tool(annotations=read_only)
+    def sn2_source_identity(relative_path: str = ".", configured_revision: str | None = None) -> dict[str, Any]:
+        """Read workspace Git facts; a revision label does not establish game compatibility."""
+        try:
+            root = source_workspace()._selected(relative_path)
+            return {"source": "workspace_source", **inspect_source_identity(root, configured_revision)}
+        except WorkspaceError as error:
+            raise _tool_failure(error) from None
+
+    @server.tool(annotations=read_only)
+    def sn2_list_source_files(relative_path: str = ".", limit: StrictInt = 100, offset: StrictInt = 0) -> dict[str, Any]:
+        """List workspace files, including binary entries; omit repository internals and build outputs."""
+        return source_call("list_files", relative_path, limit, offset)
+
+    @server.tool(annotations=read_only)
+    def sn2_find_source_files(query: str, relative_path: str = ".", limit: StrictInt = 50, offset: StrictInt = 0) -> dict[str, Any]:
+        """Find literal workspace paths without assuming an AngelScript or game source tree."""
+        return source_call("search_files", query, relative_path, limit, offset)
+
+    @server.tool(annotations=read_only)
+    def sn2_search_source(query: str, relative_path: str = ".", limit: StrictInt = 50,
+                          case_sensitive: StrictBool = False, offset: StrictInt = 0) -> dict[str, Any]:
+        """Find literal UTF-8 source lines and report files that could not be decoded or read."""
+        return source_call("search_text", query, relative_path, limit, case_sensitive, offset)
+
+    @server.tool(annotations=read_only)
+    def sn2_read_source(file_path: str, start_line: StrictInt = 1, line_count: StrictInt = 100) -> dict[str, Any]:
+        """Read display lines with the complete source byte hash; no declaration parser is implied."""
+        return source_call("read_file", file_path, start_line, line_count)
+
+    @server.tool(annotations=read_only)
+    def sn2_read_source_exact(file_path: str) -> dict[str, Any]:
+        """Read complete UTF-8 source preserving BOM, line endings and EOF for exact revision."""
+        return source_call("read_file_exact", file_path)
+
+    @server.tool(annotations=source_write)
+    def sn2_write_source(file_path: str, content: str, expected_sha256: str | None = None) -> dict[str, Any]:
+        """Create source or replace bytes matching their SHA-256; no compilation or game write occurs."""
+        return source_call("write_file", file_path, content, expected_sha256)
+
+    @server.tool(annotations=source_write)
+    def sn2_create_source_directory(directory_path: str) -> dict[str, Any]:
+        """Create a selected workspace directory without inventing a game mod descriptor or entry point."""
+        return source_call("create_directory", directory_path)
+
+    @server.tool(annotations=source_write)
+    def sn2_export_sources(source_files: list[str], destination: str) -> dict[str, Any]:
+        """Export exact selected source bytes to a ZIP and hash manifest; this is not an installable mod."""
+        try:
+            return export_sources(source_workspace(), source_files, destination)
+        except (WorkspaceError, ExportError) as error:
+            raise _tool_failure(error) from None
+
+    @server.tool(annotations=read_only)
+    def sn2_verify_source_export(relative_path: str) -> dict[str, Any]:
+        """Verify a workspace source ZIP and inventory without compiling, installing or loading it."""
+        try:
+            from .workspace import _parts, _checked
+            parts = _parts(relative_path)
+            if len(parts) < 2 or parts[0] != "artifacts":
+                raise WorkspaceError("unsafe_path", "Select an export under workspace artifacts")
+            root = source_workspace()._unprotected(_checked(workspace_root.joinpath(*parts), workspace_root, directory=True))
+            return verify_source_export(root)
+        except (WorkspaceError, ExportError) as error:
+            raise _tool_failure(error) from None
+
+    @server.tool(annotations=read_only)
+    def sn2_development_recipe(source_files: list[str], targets: list[dict[str, Any]] | None = None,
+                               timeout_seconds: float | None = None) -> dict[str, Any]:
+        """Relate exact workspace revisions to current reflected interfaces and runtime diagnostics.
+
+        Each optional target has a current handle and explicit property/function
+        names. This records evidence; it never builds, loads or invokes a mod.
+        """
+        if not source_files or len(set(source_files)) != len(source_files):
+            raise ToolError(json.dumps({"code": "invalid_arguments", "message": "Select nonempty unique source paths"}))
+        selected = []
+        for path in source_files:
+            value = source_call("read_file_exact", path)
+            selected.append({key: value[key] for key in ("path", "sha256", "bytes")})
+        interfaces = []
+        initial_runtime_state = sn2_native_status() if targets is not None else None
+        if targets is not None:
+            if not targets:
+                raise ToolError(json.dumps({"code": "invalid_arguments", "message": "Select nonempty runtime targets"}))
+            for target in targets:
+                if (not isinstance(target, dict) or set(target) - {"handle", "properties", "functions"}
+                        or not isinstance(target.get("handle"), str) or not target["handle"]
+                        or not (target.get("properties") or target.get("functions"))):
+                    raise ToolError(json.dumps({"code": "invalid_arguments", "message": "Select a handle and explicit property or function names"}))
+                for key in ("properties", "functions"):
+                    names = target.get(key, [])
+                    if (not isinstance(names, list) or any(not isinstance(name, str) or not name for name in names)
+                            or len(set(names)) != len(names)):
+                        raise ToolError(json.dumps({"code": "invalid_arguments", "message": "Interface names must be unique nonempty strings"}))
+            for target in targets:
+                captured = {"handle": target["handle"], "functions": []}
+                if target.get("properties"):
+                    captured["properties"] = native_request("properties", {
+                        "handle": target["handle"], "property_names": target["properties"],
+                        "limit": len(target["properties"])}, timeout_seconds)
+                for name in target.get("functions", []):
+                    page = 0
+                    found = []
+                    while True:
+                        params = {"handle": target["handle"], "function_query": name, "limit": 100}
+                        if page:
+                            params["offset"] = page
+                        value = native_request("functions", params, timeout_seconds)
+                        found.extend(item for item in value.get("items", []) if item.get("name") == name)
+                        continuation = value.get("next_offset")
+                        if continuation is None:
+                            break
+                        if type(continuation) is not int or continuation <= page:
+                            raise ToolError(json.dumps({"code": "invalid_continuation", "message": "The function page has no forward continuation"}))
+                        page = continuation
+                    captured["functions"].append({"requested_name": name, "matches": found,
+                        "status": "found" if found else "missing"})
+                interfaces.append(captured)
+        after = [source_call("read_file_exact", item["path"])["sha256"] for item in selected]
+        source_stable = after == [item["sha256"] for item in selected]
+        identity = sn2_source_identity()
+        runtime_state = sn2_native_status() if targets is not None else None
+        runtime_stable = None
+        if targets is not None:
+            identity_keys = ("session_id", "process_id", "process_creation_filetime")
+            initial_world = initial_runtime_state.get("world")
+            final_world = runtime_state.get("world")
+            identity_known = all(state.get(key) is not None
+                for state in (initial_runtime_state, runtime_state) for key in identity_keys)
+            world_known = all(isinstance(world, dict) and world.get("state") == "observed"
+                and type(world.get("generation")) is int for world in (initial_world, final_world))
+            if identity_known and world_known:
+                runtime_stable = (all(initial_runtime_state.get(key) == runtime_state.get(key)
+                    for key in (*identity_keys, "reflection_generation")) and initial_world == final_world)
+        inventory = json.dumps(selected, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return {"kind": "mod_development_evidence", "source_files": selected,
+            "source_inventory_sha256": hashlib.sha256(inventory).hexdigest(), "source_stable": source_stable,
+            "source_identity": identity, "interfaces": interfaces, "native_status": runtime_state,
+            "initial_native_status": initial_runtime_state, "runtime_identity_stable": runtime_stable,
+            "snapshot_kind": "sequential_source_and_runtime_reads", "compiled": False,
+            "mod_loaded": False, "mod_execution_checked": False,
+            "next_steps": ["Inspect captured signatures and unsupported types", "Prototype explicitly with sn2_invoke",
+                           "Compare sn2_snapshot results and inspect sn2_watch events", "Revise source with its exact SHA-256"],
+            "limits": ["Workspace text is not shipped game source", "Reflection is not a C++ header or compiler",
+                       "This evidence is not an installable mod or a source-level debugger"]}
 
     @server.tool(annotations=read_only)
     async def sn2_capabilities(target_process: dict[str, Any] | None = None) -> dict[str, Any]:

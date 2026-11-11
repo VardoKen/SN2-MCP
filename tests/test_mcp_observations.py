@@ -272,16 +272,16 @@ class MCPObservationTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 22)
+                    self.assertEqual(len(tools), 33)
                     for name in ("sn2_snapshot", "sn2_snapshot_compare", "sn2_watch_read"):
                         self.assertTrue(tools[name].annotations.read_only_hint)
                     self.assertFalse(tools["sn2_watch_start"].annotations.read_only_hint)
                     self.assertFalse(tools["sn2_watch_start"].annotations.idempotent_hint)
                     self.assertTrue(tools["sn2_watch_stop"].annotations.idempotent_hint)
                     self.assertFalse(tools["sn2_watch_forget"].annotations.read_only_hint)
-                    self.assertNotIn("sn2_development_recipe", tools)
+                    self.assertIn("sn2_development_recipe", tools)
                     self.assertNotIn("sn2_build_script_patch", tools)
-                    self.assertNotIn("sn2_read_source_exact", tools)
+                    self.assertIn("sn2_read_source_exact", tools)
                     for name in ("sn2_create_package_directory", "sn2_development_start", "sn2_development_stop"):
                         self.assertNotIn(name, tools)
                     self.assertFalse(tools["sn2_native_load"].annotations.read_only_hint)

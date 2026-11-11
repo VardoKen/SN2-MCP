@@ -23,6 +23,7 @@ MODULES = (
     "test_mcp_const_transforms", "test_mcp_linear_colors", "test_mcp_name_inputs",
     "test_mcp_object_array_inputs", "test_mcp_scalar_outputs", "test_mcp_enums",
     "test_mcp_wide_integers", "test_mcp_classes",
+    "test_source_workspace",
 )
 
 if __name__ == "__main__":

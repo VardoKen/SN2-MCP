@@ -194,7 +194,7 @@ class MCPNativeTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 22)
+                    self.assertEqual(len(tools), 33)
                     self.assertFalse(tools["sn2_invoke"].annotations.read_only_hint)
                     self.assertFalse(tools["sn2_native_enable"].annotations.read_only_hint)
                     self.assertFalse(tools["sn2_invoke"].annotations.idempotent_hint)

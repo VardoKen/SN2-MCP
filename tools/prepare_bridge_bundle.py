@@ -215,6 +215,10 @@ establish Subnautica runtime acceptance, load the DLL or launch the game.
    observations are native-session values. Refresh after reconnect. Never
    automatically replay an operation with an uncertain effect.
 
+Source tools support workspace search/exact editing and source identity. The
+development recipe captures current reflected interfaces with source hashes;
+source ZIP export preserves bytes but does not compile or install a mod.
+
 The runtime bundle includes the inherited Python sources, declared dependencies,
 selected runtime tools and native DLL/loader. Gothic helper packages and probes
 remain source provenance in the development Git and are not Subnautica runtime

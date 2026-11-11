@@ -129,7 +129,7 @@ class MCPPODReadTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 22)
+                    self.assertEqual(len(tools), 33)
                     struct_schema = tools["sn2_read_struct"].input_schema
                     self.assertEqual(set(struct_schema["properties"]), {"handle", "property_name", "timeout_seconds"})
                     self.assertEqual(set(struct_schema["required"]), {"handle", "property_name"})

@@ -26,6 +26,10 @@ RUNTIME_TOOLS = {
     "sn2_watch_start", "sn2_watch_read", "sn2_watch_stop",
     "sn2_watch_forget", "sn2_watch_list", "sn2_watch_resume", "sn2_invoke",
 }
+SOURCE_TOOLS = {"sn2_source_identity", "sn2_list_source_files", "sn2_find_source_files",
+                "sn2_search_source", "sn2_read_source", "sn2_read_source_exact", "sn2_write_source",
+                "sn2_create_source_directory", "sn2_development_recipe", "sn2_export_sources", "sn2_verify_source_export"}
+PUBLIC_TOOLS = RUNTIME_TOOLS | SOURCE_TOOLS
 
 
 class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
@@ -39,9 +43,8 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                 server = create_server(Path(directory))
                 tools = await server.list_tools()
 
-                self.assertEqual(len(tools), 22)
-                self.assertEqual({tool.name for tool in tools}, RUNTIME_TOOLS)
-                forbidden = ("g1r_", "sn2_source_", "sn2_package_", "sn2_debug_",
+                self.assertEqual({tool.name for tool in tools}, PUBLIC_TOOLS)
+                forbidden = ("g1r_", "sn2_package_", "sn2_debug_",
                              "sn2_compile", "sn2_reload", "sn2_save_", "sn2_session_")
                 self.assertFalse(any(tool.name.startswith(forbidden) for tool in tools))
                 runtime_factory.assert_not_called()
@@ -68,6 +71,9 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
 
                 # Tuple order: read-only, destructive, idempotent, open-world.
                 mutation_effects = {
+                    "sn2_write_source": (False, False, False, False),
+                    "sn2_create_source_directory": (False, False, False, False),
+                    "sn2_export_sources": (False, False, False, False),
                     "sn2_native_load": (False, False, False, True),
                     "sn2_native_enable": (False, False, True, False),
                     "sn2_watch_start": (False, False, False, False),
@@ -134,8 +140,7 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                         "state": "unverified", "reason": "per_shape_runtime_receipts_required",
                     })
                     contracts = capabilities["tool_contracts"]
-                    self.assertEqual(len(contracts), 22)
-                    self.assertEqual({contract["name"] for contract in contracts}, RUNTIME_TOOLS)
+                    self.assertEqual({contract["name"] for contract in contracts}, PUBLIC_TOOLS)
                     for contract in contracts:
                         name = contract["name"]
                         with self.subTest(tool=name):

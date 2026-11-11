@@ -247,3 +247,23 @@ _CONTRACTS["sn2_status"] = _entry("frontend_configuration", (), "src/sn2_mcp/ser
 _CONTRACTS["sn2_capabilities"] = _entry("registered_runtime_contracts", (), "src/sn2_mcp/server.py:sn2_capabilities", ("tool_contracts", "capabilities", "accepted_types"))
 _CONTRACTS["sn2_target_processes"] = _entry("windows_process_snapshot", ("windows", "configured_game"), "src/sn2_mcp/development.py:RuntimeService.process_state", ("processes", "running", "source"))
 _CONTRACTS["sn2_native_load"] = _entry("selected_process_modules", ("windows", "exact_target_process", "expected_dll_hash"), "src/sn2_mcp/development.py:RuntimeService.load_native", ("state", "process", "dll_sha256", "game_ready", "outcome_unknown"), state_tools=("sn2_native_status", "sn2_target_processes"))
+
+for _name, _method in {
+    "sn2_list_source_files": "list_files", "sn2_find_source_files": "search_files",
+    "sn2_search_source": "search_text", "sn2_read_source": "read_file",
+    "sn2_read_source_exact": "read_file_exact", "sn2_write_source": "write_file",
+    "sn2_create_source_directory": "create_directory",
+}.items():
+    _CONTRACTS[_name] = _entry("workspace_source", ("configured_workspace",),
+        "src/sn2_mcp/workspace.py:SourceWorkspace." + _method,
+        ("source", "path", "items", "sha256", "compiled", "runtime_validation"))
+_CONTRACTS["sn2_source_identity"] = _entry("workspace_git_metadata", ("configured_workspace",),
+    "src/sn2_mcp/source_identity.py:inspect", ("source", "git", "configured_revision", "game_compatibility_checked"))
+_CONTRACTS["sn2_development_recipe"] = _entry("workspace_sources_and_reflected_interfaces", ("configured_workspace",),
+    "src/sn2_mcp/server.py:sn2_development_recipe",
+    ("source_files", "source_inventory_sha256", "source_stable", "interfaces", "native_status", "limits"),
+    state_tools=("sn2_source_identity", "sn2_native_status"))
+_CONTRACTS["sn2_export_sources"] = _entry("workspace_source_export", ("configured_workspace",),
+    "src/sn2_mcp/package_export.py:export_sources", ("destination", "archive_sha256", "manifest_sha256", "file_count"))
+_CONTRACTS["sn2_verify_source_export"] = _entry("workspace_source_export", ("configured_workspace",),
+    "src/sn2_mcp/package_export.py:verify_source_export", ("kind", "verified_files", "file_count", "archive_sha256"))

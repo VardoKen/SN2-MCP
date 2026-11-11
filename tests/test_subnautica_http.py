@@ -112,7 +112,7 @@ class SubnauticaHTTPTests(unittest.IsolatedAsyncioTestCase):
                         one, two = await initialize(first, "first-client"), await initialize(second, "second-client")
                         self.assertNotEqual(one, two)
                         catalog = (await rpc(second, "tools/list", {}, two)).json()["result"]["tools"]
-                        self.assertEqual(len(catalog), 22)
+                        self.assertEqual(len(catalog), 33)
                         self.assertNotIn("sn2_session_acquire", {item["name"] for item in catalog})
                         with self.assertRaises(httpx2.ReadError):
                             await tool(first, one, "sn2_watch_start", start)

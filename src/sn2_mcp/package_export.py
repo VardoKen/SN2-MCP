@@ -17,6 +17,7 @@ import zipfile
 from .packages import PackageError, validate_package, MAX_DESCRIPTOR_BYTES, COMPONENTS, LOAD_ORDERS
 from .workspace import (PackageWorkspace, WorkspaceError, _checked, _parts,
                         _destination_lock, _guard_directories, _read_bytes)
+from .workspace import SourceWorkspace
 
 class ExportError(Exception):
     def __init__(self, code: str, message: str):
@@ -289,4 +290,133 @@ def verify_export(export_root: Path) -> dict:
         raise ExportError("integrity_mismatch", "The export directory contains unrelated files or invalid totals")
     return {"package_name": name, "file_count": len(expected), "archive_sha256": _sha(archive_raw),
             "verified_files": True, "compiled": False, "installed": False, "runtime_validation": "not_performed"}
+
+
+def export_sources(workspace: SourceWorkspace, source_files: list[str], destination: str) -> dict:
+    """Reuse byte-preserving export for selected development source and evidence.
+
+    This ZIP is a source archive, not an official game package or compiled mod.
+    """
+    if not source_files or any(not isinstance(path, str) for path in source_files):
+        raise ExportError("invalid_arguments", "Select nonempty source file paths")
+    if len({path.casefold() for path in source_files}) != len(source_files):
+        raise ExportError("duplicate_path", "Select unique Windows source paths")
+    parts = _parts(destination)
+    if len(parts) < 2 or parts[0] != "artifacts":
+        raise ExportError("unsafe_path", "Export requires a new directory under workspace artifacts")
+    files = {}
+    for relative in source_files:
+        source_parts = workspace._source_parts(relative)
+        path = workspace._unprotected(_checked(workspace.root.joinpath(*source_parts), workspace.root))
+        with _guard_directories(path.parent, workspace.root):
+            files[relative] = _read_bytes(path, workspace.root, None)
+    for relative, raw in files.items():
+        path = workspace._unprotected(_checked(workspace.root / relative, workspace.root))
+        if _read_bytes(path, workspace.root, None) != raw:
+            raise ExportError("source_changed", "A selected source changed while preparing export")
+    entries = [{"path": relative, "bytes": len(raw), "sha256": _sha(raw)} for relative, raw in sorted(files.items())]
+    archive = _archive_bytes(files, "sources")
+    manifest = {"schema_version": 1, "kind": "mod_development_source_export", "files": entries,
+        "file_count": len(entries), "archive": {"filename": "sources.zip", "bytes": len(archive), "sha256": _sha(archive)},
+        "byte_preservation": True, "compiled": False, "installed": False, "runtime_validation": "not_performed"}
+    raw_manifest = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
+    artifacts = workspace.root / "artifacts"
+    target = workspace._unprotected(workspace.root.joinpath(*parts), forbid_ancestor=True)
+    with _destination_lock(target):
+        with _destination_lock(artifacts), _guard_directories(workspace.root, workspace.root):
+            if not os.path.lexists(artifacts):
+                try:
+                    artifacts.mkdir()
+                except OSError:
+                    raise ExportError("access_error", "Could not prepare the source export directory") from None
+        parent = workspace._unprotected(_checked(target.parent, workspace.root, directory=True))
+        with _guard_directories(parent, workspace.root):
+            if os.path.lexists(target):
+                raise ExportError("already_exists", "The export directory already exists")
+            try:
+                stage = Path(tempfile.mkdtemp(prefix=".sn2-source-export-", dir=parent))
+            except OSError:
+                raise ExportError("access_error", "Could not prepare source export staging") from None
+            stage_identity = _identity(stage)
+            owned = {}
+            try:
+                for filename, raw in (("sources.zip", archive), ("manifest.json", raw_manifest)):
+                    path = stage / filename
+                    partial_identity = None
+                    try:
+                        with path.open("xb") as stream:
+                            info = os.fstat(stream.fileno())
+                            partial_identity = (info.st_dev, info.st_ino)
+                            stream.write(raw)
+                    except OSError:
+                        if partial_identity is not None:
+                            try:
+                                checked = _checked(path, stage)
+                                current = _read_bytes(checked, stage, None)
+                                if _identity(checked) == partial_identity and raw.startswith(current):
+                                    checked.unlink()
+                            except (WorkspaceError, OSError):
+                                pass
+                        raise
+                    owned[filename] = (_identity(path), _sha(raw))
+                verify_source_export(stage)
+                if os.path.lexists(target):
+                    raise ExportError("already_exists", "The export destination appeared during preparation")
+                stage.rename(target)
+                stage = None
+            except OSError:
+                raise ExportError("access_error", "Could not publish the source export") from None
+            finally:
+                if stage is not None:
+                    _cleanup(stage, parent, owned, stage_identity)
+    return {"destination": destination, "archive_sha256": _sha(archive), "manifest_sha256": _sha(raw_manifest),
+            "file_count": len(entries), "compiled": False, "installed": False, "runtime_validation": "not_performed"}
+
+
+def verify_source_export(export_root: Path) -> dict:
+    """Verify the selected archive inventory and every source byte hash."""
+    root = _checked(export_root, directory=True)
+    try:
+        manifest = json.loads(_read_bytes(root / "manifest.json", root, None).decode("utf-8"), object_pairs_hook=_unique_json)
+    except (ValueError, UnicodeError):
+        raise ExportError("invalid_manifest", "The source export manifest is invalid") from None
+    if (not isinstance(manifest, dict) or manifest.get("kind") != "mod_development_source_export"
+            or manifest.get("schema_version") != 1 or not isinstance(manifest.get("files"), list)
+            or not manifest["files"]):
+        raise ExportError("invalid_manifest", "The manifest is not a source export")
+    archive = _read_bytes(root / "sources.zip", root, None)
+    if manifest.get("archive") != {"filename": "sources.zip", "bytes": len(archive), "sha256": _sha(archive)}:
+        raise ExportError("integrity_mismatch", "The source archive differs from its manifest")
+    expected, folded = {}, set()
+    for entry in manifest["files"]:
+        if (not isinstance(entry, dict) or not isinstance(entry.get("path"), str)
+                or type(entry.get("bytes")) is not int or entry["bytes"] < 0
+                or not isinstance(entry.get("sha256"), str)):
+            raise ExportError("invalid_manifest", "A source entry is invalid")
+        SourceWorkspace._source_parts(entry["path"])
+        if entry["path"].casefold() in folded:
+            raise ExportError("duplicate_path", "The source manifest contains duplicate paths")
+        folded.add(entry["path"].casefold())
+        expected["sources/" + entry["path"]] = entry
+    import io
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as opened:
+            entries = opened.infolist()
+            if len(entries) != len(expected) or len({entry.filename for entry in entries}) != len(entries):
+                raise ExportError("integrity_mismatch", "The archive inventory differs from its manifest")
+            for entry in entries:
+                mode = (entry.external_attr >> 16) & 0xFFFF
+                if (entry.filename not in expected or entry.is_dir() or entry.flag_bits & 1
+                        or entry.compress_type != zipfile.ZIP_STORED
+                        or (mode and not stat.S_ISREG(mode))):
+                    raise ExportError("unsafe_archive", "The source archive contains an invalid entry")
+                raw = opened.read(entry)
+                if len(raw) != expected[entry.filename]["bytes"] or _sha(raw) != expected[entry.filename]["sha256"]:
+                    raise ExportError("integrity_mismatch", "An archived source differs from its manifest")
+    except zipfile.BadZipFile:
+        raise ExportError("unsafe_archive", "The source ZIP is corrupted") from None
+    if {path.name for path in root.iterdir()} != {"manifest.json", "sources.zip"} or manifest.get("file_count") != len(expected):
+        raise ExportError("integrity_mismatch", "The export contains unrelated files or invalid totals")
+    return {"kind": manifest["kind"], "verified_files": True, "file_count": len(expected),
+            "archive_sha256": _sha(archive), "compiled": False, "installed": False, "runtime_validation": "not_performed"}
 
