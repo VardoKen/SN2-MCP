@@ -2,9 +2,9 @@
 
 Native runtime MCP bridge adapted from the copied G1R MCP implementation. Python/MCP frontend, framed TCP transport, game-Tick dispatch, reflection, typed values, observations, loader and tests remain in this independent code repository. Detailed state and acceptance belong to the central documentation.
 
-Implementation version: **0.2.2**. The bridge supports game-interface research and mod development/prototyping through **33 `sn2_` tools**: the retained 22 runtime tools plus workspace source identity/search/exact editing, source/runtime recipes and verified source export. Stdio/shared HTTP (`127.0.0.1:27224/mcp`), native TCP 27223 and the existing Windows x64 UE5.6.1 / CL131439 implementation are retained.
+Implementation version: **0.3.0**. The bridge supports game-interface research and mod development through **48 `sn2_` tools**: retained reflection/invocation/observations, exact source authoring, CMake/MSVC builds and diagnostics, compiled artifact packaging, game lifecycle and standalone mod initialization/status/disable/restart iteration. Stdio/shared HTTP (`127.0.0.1:27224/mcp`), native TCP 27223 and the Windows x64 UE5.6.1 / CL131439 foundation are retained.
 
-The correction includes a reproducible UI modification prototype: two source revisions change a live start-screen label's opacity, are independently checked through getter/snapshots/watches, and restore the original value. This is a development client and source archive, not an installable mod format. The operator rejected the earlier `0.1.0` overall result; operator acceptance of this correction has not been recorded.
+The first compiled project creates a separate native widget-opacity DLL using the copied Unreal runtime SDK. Packages load from the workspace through their verified command ABI. Disable restores the baseline; the DLL and hook remain until game exit, and compiled revision replacement uses controlled restart. General runtime and source tools remain available beyond this template. Actual validation and operator acceptance are recorded centrally.
 
 Detailed documentation belongs to the central repository:
 

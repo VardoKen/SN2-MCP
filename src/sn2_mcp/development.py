@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import copy
+import base64
 import hashlib
 import json
 import os
@@ -82,14 +83,33 @@ def execute_command(arguments: list[str], timeout: int) -> CommandResult:
         if any(thread.is_alive() for thread in threads):
             raise DevelopmentError("tool_channel_incomplete", "The tool output channel did not finish",
                                    outcome_unknown=True)
-        return CommandResult(returncode, chunks[0].decode("utf-8"), chunks[1].decode("utf-8"))
+        decoded = {}
+        decoding_errors = []
+        for name, output in zip(("stdout", "stderr"), chunks):
+            try:
+                decoded[name] = output.decode("utf-8")
+            except UnicodeDecodeError as error:
+                decoding_errors.append({"stream": name, "encoding": error.encoding,
+                                        "start": error.start, "end": error.end, "reason": error.reason})
+        if decoding_errors:
+            # The helper has exited, but unreadable output cannot establish its
+            # external operation result. Keep both original channels for diagnosis.
+            receipt = {"state": "tool_output_decode_failed", "returncode": returncode,
+                       "helper_completed": True, "output_complete": True,
+                       "expected_encoding": "utf-8", "decoding_errors": decoding_errors,
+                       "stdout_base64": base64.b64encode(chunks[0]).decode("ascii"),
+                       "stderr_base64": base64.b64encode(chunks[1]).decode("ascii"),
+                       "decoded_output": decoded, "outcome_unknown": True}
+            raise DevelopmentError("tool_output_decode_failed", "The fixed tool exited but its output is not valid UTF-8; inspect the preserved raw channels before another operation",
+                                   outcome_unknown=True, receipt=receipt)
+        return CommandResult(returncode, decoded["stdout"], decoded["stderr"])
     except subprocess.TimeoutExpired:
         if process is not None:
             process.kill()
             process.wait(timeout=2)
         raise DevelopmentError("operation_timeout", "The tool did not finish within 30 seconds; the external operation outcome is unknown",
                                outcome_unknown=True) from None
-    except (OSError, UnicodeError):
+    except OSError:
         raise DevelopmentError("tool_unavailable", "Could not start or read the fixed tool",
                                outcome_unknown=started) from None
     except DevelopmentError:

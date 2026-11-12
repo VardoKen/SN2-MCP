@@ -10,6 +10,7 @@ import httpx2
 from mcp.server.transport_security import TransportSecuritySettings
 
 from sn2_mcp.server import create_server
+from tests.test_subnautica_catalog import PUBLIC_TOOLS
 
 
 class DropCompletedToolResponse(httpx2.AsyncBaseTransport):
@@ -112,7 +113,7 @@ class SubnauticaHTTPTests(unittest.IsolatedAsyncioTestCase):
                         one, two = await initialize(first, "first-client"), await initialize(second, "second-client")
                         self.assertNotEqual(one, two)
                         catalog = (await rpc(second, "tools/list", {}, two)).json()["result"]["tools"]
-                        self.assertEqual(len(catalog), 33)
+                        self.assertEqual(len(catalog), len(PUBLIC_TOOLS))
                         self.assertNotIn("sn2_session_acquire", {item["name"] for item in catalog})
                         with self.assertRaises(httpx2.ReadError):
                             await tool(first, one, "sn2_watch_start", start)

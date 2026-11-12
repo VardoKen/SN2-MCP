@@ -1,18 +1,15 @@
 """Изолированный контур разработки: подмена только исполнителя процессов."""
 
 import hashlib
-import io
 import json
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from sn2_mcp.development import (CommandResult, DevelopmentError, DevelopmentService,
-                                 execute_command, PROCESS_TIMEOUT_SECONDS)
+from sn2_mcp.development import CommandResult, DevelopmentError, DevelopmentService
 from sn2_mcp.window_input import WindowInputError
 
 
@@ -397,46 +394,6 @@ class DevelopmentTests(unittest.TestCase):
         with self.assertRaises(DevelopmentError):
             self.service.process_state()
 
-    def test_real_executor_has_one_deadline_and_no_shell(self):
-        from unittest.mock import Mock
-        process = Mock(stdout=io.BytesIO(b'{"ok":true}'), stderr=io.BytesIO())
-        process.wait.return_value = 0
-        with patch("sn2_mcp.development.subprocess.Popen", return_value=process) as run:
-            result = execute_command(["fixed", "argument"], PROCESS_TIMEOUT_SECONDS)
-        self.assertEqual(result.stdout, '{"ok":true}')
-        process.wait.assert_called_once_with(timeout=30)
-        self.assertNotIn("shell", run.call_args.kwargs)
-        process = Mock(stdout=io.BytesIO(), stderr=io.BytesIO())
-        process.wait.side_effect = [subprocess.TimeoutExpired(["fixed"], 30), 0]
-        with patch("sn2_mcp.development.subprocess.Popen", return_value=process):
-            with self.assertRaises(DevelopmentError) as captured:
-                execute_command(["fixed"], 30)
-        self.assertTrue(captured.exception.outcome_unknown)
-        process.kill.assert_called_once()
-
-    def test_executor_preserves_complete_pipe_output(self):
-        from unittest.mock import Mock
-        output = b"x" * (256 * 1024 + 1)
-        process = Mock(stdout=io.BytesIO(output), stderr=io.BytesIO())
-        process.wait.return_value = 0
-        with patch("sn2_mcp.development.subprocess.Popen", return_value=process):
-            result = execute_command(["fixed"], 30)
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, output.decode("utf-8"))
-        self.assertEqual(result.stderr, "")
-        process.kill.assert_not_called()
-
-    def test_executor_keyboard_interrupt_settles_helper_without_replay(self):
-        from unittest.mock import Mock
-        process = Mock(stdout=io.BytesIO(), stderr=io.BytesIO())
-        process.wait.side_effect = [KeyboardInterrupt(), 0]
-        with patch("sn2_mcp.development.subprocess.Popen", return_value=process) as created:
-            with self.assertRaises(KeyboardInterrupt) as captured:
-                execute_command(["fixed"], 30)
-        created.assert_called_once()
-        process.kill.assert_called_once()
-        self.assertEqual(process.wait.call_count, 2)
-        self.assertTrue(captured.exception.__notes__)
 
 
 if __name__ == "__main__":

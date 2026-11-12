@@ -4,14 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sn2-mcp"
-version = "0.2.2"
+version = "0.3.0"
 description = "Game interface research and mod development with the Subnautica 2 native MCP bridge"
 readme = {text = """
 # Subnautica 2 MCP
 
 Python MCP frontend for game-interface research and mod development/prototyping
-through the Subnautica 2 native runtime bridge. Workspace source tools provide
-exact editing, source identity, interface evidence and verifiable source archives.
+through the Subnautica 2 native runtime bridge. Tools provide exact editing,
+source/interface evidence, CMake/MSVC builds and diagnostics, verified compiled
+packages and native mod initialization, disable and restart iteration.
 Configure the workspace, native runtime artifacts and game separately.
 
     sn2-mcp --transport streamable-http --host 127.0.0.1 --port 27224 --workspace-root <workspace> --runtime-root <runtime> --game-root <game>

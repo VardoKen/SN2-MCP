@@ -16,6 +16,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from sn2_mcp.native_client import NativeClient
 from sn2_mcp.server import create_server, main
 from tests.test_mcp_observations import SessionNativeFixture
+from tests.test_subnautica_catalog import PUBLIC_TOOLS
 
 
 class LargeFrameNativeFixture(SessionNativeFixture):
@@ -384,7 +385,7 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotEqual(first_session, second_session)
                     listed = await rpc(second, "tools/list", {}, second_session)
                     self.assertEqual(listed.status_code, 200, listed.text)
-                    self.assertEqual(len(listed.json()["result"]["tools"]), 33)
+                    self.assertEqual(len(listed.json()["result"]["tools"]), len(PUBLIC_TOOLS))
                     self.assertEqual((await tool(second, second_session, "sn2_status"))["server"]["transport"], "streamable-http")
                     self.assertEqual(await tool(first, first_session, "sn2_native_status"), native_status)
                     found = await tool(first, first_session, "sn2_find_objects", {"query": "Probe"})
@@ -397,7 +398,7 @@ class MCPHTTPSharedServerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(information["workspace"]["root"], str(workspace.absolute()))
                     contracts = await tool(first, first_session, "sn2_capabilities")
                     names = {entry["name"] for entry in contracts["tool_contracts"]}
-                    self.assertEqual(len(names), 33)
+                    self.assertEqual(len(names), len(PUBLIC_TOOLS))
                     self.assertNotIn("sn2_session_status", names)
                     self.assertNotIn("sn2_create_package", names)
                     body = {"jsonrpc": "2.0", "id": 500, "method": "tools/call",

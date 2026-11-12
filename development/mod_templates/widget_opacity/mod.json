@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "kind": "native_widget_opacity",
+  "mod_id": "@MOD_ID@",
+  "command_abi": 1,
+  "cmake_target": "sn2_mod",
+  "artifact": "@MOD_ID@.dll",
+  "sources": ["src/mod.cpp", "CMakeLists.txt", "mod.json", "README.md"]
+}

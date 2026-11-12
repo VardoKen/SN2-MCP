@@ -11,6 +11,7 @@ import unittest
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from tests.test_subnautica_catalog import PUBLIC_TOOLS
 
 
 class FakeNativeServer:
@@ -194,7 +195,7 @@ class MCPNativeTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 33)
+                    self.assertEqual(len(tools), len(PUBLIC_TOOLS))
                     self.assertFalse(tools["sn2_invoke"].annotations.read_only_hint)
                     self.assertFalse(tools["sn2_native_enable"].annotations.read_only_hint)
                     self.assertFalse(tools["sn2_invoke"].annotations.idempotent_hint)

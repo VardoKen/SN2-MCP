@@ -1,22 +1,25 @@
 ﻿[CmdletBinding()]
 param(
     [ValidateSet('Release','Debug')][string]$Configuration = 'Release',
-    [string]$Generator = 'Visual Studio 17 2022'
+    [string]$Generator = 'Visual Studio 17 2022',
+    [string]$Target = 'all',
+    [int]$Parallel = 4,
+    [double]$TimeoutSeconds = 900,
+    [switch]$SkipTests,
+    [switch]$Json
 )
 
 $ErrorActionPreference = 'Stop'
 $taskRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$taskSource = Join-Path $taskRoot 'native'
-$taskBuild = Join-Path $taskRoot 'build\native'
-if (-not (Test-Path -LiteralPath (Join-Path $taskSource 'CMakeLists.txt') -PathType Leaf)) {
-    throw 'Native subproject CMakeLists.txt was not found'
+$taskPython = Join-Path $taskRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $taskPython -PathType Leaf)) {
+    $taskPython = (Get-Command python -ErrorAction Stop).Source
 }
-Get-Command cmake -ErrorAction Stop | Out-Null
-Get-Command ctest -ErrorAction Stop | Out-Null
-& cmake -S $taskSource -B $taskBuild -G $Generator -A x64
-if ($LASTEXITCODE -ne 0) { throw 'Native build configuration failed' }
-& cmake --build $taskBuild --config $Configuration --parallel 4
-if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
-& ctest --test-dir $taskBuild -C $Configuration --output-on-failure
-if ($LASTEXITCODE -ne 0) { throw 'Native checks failed' }
-Write-Output ('Build and checks complete: ' + $Configuration)
+# Arguments are passed as tokens to the fixed module, without shell interpolation.
+& $taskPython (Join-Path $taskRoot 'src\sn2_mcp\build_workflow.py') `
+    --repository-root $taskRoot --configuration $Configuration --generator $Generator `
+    --target $Target --parallel $Parallel --timeout-seconds $TimeoutSeconds `
+    --run-tests ([string](-not $SkipTests.IsPresent)).ToLowerInvariant() --json ([string]$Json.IsPresent).ToLowerInvariant()
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}

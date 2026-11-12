@@ -40,6 +40,8 @@ class BridgeBundleTests(unittest.TestCase):
             self.write(name, b"# isolated development helper\n")
         for name in bundle.DOCUMENTS:
             self.write(name, b"# isolated document\n")
+        for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES):
+            self.write(name, b"// isolated development input\n")
         self.write("pyproject.toml", f'[project]\nversion = "{self.version}"\ndependencies=["mcp==2.3.0"]\n'.encode())
         self.write("uv.lock", f'[[package]]\nname="sn2-mcp"\nversion="{self.version.replace("-dev.", ".dev")}"\nsource={{editable="."}}\n[[package]]\nname="mcp"\nversion="2.3.0"\n'.encode())
         for name in bundle.FIXTURE_DIRS:
@@ -48,6 +50,7 @@ class BridgeBundleTests(unittest.TestCase):
         self.write("native/src/game_access.cpp", b'"bindings_source","runtime_image_patterns"\n')
         self.write(bundle.BINARIES[0], fake_pe(self.version.encode() + b"runtime_image_patterns" + bundle.PRODUCTION_MARKER))
         self.write(bundle.BINARIES[1], fake_pe())
+        self.write(bundle.BINARIES[2], fake_pe())
 
     def write(self, path, raw):
         file = self.repository / path
@@ -72,6 +75,10 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertTrue(result["verified_files"])
         self.assertTrue((self.target / "src/sn2_mcp/server.py").exists())
         self.assertTrue((self.target / bundle.BINARIES[0]).exists())
+        self.assertTrue((self.target / bundle.BINARIES[2]).exists())
+        self.assertTrue((self.target / "native/src/mod_entry.cpp").exists())
+        self.assertTrue((self.target / "development/mod_templates/widget_opacity/src/mod.cpp").exists())
+        self.assertTrue((self.target / "tools/start_sn2_development.ps1").exists())
         for path in (".venv", "artifacts/private.txt", "mods/UserMod", "build/native/Release/native-tick.log"):
             self.assertFalse((self.target / path).exists())
         verified = bundle.verify_bundle(self.target)
@@ -81,6 +88,8 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertEqual(manifest["compatibility"]["binding_method"], "runtime_image_patterns")
         self.assertNotIn("supported_game_exe_sha256", manifest["compatibility"])
         self.assertIn("not an installer or a public release", (self.target / "START.md").read_text(encoding="utf-8"))
+        self.assertIn("does not hot-unload", (self.target / "START.md").read_text(encoding="utf-8"))
+        self.assertIn("Visual Studio 2022", (self.target / "START.md").read_text(encoding="utf-8"))
 
         old_dll = fake_pe(self.version.encode() + b"a" * 64 + bundle.PRODUCTION_MARKER)
         (self.target / bundle.BINARIES[0]).write_bytes(old_dll)
@@ -262,12 +271,55 @@ class BridgeBundleTests(unittest.TestCase):
             bundle.prepare_bundle(new_target, repository_root=self.repository)
         self.assertEqual(captured.exception.code, "lock_mismatch")
 
+    def test_native_build_inputs_remain_required_when_manifest_is_rewritten(self):
+        self.write("native/CMakeLists.txt", b"add_executable(native_probe tests/probe.cpp)\n")
+        self.write("native/tests/probe.cpp", b'#include "sn2_mcp/probe.hpp"\nint main() { return 0; }\n')
+        self.write("native/tests/retained.cpp", b"// retained directory fixture\n")
+        self.write("native/include/sn2_mcp/probe.hpp", b"#pragma once\n")
+        self.prepare()
+        manifest_path = self.target / "manifest.json"
+        original_manifest = manifest_path.read_bytes()
+        for relative in ("native/tests/probe.cpp", "native/include/sn2_mcp/probe.hpp",
+                         "native/src/mod_entry.cpp", "development/mod_templates/widget_opacity/mod.json"):
+            with self.subTest(missing=relative):
+                raw = (self.target / relative).read_bytes()
+                manifest = json.loads(original_manifest)
+                entry = next(item for item in manifest["files"] if item["path"] == relative)
+                manifest["files"].remove(entry)
+                manifest["file_count"] -= 1
+                manifest["total_bytes"] -= entry["bytes"]
+                (self.target / relative).unlink()
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                with self.assertRaises(bundle.BundleError) as captured:
+                    bundle.verify_bundle(self.target)
+                self.assertEqual(captured.exception.code, "incomplete_bundle")
+                (self.target / relative).write_bytes(raw)
+                manifest_path.write_bytes(original_manifest)
+
+    def test_native_local_build_and_backup_files_are_excluded(self):
+        self.write("native/build/private.cpp", b"private generated source")
+        self.write("native/_deps/dependency/private.hpp", b"private dependency checkout")
+        self.write("native/src/nppBackup/backup.cpp", b"editor backup")
+        self.write("development/mod_templates/widget_opacity/src/nppBackup/backup.cpp", b"template backup")
+        self.prepare()
+        for relative in ("native/build", "native/_deps", "native/src/nppBackup",
+                         "development/mod_templates/widget_opacity/src/nppBackup"):
+            self.assertFalse((self.target / relative).exists())
+
 
 class BridgeBundleDependencyTests(unittest.TestCase):
     DEPENDENCIES = (
         "src/sn2_mcp/process_observer.py",
         "src/sn2_mcp/development.py",
         "src/sn2_mcp/tool_catalog.py",
+        "src/sn2_mcp/build_workflow.py",
+        "src/sn2_mcp/runtime_lifecycle.py",
+        "src/sn2_mcp/mod_projects.py",
+        "src/sn2_mcp/mod_runtime.py",
+        "native/src/mod_entry.cpp",
+        "native/include/sn2_mod/command.hpp",
+        "native/tools/mod_control.cpp",
+        "development/mod_templates/widget_opacity/src/mod.cpp",
     )
 
     def test_selected_dependencies_copy_exact_bytes_without_bundle_generation(self):

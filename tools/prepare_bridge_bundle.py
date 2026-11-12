@@ -25,13 +25,24 @@ DEVELOPMENT_MARKER = b"SN2_MCP_DEVELOPMENT_PROBES=1"
 sys.path.insert(0, str(ROOT / "src"))
 from sn2_mcp.workspace import WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
 
-TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "prepare_bridge_bundle.py")
+TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1", "build_native.ps1", "prepare_bridge_bundle.py")
 FIXTURE_DIRS = ()
-SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py")
+SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "mod_projects.py", "mod_runtime.py")
 HELPER_FILES = ()
 FIXTURE_SCRIPTS = {}
 DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock")
-BINARIES = ("build/native/Release/SN2_MCP.dll", "build/native/Release/sn2_mcp_loader.exe")
+BINARIES = ("build/native/Release/SN2_MCP.dll", "build/native/Release/sn2_mcp_loader.exe", "build/native/Release/sn2_mcp_mod_control.exe")
+SDK_FILES = ("native/CMakeLists.txt", "native/src/entry.cpp", "native/src/mod_entry.cpp",
+             "native/src/game_access.cpp", "native/src/game_access_array.cpp",
+             "native/src/game_access_containers.cpp", "native/src/game_access_struct.cpp",
+             "native/src/game_access_vector.cpp", "native/src/game_access_transform.cpp",
+             "native/src/game_access_object_array.cpp", "native/src/game_access_linear_color.cpp",
+             "native/src/observations.cpp", "native/src/transport.cpp",
+             "native/include/sn2_mcp/game_access.hpp", "native/include/sn2_mcp/process_identity.hpp",
+             "native/include/sn2_mod/command.hpp", "native/include/sn2_mod/spec.hpp",
+             "native/tools/load_bridge.cpp", "native/tools/mod_control.cpp")
+TEMPLATE_FILES = tuple("development/mod_templates/widget_opacity/" + name for name in
+                       ("CMakeLists.txt", "mod.json", "src/mod.cpp", "README.md"))
 
 
 class BundleError(Exception):
@@ -76,13 +87,13 @@ def _version(repository: Path) -> str:
     return versions[0]
 
 
-def _compatibility(repository: Path, version: str, dll: bytes, loader: bytes) -> dict:
+def _compatibility(repository: Path, version: str, dll: bytes, loader: bytes, mod_controller: bytes) -> dict:
     source = _read(repository / "native/src/game_access.cpp", repository).decode("utf-8-sig")
     method = "runtime_image_patterns"
     if f'"{method}"' not in source or version.encode("ascii") not in dll or method.encode("ascii") not in dll:
         raise BundleError("native_version_mismatch", "The built DLL does not match the current version or runtime binding contract")
     _production_binary(dll)
-    for label, raw in (("DLL", dll), ("loader", loader)):
+    for label, raw in (("DLL", dll), ("loader", loader), ("mod controller", mod_controller)):
         if len(raw) < 64 or raw[:2] != b"MZ":
             raise BundleError("invalid_binary", f"{label} is not a PE x64 binary")
         offset = struct.unpack_from("<I", raw, 60)[0]
@@ -107,22 +118,62 @@ def _enumerate(repository: Path) -> list[str]:
         raise BundleError("access_error", "Failed to enumerate all allowed bundle sources")
 
     for root, allowed_suffix in ((repository / "src/sn2_mcp", {".py"}),
+                                 (repository / "native", {".cpp", ".hpp", ".h", ".cmake"}),
+                                 (repository / "development/mod_templates/widget_opacity", {".cpp", ".json", ".md"}),
                                  *[(repository / "tests/fixtures" / name, {".json", ".as", ".patch"}) for name in FIXTURE_DIRS]):
         _checked(root, repository, directory=True)
         for directory, directories, files in os.walk(root, followlinks=False, onerror=failure):
             parent = _checked(Path(directory), repository, directory=True)
-            directories[:] = [name for name in directories if name != "__pycache__"]
+            directories[:] = [name for name in directories if name not in {"__pycache__", "nppBackup", "build", "_deps", "CMakeFiles"}]
             for name in directories:
                 _checked(parent / name, repository, directory=True)
             for name in files:
                 path = _checked(parent / name, repository)
                 if not path.is_file():
                     raise BundleError("unsafe_file", "The allowed area contains a non-regular file")
-                if path.suffix.lower() in allowed_suffix:
+                if path.suffix.lower() in allowed_suffix or path.name == "CMakeLists.txt":
                     paths.append(path.relative_to(repository).as_posix())
     if len(set(paths)) != len(paths):
         raise BundleError("bundle_limit", "The bundle contains duplicate paths")
     return sorted(paths)
+
+
+def _required_native_inputs(root: Path, selected: set[str]) -> set[str]:
+    """Resolve local CMake source references and quoted include closure.
+
+    The bundle carries the declared native tests because CMake configures those
+    targets even when the caller selects only a bridge or modification target.
+    Third-party includes remain normal FetchContent dependencies.
+    """
+    required = set(SDK_FILES) | set(TEMPLATE_FILES)
+    cmake = _read(root / "native/CMakeLists.txt", root).decode("utf-8-sig")
+    for relative in re.findall(r"(?<![A-Za-z0-9_])((?:src|tools|tests|include)/[A-Za-z0-9_./-]+\.(?:cpp|hpp|h|cmake))", cmake):
+        required.add("native/" + relative)
+    checked = set()
+    pending = [path for path in required if path.endswith((".cpp", ".hpp", ".h"))]
+    while pending:
+        relative = pending.pop()
+        if relative in checked or relative not in selected:
+            continue
+        checked.add(relative)
+        text = _read(root / relative, root).decode("utf-8-sig")
+        for include in re.findall(r'^\s*#\s*include\s*"([^"\r\n]+)"', text, re.M):
+            normalized = include.replace("\\", "/")
+            if normalized.startswith(("sn2_mcp/", "sn2_mod/")):
+                target = "native/include/" + normalized
+            else:
+                resolved = Path(os.path.abspath(root / relative / ".." / normalized))
+                if not resolved.is_relative_to(root):
+                    raise BundleError("unsafe_source", "A local native include escapes the bundle")
+                target = resolved.relative_to(root).as_posix()
+                if target not in selected and "/" not in normalized:
+                    # Nonlocal third-party include such as MinHook.h resolves
+                    # through its declared dependency include directories.
+                    continue
+            if target not in required:
+                required.add(target)
+                pending.append(target)
+    return required
 
 
 def _target(destination: Path, repository: Path) -> Path:
@@ -190,7 +241,7 @@ def _directory_set(root: Path) -> set[str]:
 
 
 def _instructions(version: str, native_version: str | None = None) -> bytes:
-    return f"""# Subnautica 2 MCP runtime bundle {version}
+    return f"""# Subnautica 2 MCP development bundle {version}
 
 Python version: {version}. Native version: {native_version or version}.
 This folder is not an installer or a public release. Hash verification does not
@@ -201,7 +252,10 @@ establish Subnautica runtime acceptance, load the DLL or launch the game.
 2. With Python 3.11+ and uv, choose an external environment using
    `UV_PROJECT_ENVIRONMENT`, then run `uv sync --locked`. Runtime dependencies
    are locked; the declared Hatchling build backend is pinned. A native
-   consumer needs the Microsoft Visual C++ x64 runtime.
+   consumer needs the Microsoft Visual C++ x64 runtime. Building requires
+   Visual Studio 2022/MSVC x64, CMake 3.24+ and Git on PATH. CMake obtains the
+   declared nlohmann JSON v3.12.0 and MinHook 8af6b4acae5a9388fd742b56fa79ece89d96f823
+   dependencies; their source checkout identities are recorded by the build.
 3. Start the frontend with the external environment's Python:
    `python -B -m sn2_mcp.server --transport streamable-http --host 127.0.0.1
    --port 27224 --native-port 27223 --workspace-root <workspace>
@@ -215,17 +269,42 @@ establish Subnautica runtime acceptance, load the DLL or launch the game.
    observations are native-session values. Refresh after reconnect. Never
    automatically replay an operation with an uncertain effect.
 
-Source tools support workspace search/exact editing and source identity. The
-development recipe captures current reflected interfaces with source hashes;
-source ZIP export preserves bytes but does not compile or install a mod.
+6. In a writable working copy, inspect `sn2_build_recipe` before `sn2_build`.
+   The fixed native workflow captures exact source inputs and returns complete
+   compiler reports, source correlation, process cleanup and artifact hashes.
+   Read `sn2_build_status` and `sn2_compile_diagnostics` for recorded results.
+   `tools/build_native.ps1 -Json` uses the same native build workflow.
+7. `sn2_create_mod_project` creates an editable standalone C++ widget-opacity
+   modification in the configured workspace. Validate it, build its project
+   with `sn2_build(project_path=..., run_tests=false)`, then use
+   `sn2_package_artifact` and `sn2_verify_artifact_package`. The package contains
+   the compiled DLL and its source/build identities. This template establishes
+   the researched Continue-label interface, not a universal native mod API.
+8. Start/select the game explicitly, load/enable the exact bridge and inspect
+   Tick/reflection readiness. `sn2_mod_load` verifies a package and initializes
+   its standalone DLL from the workspace. `sn2_mod_status` distinguishes module
+   residency, initialization, activation and semantic effect. No permanent
+   game-root installation is required by this mechanism. `sn2_mod_disable`
+   requests baseline restoration; confirm its completion. Module and hook
+   remain resident until the game exits. `sn2_mod_reload` performs a controlled
+   restart for another compiled revision; it does not hot-unload a DLL.
+9. Use `sn2_development_stop` for the exact test process after restoration and
+   confirm its exit. The frontend and game have separate lifetimes.
 
-The runtime bundle includes the inherited Python sources, declared dependencies,
-selected runtime tools and native DLL/loader. Gothic helper packages and probes
-remain source provenance in the development Git and are not Subnautica runtime
-fixtures. Server and game lifetimes are separate; finish temporary development
-processes when their work is complete. Installation and publication are separate
-operator assignments. Use a writable working copy for results so the immutable
-bundle continues to pass strict manifest verification.
+Source tools support search/exact editing and source identity. A source ZIP
+preserves bytes but is separate from compiled artifact packaging.
+
+This bundle includes Python services, declared dependency locks, lifecycle/build
+scripts, the production bridge and both controllers, native CMake sources/tests,
+headers and the meaningful modification template. Prebuilt runtime use does not
+require a compiler; source builds do. Native tests retained by CMake include
+donor algorithms and do not claim Gothic game services as Subnautica tools.
+Gothic helper packages and game probes remain outside this bundle. PDB debug
+symbols are not required by this Release bundle and no symbol availability is
+claimed. Build/package creation, initialization, runtime verification,
+installation and publication are separate outcomes. Keep the verified bundle
+as an immutable copy and use a writable working copy for builds and workspace
+results so strict manifest verification remains meaningful.
 """.encode("utf-8")
 
 
@@ -241,7 +320,7 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
     for relative in selected:
         raw = _read(repository / relative, repository)
         raw_files[relative] = raw
-    compatibility = _compatibility(repository, native_version, raw_files[BINARIES[0]], raw_files[BINARIES[1]])
+    compatibility = _compatibility(repository, native_version, *(raw_files[path] for path in BINARIES))
     compatibility_source = _sha(_read(repository / "native/src/game_access.cpp", repository))
     raw_files["README.md"] = _instructions(version, native_version)
     raw_files["START.md"] = raw_files["README.md"]
@@ -254,7 +333,8 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
     manifest = {"schema_version": 1, "kind": "internal_bridge_folder", "version": version,
                 "compatibility": compatibility, "files": files,
                 "file_count": len(files), "total_bytes": sum(item["bytes"] for item in files),
-                "includes": ["python_sources", "locked_dependencies", "runtime_tools", "prebuilt_native_bridge", "instructions"],
+                "includes": ["python_sources", "locked_dependencies", "runtime_tools", "prebuilt_native_bridge",
+                             "native_mod_controller", "native_build_sources_and_tests", "mod_project_template", "instructions"],
                 "excludes": ["virtual_environment", "game_files", "game_caches", "user_mods", "saved_games", "logs", "local_mcp_settings"],
                 "runtime_validation": "not_performed_by_packager", "installed": False}
     manifest["compatibility_source_sha256"] = compatibility_source
@@ -356,8 +436,11 @@ def verify_bundle(bundle_root: Path) -> dict:
     required |= set(HELPER_FILES)
     required |= {f"tests/fixtures/{name}/GothicMod.json" for name in FIXTURE_DIRS}
     required |= {f"tests/fixtures/{name}/Script/{script}" for name, script in FIXTURE_SCRIPTS.items()}
+    required |= set(SDK_FILES) | set(TEMPLATE_FILES)
     if not required.issubset(expected):
-        raise BundleError("incomplete_bundle", "The bundle is missing a required runtime file")
+        raise BundleError("incomplete_bundle", "The bundle is missing a required runtime or development file")
+    if not _required_native_inputs(root, expected).issubset(expected):
+        raise BundleError("incomplete_bundle", "The bundle is missing a declared native build input")
     version = _version(root)
     compatibility = manifest.get("compatibility")
     native_version = compatibility.get("native_version_marker") if isinstance(compatibility, dict) else None
@@ -381,7 +464,7 @@ def verify_bundle(bundle_root: Path) -> dict:
             or compatibility.get("development_build_marker") != PRODUCTION_MARKER.decode("ascii")):
         raise BundleError("invalid_manifest", "The bundle must declare production-only native contents")
     _production_binary(dll)
-    for content in (dll, loader):
+    for content in (dll, loader, _read(root / BINARIES[2], root)):
         if len(content) < 64 or content[:2] != b"MZ":
             raise BundleError("invalid_binary", "The bundle binary is not a PE x64 binary")
         offset = struct.unpack_from("<I", content, 60)[0]

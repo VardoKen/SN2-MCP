@@ -9,6 +9,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from tests.test_mcp_observations import SessionNativeFixture
+from tests.test_subnautica_catalog import PUBLIC_TOOLS
 
 
 class MCPNameInputTests(unittest.IsolatedAsyncioTestCase):
@@ -48,7 +49,7 @@ class MCPNameInputTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(incoming, outgoing) as client:
                     await client.initialize()
                     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-                    self.assertEqual(len(tools), 33)
+                    self.assertEqual(len(tools), len(PUBLIC_TOOLS))
                     invoke = tools["sn2_invoke"]
                     self.assertFalse(invoke.annotations.read_only_hint)
                     self.assertFalse(invoke.annotations.idempotent_hint)

@@ -5,6 +5,8 @@ import asyncio
 import json
 import hashlib
 import logging
+import math
+import time
 from pathlib import Path
 import sys
 import threading
@@ -26,6 +28,10 @@ from .tool_catalog import build_tool_contracts
 from .workspace import SourceWorkspace, WorkspaceError
 from .source_identity import inspect as inspect_source_identity
 from .package_export import ExportError, export_sources, verify_source_export
+from .build_workflow import BuildError, BuildWorkflow
+from .runtime_lifecycle import RuntimeLifecycle
+from .mod_projects import ModProjects, ModProjectError
+from .mod_runtime import ModRuntime
 
 
 def _tool_failure(error: SnapshotError | DevelopmentError | WorkspaceError | ExportError) -> ToolError:
@@ -69,6 +75,35 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     runtime = None
     selected_target = None
     sources = None
+    builds = None
+    mods = None
+
+    def mod_projects() -> ModProjects:
+        nonlocal mods
+        if mods is None:
+            mods = ModProjects(source_workspace(), configured_runtime_root)
+        return mods
+
+    def mod_project_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(mod_projects(), operation)(*args, **kwargs)
+        except (ModProjectError, WorkspaceError) as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "receipt": getattr(error, "receipt", None)}, ensure_ascii=False)) from None
+
+    def build_service() -> BuildWorkflow:
+        nonlocal builds
+        with service_lock:
+            if builds is None:
+                builds = BuildWorkflow(configured_runtime_root, workspace_root=workspace_root)
+            return builds
+
+    def build_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(build_service(), operation)(*args, **kwargs)
+        except BuildError as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "receipt": error.receipt}, ensure_ascii=False)) from None
 
     def source_workspace() -> SourceWorkspace:
         nonlocal sources
@@ -114,17 +149,65 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
     source_write = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 
+    @server.tool(annotations=read_only)
+    def sn2_build_recipe(target: str = "all", configuration: str = "Release",
+                         run_tests: StrictBool = True, project_path: str = "native") -> dict[str, Any]:
+        """Identify the fixed CMake/MSVC build, source inputs and toolchain without compiling."""
+        return build_call("recipe", target=target, configuration=configuration, run_tests=run_tests,
+                          project_path=project_path)
+
+    @server.tool(annotations=source_write)
+    def sn2_build(target: str = "all", configuration: str = "Release",
+                  run_tests: StrictBool = True, timeout_seconds: float = 900,
+                  parallel: StrictInt | None = None, project_path: str = "native") -> dict[str, Any]:
+        """Build captured native inputs and return complete stage, diagnostic and artifact receipts."""
+        return build_call("build", target=target, configuration=configuration, run_tests=run_tests,
+                          timeout_seconds=timeout_seconds, parallel=parallel, project_path=project_path)
+
+    @server.tool(annotations=read_only)
+    def sn2_build_status(build_id: str | None = None) -> dict[str, Any]:
+        """Read an actual recorded build receipt; no resident worker is implied."""
+        return build_call("status", build_id=build_id)
+
+    @server.tool(annotations=read_only)
+    def sn2_compile_diagnostics(build_id: str | None = None) -> dict[str, Any]:
+        """Read complete recorded MSVC/CMake diagnostics correlated to captured source bytes."""
+        return build_call("diagnostics", build_id=build_id)
+
+    @server.tool(annotations=source_write)
+    def sn2_create_mod_project(project_path: str, mod_id: str) -> dict[str, Any]:
+        """Create an editable standalone native widget modification using the copied Unreal SDK."""
+        return mod_project_call("create", project_path, mod_id)
+
+    @server.tool(annotations=read_only)
+    def sn2_validate_mod_project(project_path: str) -> dict[str, Any]:
+        """Validate native project inputs and the supported initialization/build contract."""
+        return mod_project_call("validate", project_path)
+
+    @server.tool(annotations=source_write)
+    def sn2_package_artifact(build_receipt_path: str, destination: str) -> dict[str, Any]:
+        """Package the actual compiled modification and its source/build identities for workspace loading."""
+        return mod_project_call("package", build_receipt_path, destination)
+
+    @server.tool(annotations=read_only)
+    def sn2_verify_artifact_package(package_path: str) -> dict[str, Any]:
+        """Verify complete compiled package inventory before activation."""
+        return mod_project_call("verify", package_path)
+
     def watch_owner(ctx: Context | None) -> str:
         return "shared_native_connection"
 
     def native_request(operation: str, params: dict[str, Any],
-                       timeout_seconds: float | None = None) -> dict[str, Any]:
+                       timeout_seconds: float | None = None, *,
+                       target_process: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
             with native_lock:
                 client = native
-            if selected_target is not None:
-                params = {**params, "expected_process_id": selected_target["pid"],
-                          "expected_creation_filetime": selected_target["creation_time"]}
+                target = target_process if target_process is not None else selected_target
+                target = None if target is None else dict(target)
+            if target is not None:
+                params = {**params, "expected_process_id": target["pid"],
+                          "expected_creation_filetime": target["creation_time"]}
             return client.request(operation, params) if timeout_seconds is None else client.request(operation, params, timeout=timeout_seconds)
         except NativeError as error:
             raise ToolError(json.dumps({"code": error.code, "message": str(error),
@@ -137,8 +220,161 @@ def create_server(workspace_root: Path, native_port: int = 27223,
             target = runtime_service().validate_target(target_process)
         except DevelopmentError as error:
             raise _tool_failure(error) from None
-        selected_target = target
+        with native_lock:
+            selected_target = target
         return target
+
+    def invalidate_native() -> None:
+        nonlocal selected_target, native
+        with native_lock:
+            native.close()
+            native = NativeClient(port=native_port)
+            selected_target = None
+
+    def lifecycle_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(RuntimeLifecycle(runtime_service()), operation)(*args, **kwargs)
+        except DevelopmentError as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "outcome_unknown": error.outcome_unknown, "receipt": error.receipt}, ensure_ascii=False)) from None
+
+    def terminating_lifecycle_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            result = getattr(RuntimeLifecycle(runtime_service()), operation)(*args, **kwargs)
+        except DevelopmentError as error:
+            receipt = error.receipt if isinstance(error.receipt, dict) else {}
+            # Validation/snapshot failures and a known not-started command leave
+            # the current connection, handles and watches intact. A completed
+            # stop or uncertain command must invalidate the previous session.
+            if error.outcome_unknown or receipt.get("stop_receipt") or receipt.get("cleanup"):
+                invalidate_native()
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "outcome_unknown": error.outcome_unknown, "receipt": error.receipt}, ensure_ascii=False)) from None
+        invalidate_native()
+        return result
+
+    def checked_mod_package(package_path: str, expected_manifest_sha256: str | None) -> dict[str, Any]:
+        package = mod_project_call("verify", package_path)
+        if expected_manifest_sha256 is not None and package["manifest_sha256"] != expected_manifest_sha256:
+            raise ToolError(json.dumps({"code": "package_changed", "message": "The verified package manifest differs from the selected revision"}))
+        return package
+
+    def mod_runtime_call(operation: str, target_process: dict[str, Any], package_path: str,
+                         expected_manifest_sha256: str | None, timeout_seconds: float,
+                         request_id: int | None = None) -> dict[str, Any]:
+        package = checked_mod_package(package_path, expected_manifest_sha256)
+        artifact = package["artifact"]
+        try:
+            service = ModRuntime(runtime_service(), workspace_root=workspace_root)
+            kwargs = {"timeout_seconds": timeout_seconds}
+            if operation == "status":
+                kwargs["request_id"] = request_id
+            result = getattr(service, operation)(target_process, artifact["path"], artifact["sha256"], **kwargs)
+        except DevelopmentError as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "outcome_unknown": error.outcome_unknown, "receipt": error.receipt}, ensure_ascii=False)) from None
+        status = result.get("mod_receipt", {}).get("status", {})
+        metadata = package["metadata"]
+        if status and (status.get("mod_id") != metadata["mod_id"]
+                       or status.get("source_revision") != package["source_revision"]):
+            raise ToolError(json.dumps({"code": "mod_revision_mismatch", "message": "The initialized mod does not match the verified package", "receipt": result}))
+        return {**result, "package": package}
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_mod_load(target_process: dict[str, Any], package_path: str,
+                      expected_manifest_sha256: str | None = None,
+                      timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Verify and initialize the selected standalone compiled modification; inspect status for activation."""
+        return mod_runtime_call("load", target_process, package_path, expected_manifest_sha256, timeout_seconds)
+
+    @server.tool(annotations=read_only)
+    def sn2_mod_status(target_process: dict[str, Any], package_path: str,
+                       expected_manifest_sha256: str | None = None,
+                       timeout_seconds: float = 30.0, request_id: StrictInt | None = None) -> dict[str, Any]:
+        """Inspect exact mod revision, initialization, semantic effect and the original command receipt."""
+        return mod_runtime_call("status", target_process, package_path, expected_manifest_sha256,
+                                timeout_seconds, request_id)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_mod_disable(target_process: dict[str, Any], package_path: str,
+                        expected_manifest_sha256: str | None = None,
+                        timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Stop the mod action and request baseline restoration; module and hook remain until process exit."""
+        return mod_runtime_call("disable", target_process, package_path, expected_manifest_sha256, timeout_seconds)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_mod_reload(target_process: dict[str, Any], package_path: str,
+                       bridge_dll_path: str, expected_bridge_sha256: str,
+                       expected_manifest_sha256: str | None = None,
+                       discovery_timeout_seconds: float = 30.0,
+                       readiness_timeout_seconds: float = 30.0,
+                       timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Iterate a compiled revision by confirmed process restart, fresh bridge readiness and mod initialization."""
+        for value in (readiness_timeout_seconds, discovery_timeout_seconds, timeout_seconds):
+            if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+                raise ToolError(json.dumps({"code": "invalid_timeout", "message": "All lifecycle timeouts must be positive and finite"}))
+        package = checked_mod_package(package_path, expected_manifest_sha256)
+        # Validate the selected artifact before terminating the current process.
+        try:
+            bridge = Path(bridge_dll_path).resolve(strict=True)
+            if not bridge.is_relative_to(configured_runtime_root) or hashlib.sha256(bridge.read_bytes()).hexdigest() != expected_bridge_sha256:
+                raise ValueError("bridge_changed")
+        except (OSError, ValueError):
+            raise ToolError(json.dumps({"code": "bridge_changed", "message": "Select an existing workspace bridge DLL with the expected SHA-256"})) from None
+        restart = sn2_development_restart(target_process, discovery_timeout_seconds)
+        process = restart["process"]
+        progress = {"restart": restart, "process": process, "stage": "bridge_load"}
+        try:
+            bridge_load = sn2_native_load(process, str(bridge), expected_bridge_sha256)
+            progress.update(bridge_load=bridge_load, stage="transport")
+            deadline = time.monotonic() + readiness_timeout_seconds
+            while True:
+                try:
+                    status = sn2_native_status(process)
+                    break
+                except ToolError as error:
+                    detail = json.loads(str(error))
+                    if detail.get("code") != "native_unavailable" or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+            progress.update(native_status=status, stage="enable")
+            enabled = sn2_native_enable(process, status["session_id"])
+            progress.update(native_status=enabled, stage="readiness")
+            while not enabled.get("ready", False) and time.monotonic() < deadline:
+                time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+                enabled = sn2_native_status(process)
+                progress["native_status"] = enabled
+            if not enabled.get("ready", False):
+                raise ToolError(json.dumps({"code": "bridge_readiness_unconfirmed", "message": "The fresh bridge did not establish Tick/reflection readiness"}))
+            progress["stage"] = "mod_initialization"
+            mod = sn2_mod_load(process, package_path, package["manifest_sha256"], timeout_seconds)
+        except ToolError as error:
+            try:
+                detail = json.loads(str(error))
+            except (TypeError, ValueError):
+                detail = {"code": "revision_iteration_unconfirmed", "message": str(error)}
+            detail["iteration_receipt"] = progress
+            raise ToolError(json.dumps(detail, ensure_ascii=False)) from None
+        return {"state": "revision_initialization_requested", "iteration": "controlled_process_restart",
+                "hot_reload": False, "process": process, "previous_process": target_process,
+                "restart": restart, "bridge_load": bridge_load, "native_status": enabled, "mod": mod}
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_development_start(discovery_timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Launch Subnautica and identify the fresh Shipping process; loading and readiness remain separate."""
+        return lifecycle_call("start", discovery_timeout_seconds=discovery_timeout_seconds)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_development_stop(target_process: dict[str, Any]) -> dict[str, Any]:
+        """Stop the exact selected game instance and confirm process cleanup."""
+        return terminating_lifecycle_call("stop", target_process)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_development_restart(target_process: dict[str, Any],
+                                discovery_timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Confirm the selected instance stopped, then launch and identify a fresh instance."""
+        return terminating_lifecycle_call("restart", target_process,
+                                          discovery_timeout_seconds=discovery_timeout_seconds)
 
     @server.tool(annotations=read_only)
     def sn2_status() -> dict[str, Any]:
@@ -335,10 +571,13 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     def sn2_native_status(target_process: dict[str, Any] | None = None) -> dict[str, Any]:
         """Read native handshake/discovery/Tick state independently from executor readiness."""
         if target_process is not None:
-            select_target(target_process)
-        result = native_request("status", {})
-        if selected_target is not None and (result.get("process_id") != selected_target["pid"]
-                or str(result.get("process_creation_filetime")) != selected_target["creation_time"]):
+            target = select_target(target_process)
+        else:
+            with native_lock:
+                target = None if selected_target is None else dict(selected_target)
+        result = native_request("status", {}, target_process=target)
+        if target is not None and (result.get("process_id") != target["pid"]
+                or str(result.get("process_creation_filetime")) != target["creation_time"]):
             raise ToolError(json.dumps({"code": "native_process_mismatch", "message": "The native connection belongs to another process"}))
         return result
 

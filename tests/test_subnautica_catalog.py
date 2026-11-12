@@ -14,7 +14,6 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from sn2_mcp import __version__
 from sn2_mcp.server import create_server, main
-from tests.test_mcp_observations import SessionNativeFixture
 
 
 RUNTIME_TOOLS = {
@@ -29,7 +28,12 @@ RUNTIME_TOOLS = {
 SOURCE_TOOLS = {"sn2_source_identity", "sn2_list_source_files", "sn2_find_source_files",
                 "sn2_search_source", "sn2_read_source", "sn2_read_source_exact", "sn2_write_source",
                 "sn2_create_source_directory", "sn2_development_recipe", "sn2_export_sources", "sn2_verify_source_export"}
-PUBLIC_TOOLS = RUNTIME_TOOLS | SOURCE_TOOLS
+BUILD_TOOLS = {"sn2_build_recipe", "sn2_build", "sn2_build_status", "sn2_compile_diagnostics"}
+LIFECYCLE_TOOLS = {"sn2_development_start", "sn2_development_stop", "sn2_development_restart"}
+MOD_TOOLS = {"sn2_create_mod_project", "sn2_validate_mod_project", "sn2_package_artifact",
+             "sn2_verify_artifact_package", "sn2_mod_load", "sn2_mod_status",
+             "sn2_mod_disable", "sn2_mod_reload"}
+PUBLIC_TOOLS = RUNTIME_TOOLS | SOURCE_TOOLS | BUILD_TOOLS | LIFECYCLE_TOOLS | MOD_TOOLS
 
 
 class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
@@ -44,8 +48,7 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                 tools = await server.list_tools()
 
                 self.assertEqual({tool.name for tool in tools}, PUBLIC_TOOLS)
-                forbidden = ("g1r_", "sn2_package_", "sn2_debug_",
-                             "sn2_compile", "sn2_reload", "sn2_save_", "sn2_session_")
+                forbidden = ("g1r_", "sn2_debug_", "sn2_reload", "sn2_save_", "sn2_session_")
                 self.assertFalse(any(tool.name.startswith(forbidden) for tool in tools))
                 runtime_factory.assert_not_called()
 
@@ -71,6 +74,15 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
 
                 # Tuple order: read-only, destructive, idempotent, open-world.
                 mutation_effects = {
+                    "sn2_build": (False, False, False, False),
+                    "sn2_create_mod_project": (False, False, False, False),
+                    "sn2_package_artifact": (False, False, False, False),
+                    "sn2_development_start": (False, False, False, True),
+                    "sn2_development_stop": (False, True, False, True),
+                    "sn2_development_restart": (False, True, False, True),
+                    "sn2_mod_load": (False, False, False, True),
+                    "sn2_mod_disable": (False, True, False, True),
+                    "sn2_mod_reload": (False, True, False, True),
                     "sn2_write_source": (False, False, False, False),
                     "sn2_create_source_directory": (False, False, False, False),
                     "sn2_export_sources": (False, False, False, False),
@@ -167,6 +179,8 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                 native.request.assert_not_called()
 
     async def test_optional_offsets_and_watch_sessions_cross_tcp_and_preserve_refusals(self):
+        from tests.test_mcp_observations import SessionNativeFixture
+
         pagination = (
             ("sn2_find_objects", "objects", {"query": "Neutral", "class_query": "Actor", "limit": 7,
                                               "exact_path": "/Script/Neutral.Default__Actor"}),

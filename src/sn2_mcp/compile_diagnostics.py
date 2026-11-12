@@ -5,6 +5,7 @@ import hashlib
 import ntpath
 import os
 import re
+from pathlib import Path
 
 from .development import DevelopmentError
 from .workspace import WorkspaceError, _read_bytes, _parts, _checked
@@ -258,3 +259,183 @@ def _reload_observation(service, before: dict, after: dict, native_report: dict,
                                                  for item in observations),
             # File identity and observed reload success do not identify compiled bytes.
             "exact_source_compiled": False}
+
+
+# MSVC/MSBuild prefixes and CMake headers are separate from the retained
+# AngelScript report formats above. Parsing a report does not run a compiler.
+_BUILD_SEVERITIES = {
+    "fatal error": "error", "error": "error", "warning": "warning",
+    "note": "note", "message": "info", "info": "info", "remark": "info",
+    "неустранимая ошибка": "error", "фатальная ошибка": "error", "ошибка": "error",
+    "предупреждение": "warning", "примечание": "note", "сообщение": "info",
+}
+_BUILD_SEVERITY_PATTERN = "|".join(re.escape(item) for item in _BUILD_SEVERITIES)
+_BUILD_DETAIL = re.compile(
+    r"^(?:(?P<scope>command line)\s+)?(?P<severity>" + _BUILD_SEVERITY_PATTERN
+    + r")(?:\s+(?P<code>[A-Za-z]+\d+))?\s*:\s*(?P<message>.*)$", re.I)
+_MSVC_LOCATION = re.compile(
+    r"^(?P<file>.+?)\((?P<line>\d+)(?:\s*,\s*(?P<column>\d+)"
+    r"(?:\s*,\s*(?P<end_line>\d+)\s*,\s*(?P<end_column>\d+))?)?\)\s*:\s*(?P<rest>.*)$")
+_MSVC_PREFIX = re.compile(
+    r"^(?P<prefix>.+?)\s*:\s*(?P<rest>(?:command line\s+)?(?:" + _BUILD_SEVERITY_PATTERN
+    + r")(?:\s+[A-Za-z]+\d+)?\s*:.*)$", re.I)
+_MSBUILD_PROJECT = re.compile(r"\s+\[(?P<project>[^\[\]\r\n]+\.[A-Za-z]*proj)\]$")
+_MSBUILD_NODE = re.compile(r"^\s*\d+>")
+_CMAKE_HEADER = re.compile(
+    r"^CMake (?P<severity>Error|Warning|Deprecation Warning)"
+    r"(?:\s+\((?P<category>[^)]+)\))?"
+    r"(?:(?: at (?P<at>.+):(?P<line>\d+)"
+    r"(?:\s+\((?P<command>[^)]+)\))?)|(?: in (?P<in>.+)))?"
+    r"\s*:\s*(?P<message>.*)$")
+
+
+def _build_source_index(source_files: list[dict], workspace_root: Path) -> tuple[str, dict]:
+    root = _path_identity(str(workspace_root))
+    known: dict[str, list[dict]] = {}
+    for item in source_files:
+        relative = item.get("path")
+        sha256 = item.get("sha256")
+        if not isinstance(relative, str) or not isinstance(sha256, str):
+            continue
+        # The supplied inventory contract is workspace-relative. An absolute
+        # or escaping inventory entry cannot identify a workspace source.
+        if ntpath.isabs(relative) or ntpath.splitdrive(relative)[0]:
+            continue
+        absolute = _path_identity(ntpath.join(root, relative))
+        try:
+            if ntpath.commonpath((root, absolute)) != root:
+                continue
+        except ValueError:
+            continue
+        known.setdefault(absolute, []).append({"path": relative, "sha256": sha256})
+    return root, known
+
+
+def _build_source_match(location: str | None, root: str, known: dict, *, relative_root: str | None = None) -> dict:
+    matches = []
+    if location is not None:
+        drive, tail = ntpath.splitdrive(location)
+        # Drive-relative paths depend on an unreported per-drive working
+        # directory. Do not resolve them as if they were fully qualified.
+        if not drive or tail.startswith(("\\", "/")):
+            matches = known.get(_path_identity(ntpath.join(relative_root or root, location)), [])
+    bound = matches[0] if len(matches) == 1 else None
+    return {
+        "source_file": bound["path"] if bound else None,
+        "source_sha256": bound["sha256"] if bound else None,
+        "source_matched": bound is not None,
+        "source_match_status": "matched" if bound else "ambiguous" if matches else "unmatched",
+        "source_match_basis": "exact_workspace_path" if bound else None,
+    }
+
+
+def _build_location(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+        return value[1:-1]
+    return value
+
+
+def parse_build_report(text: str, source_files: list[dict], workspace_root: Path, *,
+                       source_directory: Path | None = None) -> dict:
+    """Parse supplied MSVC/CMake output without claiming build or source success.
+
+    Only exact absolute or workspace-relative paths can match the supplied
+    source inventory. Relative CMake locations use the caller's known CMake
+    source directory when supplied. A filename inside a message, a project suffix or
+    a same-name source in another directory does not establish attribution.
+    """
+    root, known = _build_source_index(source_files, workspace_root)
+    cmake_root = _path_identity(ntpath.join(root, str(source_directory))) if source_directory is not None else root
+    diagnostics = []
+    unparsed = []
+    lines = text.splitlines(keepends=True)
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
+        index += 1
+        line_text = raw.rstrip("\r\n")
+        cmake = _CMAKE_HEADER.fullmatch(line_text)
+        if cmake is not None:
+            body = []
+            while index < len(lines):
+                following = lines[index]
+                content = following.rstrip("\r\n")
+                if content and not content[0].isspace() and content != "Call Stack (most recent call first):":
+                    break
+                body.append(following)
+                index += 1
+            location = _build_location(cmake["at"] or cmake["in"])
+            matched = _build_source_match(location, root, known, relative_root=cmake_root)
+            inline = cmake["message"]
+            message = (inline + raw[len(line_text):] if inline and body else inline) + "".join(body)
+            diagnostics.append({
+                "format": "cmake", "reported_file": location,
+                "file": matched["source_file"] or location,
+                "line": int(cmake["line"]) if cmake["line"] is not None else None,
+                "column": None, "end_line": None, "end_column": None,
+                "severity": "error" if cmake["severity"] == "Error" else "warning",
+                "severity_text": cmake["severity"], "code": None,
+                "category": cmake["category"], "command": cmake["command"],
+                "message": message, "message_truncated": False,
+                "raw_text": raw + "".join(body), "report_line": index - len(body),
+                "stage": "build_report", **matched,
+            })
+            continue
+
+        # MSBuild's node identifier is output framing, not part of a path.
+        content = _MSBUILD_NODE.sub("", line_text).lstrip()
+        location_match = _MSVC_LOCATION.fullmatch(content)
+        location = None
+        tool = None
+        line = column = end_line = end_column = None
+        detail = None
+        if location_match is not None:
+            detail = _BUILD_DETAIL.fullmatch(location_match["rest"])
+            if detail is not None:
+                location = _build_location(location_match["file"])
+                line = int(location_match["line"])
+                column = int(location_match["column"]) if location_match["column"] is not None else None
+                end_line = int(location_match["end_line"]) if location_match["end_line"] is not None else None
+                end_column = int(location_match["end_column"]) if location_match["end_column"] is not None else None
+        else:
+            detail = _BUILD_DETAIL.fullmatch(content)
+            if detail is None:
+                prefix = _MSVC_PREFIX.fullmatch(content)
+                if prefix is not None:
+                    detail = _BUILD_DETAIL.fullmatch(prefix["rest"])
+                    if detail is not None:
+                        supplied_prefix = _build_location(prefix["prefix"])
+                        if supplied_prefix and supplied_prefix.casefold() in ("cl", "link", "lib", "rc", "mt", "msbuild"):
+                            tool = supplied_prefix
+                        else:
+                            location = supplied_prefix
+        if detail is None:
+            unparsed.append(raw)
+            continue
+        message = detail["message"]
+        project = _MSBUILD_PROJECT.search(message)
+        project_file = project["project"] if project else None
+        if project is not None:
+            message = message[:project.start()]
+        matched = _build_source_match(location, root, known)
+        diagnostics.append({
+            "format": "msvc", "reported_file": location,
+            "file": matched["source_file"] or location,
+            "line": line, "column": column, "end_line": end_line, "end_column": end_column,
+            "severity": _BUILD_SEVERITIES[detail["severity"].casefold()],
+            "severity_text": detail["severity"], "code": detail["code"],
+            "tool": tool, "scope": detail["scope"], "project_file": project_file,
+            "message": message, "message_truncated": False, "raw_text": raw,
+            "report_line": index, "stage": "build_report", **matched,
+        })
+    return {
+        "text": text, "report_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "diagnostics": diagnostics, "unparsed_lines": [line.rstrip("\r\n") for line in unparsed],
+        "unparsed_output": "".join(unparsed), "truncated": False, "unparsed_truncated": False,
+        "compiled": False, "exact_source_compiled": False,
+        "compilation_state": "errors_reported" if any(item["severity"] == "error" for item in diagnostics) else "unknown",
+        "report_provenance": "supplied_build_output", "source_current_correlation": "supplied_inventory_only",
+    }

@@ -47,6 +47,10 @@
 #include <set>
 #include <vector>
 
+#if defined(SN2_MOD_RUNTIME)
+extern "C" void SN2ModDiagnostic(const char* text) noexcept;
+#endif
+
 namespace sn2_mcp {
 using json = nlohmann::json;
 namespace {
@@ -146,10 +150,16 @@ json linear_color_snapshot_json(const linear_color_layout::Snapshot& value,bool 
     return result;
 }
 void diagnostic(const char* text) {
+#if defined(SN2_MOD_RUNTIME)
+    // A compiled package is immutable. The mod's status snapshot owns
+    // bootstrap diagnostics instead of creating files next to its DLL.
+    SN2ModDiagnostic(text);
+#else
     HMODULE self{};GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         reinterpret_cast<LPCWSTR>(&diagnostic),&self);
     wchar_t path[32768]{};GetModuleFileNameW(self,path,32768);std::wstring file(path);file=file.substr(0,file.find_last_of(L"\\/"))+L"\\native-tick.log";
     std::ofstream output(file,std::ios::app);output<<text<<"\n";
+#endif
 }
 uintptr_t kObjects{};
 uintptr_t kNames{};
@@ -159,6 +169,7 @@ uintptr_t kFree{};
 uintptr_t kStringConstruct{};
 uintptr_t kNameConstruct{};
 uintptr_t kObjectArrayRealloc{};
+json kInstalledTickHook=nullptr;
 
 bool copy_memory(void* destination, const void* source, size_t count) {
     if (!source) return false;
@@ -199,6 +210,92 @@ std::string utf8(const wchar_t* value, int length) {
     if (!count) throw HandlerError("invalid_string", "Invalid UTF-16 string");
     std::string result(count,'\0');
     WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value,length,result.data(),count,nullptr,nullptr);
+    return result;
+}
+json hook_address(std::uintptr_t address) {
+    json result={{"address",address?json(address):json(nullptr)},{"module",nullptr},
+        {"committed",false},{"executable",false}};
+    if(!address)return result;
+    MEMORY_BASIC_INFORMATION region{};
+    if(!VirtualQuery(reinterpret_cast<const void*>(address),&region,sizeof(region))) {
+        result["error"]="memory_region_unavailable";return result;
+    }
+    result["allocation_base"]=reinterpret_cast<std::uintptr_t>(region.AllocationBase);
+    result["region_base"]=reinterpret_cast<std::uintptr_t>(region.BaseAddress);
+    result["region_bytes"]=region.RegionSize;
+    result["protection"]=region.Protect;
+    result["committed"]=region.State==MEM_COMMIT;
+    result["executable"]=region.State==MEM_COMMIT && !(region.Protect&(PAGE_GUARD|PAGE_NOACCESS))
+        && (region.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY));
+    HMODULE owner{};
+    if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(address),&owner)) {
+        wchar_t path[32768]{};const auto length=GetModuleFileNameW(owner,path,32768);
+        if(length && length<32768)result["module"]=utf8(path,static_cast<int>(length));
+    }
+    return result;
+}
+json sample_hook_jump(std::uintptr_t address) {
+    auto result=hook_address(address);
+    result.update({{"encoding",nullptr},{"destination",nullptr},{"bytes",nullptr},
+        {"sample_stable",false}});
+    std::array<std::uint8_t,16> before{},after{};
+    if(!address || !copy_memory(before.data(),reinterpret_cast<const void*>(address),before.size())) {
+        result["state"]="unreadable";return result;
+    }
+    result["bytes"]=before;
+    std::uintptr_t destination{},slot{};std::uint64_t pointer{},pointer_after{};
+    bool indirect{},first_pointer_read{};
+    if(before[0]==0xe9) {
+        std::int32_t displacement{};std::memcpy(&displacement,before.data()+1,sizeof(displacement));
+        const auto target=static_cast<std::int64_t>(address)+5+displacement;
+        if(target>0)destination=static_cast<std::uintptr_t>(target);
+        result["encoding"]="E9_REL32";
+    } else if(before[0]==0xff && before[1]==0x25) {
+        indirect=true;
+        std::int32_t displacement{};std::memcpy(&displacement,before.data()+2,sizeof(displacement));
+        const auto target=static_cast<std::int64_t>(address)+6+displacement;
+        if(target>0) {
+            slot=static_cast<std::uintptr_t>(target);
+            first_pointer_read=copy_memory(&pointer,reinterpret_cast<const void*>(slot),sizeof(pointer));
+            if(first_pointer_read)
+                destination=static_cast<std::uintptr_t>(pointer);
+        }
+        result["encoding"]="FF25_RIP";result["indirect_slot"]=slot?json(slot):json(nullptr);
+    }
+    const bool code_stable=copy_memory(after.data(),reinterpret_cast<const void*>(address),after.size()) && before==after;
+    const bool pointer_stable=!indirect || (slot && first_pointer_read
+        && copy_memory(&pointer_after,reinterpret_cast<const void*>(slot),sizeof(pointer_after))
+        && pointer==pointer_after);
+    result["sample_stable"]=code_stable && pointer_stable;
+    result["state"]=indirect && (!slot || !first_pointer_read)?"indirect_slot_unavailable":
+        code_stable && pointer_stable?"sampled":"changed_during_sample";
+    result["destination"]=destination?hook_address(destination):json(nullptr);
+    return result;
+}
+json current_tick_hook(std::uintptr_t entry,std::uintptr_t expected,std::uintptr_t trampoline) {
+    json result={{"method","advisory_entry_and_single_relay_memory_sample"},
+        {"expected_detour",hook_address(expected)},{"original_trampoline",hook_address(trampoline)},
+        {"entry",sample_hook_jump(entry)},{"relay",nullptr},{"resolved_destination",nullptr},
+        {"relation","not_observed"},{"full_chain_validated",false},
+        {"route_sample_consistency","sequential_non_atomic"},
+        {"limits",{"Two matching reads are not an atomic snapshot or proof that Tick reaches this address",
+            "Only an entry jump and one relay are decoded; a different destination may preserve a longer chain"}}};
+    if(!result.at("entry").value("sample_stable",false))return result;
+    const auto first=result.at("entry").at("destination");
+    if(first.is_null()) {result["relation"]="entry_is_not_a_supported_jump";return result;}
+    const auto first_address=first.at("address").get<std::uintptr_t>();
+    auto resolved=first_address;
+    if(first_address!=expected && first.value("executable",false)) {
+        result["relay"]=sample_hook_jump(first_address);
+        if(!result.at("relay").value("sample_stable",false)) {
+            result["relation"]="relay_changed_or_unreadable";return result;
+        }
+        if(!result.at("relay").at("destination").is_null())
+            resolved=result.at("relay").at("destination").at("address").get<std::uintptr_t>();
+    }
+    result["resolved_destination"]=hook_address(resolved);
+    result["relation"]=resolved==expected?"expected_detour_observed":"different_destination_or_longer_chain";
     return result;
 }
 std::string copied_string(const sn2_mcp::StringHeader& header) {
@@ -375,6 +472,9 @@ bool GameAccess::start() {
         enabled_=false;MH_RemoveHook(reinterpret_cast<void*>(base_+kTick));
         original_tick_=nullptr;active_=nullptr;startup_error_="tick_hook_enable_failed";return false;
     }
+    try {kInstalledTickHook=current_tick_hook(base_+kTick,reinterpret_cast<std::uintptr_t>(&hooked_tick),
+        reinterpret_cast<std::uintptr_t>(original_tick_));}
+    catch(const std::exception& error) {kInstalledTickHook={{"state","snapshot_unavailable"},{"error",error.what()}};}
     startup_error_.clear();diagnostic("tick_hook_enabled");return true;
 }
 void GameAccess::validate_runtime_layout() {
@@ -526,11 +626,32 @@ json GameAccess::status() const {
                 {"operation",active_job_->request.value("op",std::string{})},{"state","running"}};
         }
     }
-    json bindings=nullptr,validation=nullptr;std::string startup,reflection_error;
+    json bindings=nullptr,validation=nullptr,tick_hook=nullptr;std::string startup,reflection_error;
     {
         std::lock_guard lock(bootstrap_mutex_);
         bindings=bindings_.describe();validation=reflection_validation_;
         startup=startup_error_;reflection_error=reflection_error_;
+        if(base_ && kTick && enabled_) {
+            try {
+                tick_hook=current_tick_hook(base_+kTick,reinterpret_cast<std::uintptr_t>(&hooked_tick),
+                    reinterpret_cast<std::uintptr_t>(original_tick_));
+                tick_hook["installed_snapshot"]=kInstalledTickHook;
+                tick_hook["entry_changed_since_enable"]=kInstalledTickHook.contains("entry")
+                    && tick_hook.at("entry").value("sample_stable",false)
+                    && kInstalledTickHook.at("entry").value("sample_stable",false)
+                    ?json(tick_hook.at("entry").at("bytes")!=kInstalledTickHook.at("entry").at("bytes"))
+                    :json(nullptr);
+                const auto stable_route=[](const json& value) {
+                    return value.contains("entry") && value.at("entry").value("sample_stable",false)
+                        && (value.at("relay").is_null() || value.at("relay").value("sample_stable",false));
+                };
+                tick_hook["resolved_destination_changed_since_enable"]=stable_route(tick_hook)
+                    && stable_route(kInstalledTickHook)
+                    ?json((tick_hook.at("resolved_destination").is_null()?json(nullptr):tick_hook.at("resolved_destination").at("address"))
+                        !=(kInstalledTickHook.at("resolved_destination").is_null()?json(nullptr):kInstalledTickHook.at("resolved_destination").at("address")))
+                    :json(nullptr);
+            } catch(const std::exception& error) {tick_hook={{"state","snapshot_unavailable"},{"error",error.what()}};}
+        }
     }
     json target={{"pid",GetCurrentProcessId()},{"executable",nullptr},{"creation_filetime",nullptr}};
     try {
@@ -539,7 +660,8 @@ json GameAccess::status() const {
         target["creation_filetime"]=std::to_string(sn2::loader::creation_filetime(GetCurrentProcess()));
     } catch(const std::exception& error) {target["error"]=error.what();}
     const bool reflection=reflection_validated_.load();
-    return {{"version","0.2.2"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+    return {{"version","0.3.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+            {"tick_hook_current",tick_hook},
             {"process_id",GetCurrentProcessId()},{"process_creation_filetime",target.at("creation_filetime")},{"target_process",target},
             {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},
             {"executor_ready",enabled_.load()&&recent},{"ready",enabled_.load()&&recent&&reflection},
