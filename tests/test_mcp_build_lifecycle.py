@@ -99,22 +99,17 @@ class MCPBuildLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.runtime_factory.assert_not_called()
         self.native.request.assert_not_called()
 
-    async def test_mod_project_selection_reaches_build_service_without_changing_native_defaults(self):
-        receipt = {"project_path": "mods/opacity", "target": "SN2_OpacityMod", "compiled": False}
-        self.build.recipe.return_value = receipt
-        self.build.build.return_value = {**receipt, "state": "succeeded", "build_id": "mod-build-a"}
-        self.assertEqual(await self.result("sn2_build_recipe", {
-            "project_path": "mods/opacity", "target": "SN2_OpacityMod", "run_tests": False,
-        }), receipt)
-        self.build.recipe.assert_called_once_with(target="SN2_OpacityMod", configuration="Release",
-                                                  run_tests=False, project_path="mods/opacity")
-        built = await self.result("sn2_build", {
-            "project_path": "mods/opacity", "target": "SN2_OpacityMod", "run_tests": False,
-        })
-        self.assertEqual(built, self.build.build.return_value)
-        self.build.build.assert_called_once_with(target="SN2_OpacityMod", configuration="Release",
-                                                 run_tests=False, timeout_seconds=900, parallel=None,
-                                                 project_path="mods/opacity")
+    async def test_content_or_old_dll_project_selection_directs_to_cooker_before_native_build(self):
+        for project_path in ("projects/ContentMod", "mods/opacity"):
+            for tool in ("sn2_build_recipe", "sn2_build"):
+                with self.subTest(project_path=project_path, tool=tool):
+                    error = await self.failure(tool, {"project_path": project_path, "run_tests": False})
+                    self.assertEqual(error["code"], "unsupported_project")
+                    self.assertIn("sn2_cook_mod", error["message"])
+                    self.assertIsNone(error["receipt"])
+        self.build_factory.assert_not_called()
+        self.build.recipe.assert_not_called()
+        self.build.build.assert_not_called()
         self.runtime_factory.assert_not_called()
         self.native.request.assert_not_called()
 

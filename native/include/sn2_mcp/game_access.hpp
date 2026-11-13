@@ -23,6 +23,7 @@
 #include "sn2_mcp/vector_layout.hpp"
 #include "sn2_mcp/transform_layout.hpp"
 #include "sn2_mcp/linear_color_layout.hpp"
+#include "sn2_mcp/blueprint_mod_record.hpp"
 
 namespace sn2_mcp {
 namespace scalar_struct_values {struct Snapshot;}
@@ -100,6 +101,17 @@ private:
     uint64_t next_signature_token_{};
     uint64_t next_handle_{0};
     std::string handle_session_;
+    std::map<std::string, BlueprintModRecord> blueprint_mods_;
+    nlohmann::json blueprint_mod_enable(const nlohmann::json& params);
+    nlohmann::json blueprint_mod_status(const nlohmann::json& params);
+    nlohmann::json blueprint_mod_disable(const nlohmann::json& params);
+    void pump_mods();
+    nlohmann::json blueprint_mod_activate(BlueprintModRecord& record);
+    nlohmann::json blueprint_mod_describe(BlueprintModRecord& record);
+    void blueprint_mod_observe(BlueprintModRecord& record);
+    nlohmann::json blueprint_mod_destroy(BlueprintModRecord& record,const std::string& reason);
+    nlohmann::json blueprint_mod_call(BlueprintModRecord& record,void* object,
+        const std::string& function,const nlohmann::json& arguments,const std::string& stage);
     Handle game_engine_;
     Handle game_viewport_;
     Handle current_world_;
@@ -148,6 +160,8 @@ private:
     nlohmann::json read_scalar_array_return(std::uintptr_t field,std::uintptr_t address,const nlohmann::json& metadata);
     std::string read_copied_string(const StringHeader& header) const;
     nlohmann::json read_struct(void* object, const std::string& handle, const std::string& property_name);
+    nlohmann::json load_asset(const nlohmann::json& params, bool class_asset=false);
+    nlohmann::json capture_asset_load_contract(void* library, std::uintptr_t function, bool class_asset);
     nlohmann::json capture_read_value(std::uintptr_t field,int size,int dim) const;
     nlohmann::json capture_pod_struct_parameter(std::uintptr_t field,int size,int dim) const;
     static nlohmann::json pod_struct_metadata(const nlohmann::json& captured);

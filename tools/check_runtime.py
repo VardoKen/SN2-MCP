@@ -25,8 +25,8 @@ MODULES = (
     "test_mcp_wide_integers", "test_mcp_classes",
     "test_source_workspace",
     "test_build_workflow", "test_cpp_diagnostics", "test_runtime_lifecycle", "test_command_executor",
-    "test_mod_runtime", "test_mod_projects", "test_mcp_build_lifecycle", "test_mcp_mod_workflow",
-    "test_compiled_mod_acceptance",
+    "test_mcp_build_lifecycle", "test_content_projects", "test_content_cooker",
+    "test_content_deployment", "test_content_frontend",
 )
 
 if __name__ == "__main__":

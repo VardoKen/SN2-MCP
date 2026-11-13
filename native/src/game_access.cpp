@@ -660,7 +660,7 @@ json GameAccess::status() const {
         target["creation_filetime"]=std::to_string(sn2::loader::creation_filetime(GetCurrentProcess()));
     } catch(const std::exception& error) {target["error"]=error.what();}
     const bool reflection=reflection_validated_.load();
-    return {{"version","0.3.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+    return {{"version","0.4.1"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
             {"tick_hook_current",tick_hook},
             {"process_id",GetCurrentProcessId()},{"process_creation_filetime",target.at("creation_filetime")},{"target_process",target},
             {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},
@@ -683,7 +683,8 @@ json GameAccess::status() const {
             {"capabilities",{{"reflection_reads",reflection?"verified":"unverified"},
                 {"typed_invocation","unverified"},{"owned_values","unverified"},
                 {"sparse_containers","unverified"},{"observations",reflection?"available":"unverified"}}},
-            {"operations",{"status","enable_game","objects","properties","functions","invoke","read_array",
+            {"operations",{"status","enable_game","objects","properties","functions","invoke","load_asset","load_class",
+                "blueprint_mod_enable","blueprint_mod_status","blueprint_mod_disable","read_array",
                 "read_set","read_map","read_struct","snapshot","watch_start","watch_read","watch_stop",
                 "watch_forget","watch_list","watch_resume"}},
             {"snapshot_consistency","single_tick_sequential"},{"world_generation_supported",reflection},
@@ -703,7 +704,9 @@ json GameAccess::status() const {
                 "DLL residency ends with the process; hot unload is not implemented"}}};
 }
 void GameAccess::require_runtime_operation(const std::string& operation) const {
-    if(operation=="invoke" && !bindings_.process_event.available())
+    if((operation=="invoke" || operation=="load_asset" || operation=="load_class"
+        || operation=="blueprint_mod_enable" || operation=="blueprint_mod_status"
+        || operation=="blueprint_mod_disable") && !bindings_.process_event.available())
         throw HandlerError("process_event_unavailable","The current executable ProcessEvent binding is unavailable",
             {{"executed",false},{"may_have_executed",false},{"do_not_retry",false}});
     if(!reflection_validated_.load())
@@ -835,6 +838,7 @@ void GameAccess::pump() {
         std::lock_guard lock(queue_mutex_);
         world_metadata_["error"]={{"code",error.code()},{"message",error.what()}};
     }
+    pump_mods();
     std::shared_ptr<Job> job;
     {
         std::lock_guard lock(queue_mutex_);
@@ -3364,6 +3368,11 @@ json GameAccess::execute(const json& request) {
     if(session!=handle_session_){observations_.disconnect(handle_session_);handles_.clear();signature_contracts_.clear();handle_session_=session;}
     const auto now=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
+    if(op=="load_asset")return load_asset(params,false);
+    if(op=="load_class")return load_asset(params,true);
+    if(op=="blueprint_mod_enable")return blueprint_mod_enable(params);
+    if(op=="blueprint_mod_status")return blueprint_mod_status(params);
+    if(op=="blueprint_mod_disable")return blueprint_mod_disable(params);
     if(op=="snapshot") {
         if(!params.contains("targets"))throw HandlerError("invalid_snapshot_params","targets is required");
         return snapshot(params.at("targets"));

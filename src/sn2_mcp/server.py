@@ -30,8 +30,9 @@ from .source_identity import inspect as inspect_source_identity
 from .package_export import ExportError, export_sources, verify_source_export
 from .build_workflow import BuildError, BuildWorkflow
 from .runtime_lifecycle import RuntimeLifecycle
-from .mod_projects import ModProjects, ModProjectError
-from .mod_runtime import ModRuntime
+from .content_projects import ContentProjects, ContentProjectError
+from .content_cooker import ContentCooker, ContentCookError
+from .content_deployment import ContentDeployment
 
 
 def _tool_failure(error: SnapshotError | DevelopmentError | WorkspaceError | ExportError) -> ToolError:
@@ -60,7 +61,8 @@ class _EnglishOperatingSystemLog(logging.Filter):
 
 def create_server(workspace_root: Path, native_port: int = 27223,
                   game_root: Path | None = None, *, transport: str = "stdio",
-                  runtime_root: Path | None = None) -> MCPServer:
+                  runtime_root: Path | None = None, modkit_root: Path | None = None,
+                  engine_root: Path | None = None) -> MCPServer:
     """Create the inherited runtime surface without Gothic package services."""
     if transport not in ("stdio", "streamable-http"):
         raise ValueError("Transport must be stdio or streamable-http")
@@ -69,6 +71,8 @@ def create_server(workspace_root: Path, native_port: int = 27223,
         raise ValueError("Workspace directory does not exist")
     configured_runtime_root = runtime_root.resolve() if runtime_root is not None else Path(__file__).resolve().parents[2]
     configured_game_root = (game_root or Path(r"E:\Games\Subnautica 2")).absolute()
+    configured_modkit_root = (modkit_root or Path(r"D:\SN2Modding\Modkit")).absolute()
+    configured_engine_root = (engine_root or Path(r"D:\SN2Modding\Engine")).absolute()
     native = NativeClient(port=native_port)
     native_lock = threading.Lock()
     service_lock = threading.Lock()
@@ -77,19 +81,50 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     sources = None
     builds = None
     mods = None
+    cooker = None
+    deployment = None
 
-    def mod_projects() -> ModProjects:
+    def mod_projects() -> ContentProjects:
         nonlocal mods
         if mods is None:
-            mods = ModProjects(source_workspace(), configured_runtime_root)
+            mods = ContentProjects(source_workspace(), configured_runtime_root)
         return mods
 
     def mod_project_call(operation: str, *args, **kwargs) -> dict[str, Any]:
         try:
             return getattr(mod_projects(), operation)(*args, **kwargs)
-        except (ModProjectError, WorkspaceError) as error:
+        except (ContentProjectError, WorkspaceError) as error:
             raise ToolError(json.dumps({"code": error.code, "message": str(error),
                 "receipt": getattr(error, "receipt", None)}, ensure_ascii=False)) from None
+
+    def cook_service() -> ContentCooker:
+        nonlocal cooker
+        if cooker is None:
+            cooker = ContentCooker(configured_runtime_root, workspace_root=workspace_root,
+                modkit_root=configured_modkit_root, engine_root=configured_engine_root,
+                game_root=configured_game_root, workspace=source_workspace())
+        return cooker
+
+    def cook_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(cook_service(), operation)(*args, **kwargs)
+        except (ContentCookError, WorkspaceError) as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "receipt": getattr(error, "receipt", None)}, ensure_ascii=False)) from None
+
+    def deployment_service() -> ContentDeployment:
+        nonlocal deployment
+        if deployment is None:
+            deployment = ContentDeployment(runtime_service(), verifier=mod_projects().verify,
+                central_root=configured_runtime_root.parent)
+        return deployment
+
+    def deployment_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(deployment_service(), operation)(*args, **kwargs)
+        except DevelopmentError as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "outcome_unknown": error.outcome_unknown, "receipt": error.receipt}, ensure_ascii=False)) from None
 
     def build_service() -> BuildWorkflow:
         nonlocal builds
@@ -99,6 +134,10 @@ def create_server(workspace_root: Path, native_port: int = 27223,
             return builds
 
     def build_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        if operation in {"recipe", "build"} and kwargs.get("project_path", "native") != "native":
+            raise ToolError(json.dumps({"code": "unsupported_project",
+                "message": "Native builds support the repository native bridge project; use sn2_cook_mod for Content/Blueprint mods",
+                "receipt": None}))
         try:
             return getattr(build_service(), operation)(*args, **kwargs)
         except BuildError as error:
@@ -175,24 +214,67 @@ def create_server(workspace_root: Path, native_port: int = 27223,
         return build_call("diagnostics", build_id=build_id)
 
     @server.tool(annotations=source_write)
-    def sn2_create_mod_project(project_path: str, mod_id: str) -> dict[str, Any]:
-        """Create an editable standalone native widget modification using the copied Unreal SDK."""
-        return mod_project_call("create", project_path, mod_id)
+    def sn2_create_mod_project(project_path: str, mod_id: str, title: str | None = None,
+                               entry_class: str | None = None) -> dict[str, Any]:
+        """Create an editable content-only plugin; Blueprint/assets still require actual authoring and cooking."""
+        return mod_project_call("create", project_path, mod_id, title, entry_class)
 
     @server.tool(annotations=read_only)
     def sn2_validate_mod_project(project_path: str) -> dict[str, Any]:
-        """Validate native project inputs and the supported initialization/build contract."""
+        """Validate content plugin descriptor, authored inputs and generated-class identity; do not compile."""
         return mod_project_call("validate", project_path)
 
     @server.tool(annotations=source_write)
-    def sn2_package_artifact(build_receipt_path: str, destination: str) -> dict[str, Any]:
-        """Package the actual compiled modification and its source/build identities for workspace loading."""
-        return mod_project_call("package", build_receipt_path, destination)
+    def sn2_package_artifact(cook_receipt_path: str, destination: str) -> dict[str, Any]:
+        """Package a successful exact cook with descriptor, complete containers and source/activation identities."""
+        return mod_project_call("package", cook_receipt_path, destination)
 
     @server.tool(annotations=read_only)
     def sn2_verify_artifact_package(package_path: str) -> dict[str, Any]:
-        """Verify complete compiled package inventory before activation."""
+        """Verify content package bytes, container pairs and exact cook provenance without installation."""
         return mod_project_call("verify", package_path)
+
+    @server.tool(annotations=read_only)
+    def sn2_content_environment(project_path: str | None = None) -> dict[str, Any]:
+        """Inspect configured Modkit/custom engine prerequisites; presence does not prove cooker compatibility."""
+        return cook_call("inspect", project_path)
+
+    @server.tool(annotations=read_only)
+    def sn2_cook_recipe(project_path: str) -> dict[str, Any]:
+        """Identify the exact content project and fixed Modkit/UAT cook contract without executing it."""
+        return cook_call("recipe", project_path)
+
+    @server.tool(annotations=source_write)
+    def sn2_cook_mod(project_path: str, timeout_seconds: float = 3600) -> dict[str, Any]:
+        """Capture inputs and run content/Blueprint cooking; persist failures or blocked prerequisites, never install."""
+        return cook_call("build", project_path, timeout_seconds)
+
+    @server.tool(annotations=read_only)
+    def sn2_cook_status(build_id: str | None = None) -> dict[str, Any]:
+        """Read an exact content cook receipt and full recorded reports; no resident worker is implied."""
+        return cook_call("status", build_id)
+
+    @server.tool(annotations=read_only)
+    def sn2_cook_report(build_id: str, stage: str = "cook", stream: str = "stdout") -> dict[str, Any]:
+        """Read a complete recorded cooker report with its byte/hash correlation and no invented graph locations."""
+        return cook_call("read_report", build_id, stage, stream)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_mod_install(package_path: str, expected_manifest_sha256: str,
+                        expected_installed_inventory_sha256: str | None = None) -> dict[str, Any]:
+        """Install or replace a verified content plugin while the game is stopped; discovery/activity remain unchecked."""
+        return deployment_call("install", package_path, expected_manifest_sha256,
+            expected_installed_inventory_sha256=expected_installed_inventory_sha256)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_mod_uninstall(plugin_id: str, expected_installed_inventory_sha256: str) -> dict[str, Any]:
+        """Remove only the identified installed plugin inventory at the stopped-game boundary."""
+        return deployment_call("uninstall", plugin_id, expected_installed_inventory_sha256)
+
+    @server.tool(annotations=read_only)
+    def sn2_mod_deployment_status(plugin_id: str | None = None) -> dict[str, Any]:
+        """Inspect installed file inventory independently of runtime plugin mount, asset or Blueprint activity."""
+        return deployment_call("status", plugin_id)
 
     def watch_owner(ctx: Context | None) -> str:
         return "shared_native_connection"
@@ -259,72 +341,174 @@ def create_server(workspace_root: Path, native_port: int = 27223,
             raise ToolError(json.dumps({"code": "package_changed", "message": "The verified package manifest differs from the selected revision"}))
         return package
 
-    def mod_runtime_call(operation: str, target_process: dict[str, Any], package_path: str,
-                         expected_manifest_sha256: str | None, timeout_seconds: float,
-                         request_id: int | None = None) -> dict[str, Any]:
+    def blueprint_request(operation: str, params: dict[str, Any], timeout_seconds: float | None,
+                          target_process: dict[str, Any] | None) -> dict[str, Any]:
+        target = select_target(target_process) if target_process is not None else None
+        return native_request(operation, params, timeout_seconds, target_process=target)
+
+    def validate_spawn_transform(value: dict[str, Any] | None) -> None:
+        if value is None:
+            return
+        parts = {"Rotation": {"X", "Y", "Z", "W"}, "Translation": {"X", "Y", "Z"},
+                 "Scale3D": {"X", "Y", "Z"}}
+        if not isinstance(value, dict) or set(value) != set(parts):
+            raise ToolError(json.dumps({"code": "invalid_argument",
+                "message": "spawn_transform requires only Rotation, Translation and Scale3D"}))
+        for name, keys in parts.items():
+            values = value[name]
+            if not isinstance(values, dict) or set(values) != keys:
+                raise ToolError(json.dumps({"code": "invalid_argument",
+                    "message": "spawn_transform components must match the exact Transform shape"}))
+            for number in values.values():
+                try:
+                    valid = type(number) in (int, float) and math.isfinite(number)
+                except OverflowError:
+                    valid = False
+                if not valid:
+                    raise ToolError(json.dumps({"code": "invalid_argument",
+                        "message": "spawn_transform components must be finite Unreal double values"}))
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_load_asset(asset_path: str, timeout_seconds: float | None = None,
+                       target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Synchronously load an exact top-level Unreal asset on Tick; return its actual descriptor or missing result."""
+        return blueprint_request("load_asset", {"asset_path": asset_path}, timeout_seconds, target_process)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_load_class(asset_path: str, timeout_seconds: float | None = None,
+                       target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Load an exact generated-class asset through validated SoftClass binding; this does not activate a mod."""
+        return blueprint_request("load_class", {"asset_path": asset_path}, timeout_seconds, target_process)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_blueprint_mod_enable(mod_id: str, entry_class_path: str, package_revision: str,
+                                 source_revision: str | None = None,
+                                 spawn_transform: dict[str, Any] | None = None,
+                                 timeout_seconds: float | None = None,
+                                 target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Track/load/spawn a Blueprint entry actor through its natural lifecycle; labels do not prove effects or package bytes."""
+        validate_spawn_transform(spawn_transform)
+        params = {"mod_id": mod_id, "entry_class_path": entry_class_path, "package_revision": package_revision}
+        if source_revision is not None:
+            params["source_revision"] = source_revision
+        if spawn_transform is not None:
+            params["spawn_transform"] = spawn_transform
+        return blueprint_request("blueprint_mod_enable", params, timeout_seconds, target_process)
+
+    @server.tool(annotations=read_only)
+    def sn2_blueprint_mod_status(mod_id: str | None = None, timeout_seconds: float | None = None,
+                                 target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Inspect retained Blueprint actor/world identities and observed lifecycle; authored effects require independent checks."""
+        return blueprint_request("blueprint_mod_status", {} if mod_id is None else {"mod_id": mod_id},
+                                 timeout_seconds, target_process)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_blueprint_mod_disable(mod_id: str, timeout_seconds: float | None = None,
+                                  target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Disable the recorded actor through validated destruction; package/class unload and authored cleanup are separate facts."""
+        return blueprint_request("blueprint_mod_disable", {"mod_id": mod_id}, timeout_seconds, target_process)
+
+    def package_runtime_call(operation: str, target_process: dict[str, Any], package_path: str,
+                             expected_manifest_sha256: str | None, timeout_seconds: float,
+                             spawn_transform: dict[str, Any] | None = None) -> dict[str, Any]:
         package = checked_mod_package(package_path, expected_manifest_sha256)
-        artifact = package["artifact"]
-        try:
-            service = ModRuntime(runtime_service(), workspace_root=workspace_root)
-            kwargs = {"timeout_seconds": timeout_seconds}
-            if operation == "status":
-                kwargs["request_id"] = request_id
-            result = getattr(service, operation)(target_process, artifact["path"], artifact["sha256"], **kwargs)
-        except DevelopmentError as error:
-            raise ToolError(json.dumps({"code": error.code, "message": str(error),
-                "outcome_unknown": error.outcome_unknown, "receipt": error.receipt}, ensure_ascii=False)) from None
-        status = result.get("mod_receipt", {}).get("status", {})
-        metadata = package["metadata"]
-        if status and (status.get("mod_id") != metadata["mod_id"]
-                       or status.get("source_revision") != package["source_revision"]):
-            raise ToolError(json.dumps({"code": "mod_revision_mismatch", "message": "The initialized mod does not match the verified package", "receipt": result}))
-        return {**result, "package": package}
+        installation = deployment_call("status", package["plugin_id"])
+        if operation == "enable":
+            receipt = installation.get("receipt") or {}
+            if (not installation.get("identified_installation")
+                    or receipt.get("package_manifest_sha256") != package["manifest_sha256"]):
+                raise ToolError(json.dumps({"code": "package_installation_unconfirmed",
+                    "message": "Load requires the identified installed inventory of the selected content package",
+                    "installation": installation}))
+            entry_class = package["activation"].get("entry_class")
+            if not entry_class:
+                raise ToolError(json.dumps({"code": "blueprint_entry_absent",
+                    "message": "The content package has no Blueprint entry class; inspect its data assets through sn2_load_asset"}))
+            observed = sn2_blueprint_mod_enable(package["plugin_id"], entry_class, package["manifest_sha256"],
+                package["source_revision"], spawn_transform, timeout_seconds, target_process)
+        elif operation == "status":
+            observed = sn2_blueprint_mod_status(package["plugin_id"], timeout_seconds, target_process)
+        else:
+            observed = sn2_blueprint_mod_disable(package["plugin_id"], timeout_seconds, target_process)
+        return {"package": package, "installation": installation, "blueprint": observed,
+                "package_revision_role": "verified_file_identity_and_runtime_correlation_label",
+                "plugin_discovery": "not_checked_by_this_composition", "plugin_mount": "not_checked_by_this_composition",
+                "authored_effect_verification": "requires_independent_runtime_observation"}
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
     def sn2_mod_load(target_process: dict[str, Any], package_path: str,
                       expected_manifest_sha256: str | None = None,
-                      timeout_seconds: float = 30.0) -> dict[str, Any]:
-        """Verify and initialize the selected standalone compiled modification; inspect status for activation."""
-        return mod_runtime_call("load", target_process, package_path, expected_manifest_sha256, timeout_seconds)
+                      timeout_seconds: float = 30.0,
+                      spawn_transform: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Verify the installed content package and activate its Blueprint entry; inspect separate lifecycle/effect evidence."""
+        return package_runtime_call("enable", target_process, package_path, expected_manifest_sha256,
+                                    timeout_seconds, spawn_transform)
 
     @server.tool(annotations=read_only)
     def sn2_mod_status(target_process: dict[str, Any], package_path: str,
                        expected_manifest_sha256: str | None = None,
-                       timeout_seconds: float = 30.0, request_id: StrictInt | None = None) -> dict[str, Any]:
-        """Inspect exact mod revision, initialization, semantic effect and the original command receipt."""
-        return mod_runtime_call("status", target_process, package_path, expected_manifest_sha256,
-                                timeout_seconds, request_id)
+                       timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Compare selected package/file inventory with actual Blueprint actor state without claiming mount or authored effects."""
+        return package_runtime_call("status", target_process, package_path, expected_manifest_sha256, timeout_seconds)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
     def sn2_mod_disable(target_process: dict[str, Any], package_path: str,
                         expected_manifest_sha256: str | None = None,
                         timeout_seconds: float = 30.0) -> dict[str, Any]:
-        """Stop the mod action and request baseline restoration; module and hook remain until process exit."""
-        return mod_runtime_call("disable", target_process, package_path, expected_manifest_sha256, timeout_seconds)
+        """Disable the selected package's recorded entry actor; installed files and cached assets remain separately reported."""
+        return package_runtime_call("disable", target_process, package_path, expected_manifest_sha256, timeout_seconds)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
     def sn2_mod_reload(target_process: dict[str, Any], package_path: str,
                        bridge_dll_path: str, expected_bridge_sha256: str,
                        expected_manifest_sha256: str | None = None,
+                       expected_installed_inventory_sha256: str | None = None,
                        discovery_timeout_seconds: float = 30.0,
                        readiness_timeout_seconds: float = 30.0,
-                       timeout_seconds: float = 30.0) -> dict[str, Any]:
-        """Iterate a compiled revision by confirmed process restart, fresh bridge readiness and mod initialization."""
+                       timeout_seconds: float = 30.0,
+                       spawn_transform: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Replace verified content at a confirmed restart boundary, load the fresh bridge and activate the Blueprint entry."""
         for value in (readiness_timeout_seconds, discovery_timeout_seconds, timeout_seconds):
             if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                 raise ToolError(json.dumps({"code": "invalid_timeout", "message": "All lifecycle timeouts must be positive and finite"}))
+        validate_spawn_transform(spawn_transform)
         package = checked_mod_package(package_path, expected_manifest_sha256)
-        # Validate the selected artifact before terminating the current process.
+        if not package["activation"].get("entry_class"):
+            raise ToolError(json.dumps({"code": "blueprint_entry_absent", "message": "This iteration requires a Blueprint entry class"}))
         try:
             bridge = Path(bridge_dll_path).resolve(strict=True)
             if not bridge.is_relative_to(configured_runtime_root) or hashlib.sha256(bridge.read_bytes()).hexdigest() != expected_bridge_sha256:
                 raise ValueError("bridge_changed")
         except (OSError, ValueError):
             raise ToolError(json.dumps({"code": "bridge_changed", "message": "Select an existing workspace bridge DLL with the expected SHA-256"})) from None
-        restart = sn2_development_restart(target_process, discovery_timeout_seconds)
-        process = restart["process"]
-        progress = {"restart": restart, "process": process, "stage": "bridge_load"}
+        installation = deployment_call("status", package["plugin_id"])
+        previous_install = installation.get("receipt")
+        if previous_install and previous_install.get("state") not in {"installed", "removed", "failed_without_installation"}:
+            raise ToolError(json.dumps({"code": "deployment_unresolved",
+                "message": "Inspect the unresolved content deployment before restarting for replacement",
+                "outcome_unknown": previous_install.get("outcome_unknown", True), "receipt": previous_install}))
+        if not installation.get("installed_files") and (
+                (previous_install and previous_install.get("state") == "installed")
+                or expected_installed_inventory_sha256 is not None):
+            raise ToolError(json.dumps({"code": "installation_changed",
+                "message": "The selected installed inventory is missing; inspect it before restarting",
+                "installation": installation}))
+        if installation.get("installed_files") and (
+                not installation.get("identified_installation")
+                or installation.get("installed_inventory_sha256") != expected_installed_inventory_sha256):
+            raise ToolError(json.dumps({"code": "installation_changed",
+                "message": "Select the identified current installed inventory before restarting for replacement",
+                "installation": installation}))
+        progress = {"previous_process": target_process, "stage": "stop"}
         try:
+            progress["stop"] = sn2_development_stop(target_process)
+            progress["stage"] = "install"
+            progress["installation"] = sn2_mod_install(package_path, package["manifest_sha256"],
+                expected_installed_inventory_sha256)
+            progress["stage"] = "start"
+            start = sn2_development_start(discovery_timeout_seconds)
+            process = start["process"]
+            progress.update(start=start, process=process, stage="bridge_load")
             bridge_load = sn2_native_load(process, str(bridge), expected_bridge_sha256)
             progress.update(bridge_load=bridge_load, stage="transport")
             deadline = time.monotonic() + readiness_timeout_seconds
@@ -346,8 +530,8 @@ def create_server(workspace_root: Path, native_port: int = 27223,
                 progress["native_status"] = enabled
             if not enabled.get("ready", False):
                 raise ToolError(json.dumps({"code": "bridge_readiness_unconfirmed", "message": "The fresh bridge did not establish Tick/reflection readiness"}))
-            progress["stage"] = "mod_initialization"
-            mod = sn2_mod_load(process, package_path, package["manifest_sha256"], timeout_seconds)
+            progress["stage"] = "blueprint_activation"
+            mod = sn2_mod_load(process, package_path, package["manifest_sha256"], timeout_seconds, spawn_transform)
         except ToolError as error:
             try:
                 detail = json.loads(str(error))
@@ -355,9 +539,10 @@ def create_server(workspace_root: Path, native_port: int = 27223,
                 detail = {"code": "revision_iteration_unconfirmed", "message": str(error)}
             detail["iteration_receipt"] = progress
             raise ToolError(json.dumps(detail, ensure_ascii=False)) from None
-        return {"state": "revision_initialization_requested", "iteration": "controlled_process_restart",
+        return {"state": "revision_activation_requested", "iteration": "controlled_process_restart",
                 "hot_reload": False, "process": process, "previous_process": target_process,
-                "restart": restart, "bridge_load": bridge_load, "native_status": enabled, "mod": mod}
+                "stop": progress["stop"], "installation": progress["installation"], "start": start,
+                "bridge_load": bridge_load, "native_status": enabled, "mod": mod}
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
     def sn2_development_start(discovery_timeout_seconds: float = 30.0) -> dict[str, Any]:
@@ -380,8 +565,11 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     def sn2_status() -> dict[str, Any]:
         """Report local frontend configuration; this does not probe the game."""
         return {"server": {"name": "Subnautica 2 MCP", "version": __version__, "transport": transport, "ready": True},
-                "workspace": {"root": str(workspace_root), "installed_game_deployment": False},
+                "workspace": {"root": str(workspace_root), "deployment_state": "not_checked",
+                    "installed_game_deployment_known": False},
                 "runtime_root": str(configured_runtime_root), "game_root": str(configured_game_root),
+                "authoring_dependencies": {"modkit_root": str(configured_modkit_root),
+                    "engine_root": str(configured_engine_root), "checked": False},
                 "native": {"endpoint": f"127.0.0.1:{native_port}", "connection_checked": False},
                 "target_process": selected_target, "game_ready": False, "game_ready_known": False}
 
@@ -777,6 +965,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--native-port", type=int, default=27223, help="Localhost port of the native bridge")
     parser.add_argument("--game-root", type=Path, help="Selected game root for process identity and native loading")
     parser.add_argument("--runtime-root", type=Path, help="Root of native DLL, loader, and fixed development tools")
+    parser.add_argument("--modkit-root", type=Path, help="Content authoring Modkit root; default: D:\\SN2Modding\\Modkit")
+    parser.add_argument("--engine-root", type=Path, help="Compatible custom Unreal root; default: D:\\SN2Modding\\Engine")
     parser.add_argument("--transport", choices=("stdio", "streamable-http"), default="stdio",
                         help="MCP transport; default: stdio")
     parser.add_argument("--host", choices=("127.0.0.1",), default="127.0.0.1",
@@ -787,7 +977,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("HTTP port must be in the range 1024–65535")
     try:
         server = create_server(args.workspace_root, args.native_port, args.game_root,
-                               transport=args.transport, runtime_root=args.runtime_root)
+                               transport=args.transport, runtime_root=args.runtime_root,
+                               modkit_root=args.modkit_root, engine_root=args.engine_root)
     except OSError as error:
         print(f"Could not create Subnautica 2 MCP: operating system access error (errno={error.errno}, winerror={getattr(error, 'winerror', None)})", file=sys.stderr)
         return 2

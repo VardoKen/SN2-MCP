@@ -308,27 +308,19 @@ class BuildWorkflow:
         parts = project_path.split("/")
         if any(part in {"", ".", ".."} or ":" in part for part in parts):
             raise BuildError("invalid_project", "project_path must identify a repository CMake project")
-        boundary = self.root if project_path == "native" else self.workspace_root
-        project = _checked(boundary.joinpath(*parts), boundary, directory=True)
-        _checked(project / "CMakeLists.txt", project)
         if project_path != "native":
-            if __package__ in (None, ""):
-                from sn2_mcp.mod_projects import validate_mod_project
-            else:
-                from .mod_projects import validate_mod_project
-            validation = validate_mod_project(self.workspace_root, project_path)
-            if not validation.get("valid"):
-                raise BuildError("invalid_mod_project", "The selected modification project failed its target contract validation")
+            raise BuildError("unsupported_project", "Native builds support the repository native bridge project; use sn2_cook_mod for Content/Blueprint mods")
+        project = _checked(self.root.joinpath(*parts), self.root, directory=True)
+        _checked(project / "CMakeLists.txt", project)
         return project
 
     def _inputs(self, project_path: str = "native") -> tuple[list[dict], dict[str, bytes]]:
+        if project_path != "native":
+            raise BuildError("unsupported_project", "Native builds support the repository native bridge project; use sn2_cook_mod for Content/Blueprint mods")
         entries = {}
         locations = {}
         native = _checked(self.root / "native", self.root, directory=True)
         roots = [(native, self.root, "native", "repository")]
-        if project_path != "native":
-            roots.append((_checked(self.workspace_root / project_path, self.workspace_root, directory=True),
-                          self.workspace_root, "project", "workspace"))
         for selected, boundary, prefix, origin in roots:
             with _guard_directories(selected, boundary):
                 def fail(error):
@@ -350,7 +342,7 @@ class BuildWorkflow:
                 entries[name] = _read_bytes(path, self.root, None)
                 locations[name] = {"origin": "repository", "source_path": str(path)}
         inventory = [{"path": path, "sha256": _sha(raw), "bytes": len(raw),
-                      "role": "native_input" if path.startswith("native/") else "mod_input" if path.startswith("project/") else
+                      "role": "native_input" if path.startswith("native/") else
                               "build_orchestration_provenance" if path.startswith(("tools/", "src/")) else "package_provenance",
                       **locations[path]}
                      for path, raw in sorted(entries.items())]
@@ -380,7 +372,7 @@ class BuildWorkflow:
             raise BuildError("invalid_argument", "parallel must be a positive integer")
         self._project(project_path)
         inputs, files = self._inputs(project_path)
-        staged_project_path = "native" if project_path == "native" else "project"
+        staged_project_path = "native"
         cmake = files[staged_project_path + "/CMakeLists.txt"].decode("utf-8")
         targets = sorted(set(re.findall(r"add_(?:library|executable)\s*\(\s*([A-Za-z0-9_]+)", cmake, re.I)))
         if target != "all" and target not in targets:
@@ -767,10 +759,6 @@ class BuildWorkflow:
                 guards.enter_context(_guard_input_files([Path(dependency["path"]) / item["path"]
                                                        for dependency in reused for item in dependency["files"]]))
                 configure.extend("-D" + dependency["cmake_variable"] + "=" + dependency["path"] for dependency in reused)
-                if project_path != "native":
-                    configure.append("-DSN2_MOD_SOURCE_REVISION=" + recipe["input_manifest_sha256"])
-                    configure.append("-DSN2_MCP_SDK_ROOT=" + str(source))
-                    receipt["mod_source_revision"] = recipe["input_manifest_sha256"]
                 if not stage("configure", configure):
                     return self._finish(receipt, path, source, started)
                 receipt["dependencies_before_build"] = self._actual_dependencies(output, reused)
@@ -817,7 +805,7 @@ class BuildWorkflow:
     def _publish(self, receipt: dict):
         configuration = receipt["recipe"]["configuration"]
         for artifact in receipt["artifacts"]:
-            if Path(artifact["path"]).name not in {"SN2_MCP.dll", "sn2_mcp_loader.exe", "sn2_mcp_mod_control.exe"}:
+            if Path(artifact["path"]).name not in {"SN2_MCP.dll", "sn2_mcp_loader.exe"}:
                 continue
             source = Path(artifact["path"])
             destination = self.root / "build" / "native" / configuration / source.name

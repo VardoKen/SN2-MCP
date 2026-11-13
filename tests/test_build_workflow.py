@@ -148,25 +148,24 @@ class BuildWorkflowTests(unittest.TestCase):
         self.assertFalse(second["exact_source_compiled"])
         self.assertEqual(len(runner.calls), count)
 
-    def test_mod_project_in_separate_workspace_stages_sdk_and_exact_project(self):
-        from sn2_mcp.mod_projects import ModProjects
-        from sn2_mcp.workspace import SourceWorkspace
-        repository = Path(__file__).resolve().parents[1]
-        template = self.root / "development/mod_templates/widget_opacity"
-        shutil.copytree(repository / "development/mod_templates/widget_opacity", template)
+    def test_native_bridge_build_rejects_content_or_old_dll_projects_before_worker(self):
         workspace = self.root / "authoring"
         workspace.mkdir()
-        ModProjects(SourceWorkspace(workspace), self.root).create("mods/Opacity", "Opacity")
-        workflow = BuildWorkflow(self.root, workspace_root=workspace)
-        recipe = workflow.recipe(project_path="mods/Opacity", target="sn2_mod", run_tests=False)
-        self.assertEqual(recipe["project_path"], "mods/Opacity")
-        self.assertEqual(recipe["staged_project_path"], "project")
-        inputs = {item["path"]: item for item in recipe["inputs"]}
-        self.assertEqual(inputs["project/src/mod.cpp"]["origin"], "workspace")
-        self.assertEqual(inputs["native/src/example.cpp"]["origin"], "repository")
-        source, output = workflow._stage(recipe, "a" * 32)
-        self.assertEqual((source / "project/src/mod.cpp").read_bytes(), (workspace / "mods/Opacity/src/mod.cpp").read_bytes())
-        self.assertEqual((source / "native/src/example.cpp").read_bytes(), (self.root / "native/src/example.cpp").read_bytes())
+        runner = FixtureRunner(self.root)
+        workflow = BuildWorkflow(self.root, workspace_root=workspace, runner=runner)
+        for project_path in ("projects/ContentMod", "mods/Opacity"):
+            for operation in (workflow.recipe, workflow.build):
+                with self.subTest(project_path=project_path, operation=operation.__name__):
+                    with self.assertRaises(BuildError) as raised:
+                        operation(project_path=project_path, run_tests=False)
+                    self.assertEqual(raised.exception.code, "unsupported_project")
+                    self.assertIn("sn2_cook_mod", str(raised.exception))
+        self.assertEqual(runner.calls, [])
+        self.assertFalse((self.root / "artifacts").exists())
+        recipe = workflow.recipe(target="sn2_mcp_native", run_tests=False)
+        self.assertEqual(recipe["project_path"], "native")
+        self.assertEqual(recipe["staged_project_path"], "native")
+        self.assertTrue(all(item["origin"] == "repository" for item in recipe["inputs"]))
 
     def test_dependency_cache_requires_declared_origin_commit_and_clean_inputs(self):
         dependency = self.root / "build/native/_deps/fixture-src"

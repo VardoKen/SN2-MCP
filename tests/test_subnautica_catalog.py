@@ -24,6 +24,8 @@ RUNTIME_TOOLS = {
     "sn2_object_functions", "sn2_snapshot", "sn2_snapshot_compare",
     "sn2_watch_start", "sn2_watch_read", "sn2_watch_stop",
     "sn2_watch_forget", "sn2_watch_list", "sn2_watch_resume", "sn2_invoke",
+    "sn2_load_asset", "sn2_load_class", "sn2_blueprint_mod_enable",
+    "sn2_blueprint_mod_status", "sn2_blueprint_mod_disable",
 }
 SOURCE_TOOLS = {"sn2_source_identity", "sn2_list_source_files", "sn2_find_source_files",
                 "sn2_search_source", "sn2_read_source", "sn2_read_source_exact", "sn2_write_source",
@@ -32,7 +34,9 @@ BUILD_TOOLS = {"sn2_build_recipe", "sn2_build", "sn2_build_status", "sn2_compile
 LIFECYCLE_TOOLS = {"sn2_development_start", "sn2_development_stop", "sn2_development_restart"}
 MOD_TOOLS = {"sn2_create_mod_project", "sn2_validate_mod_project", "sn2_package_artifact",
              "sn2_verify_artifact_package", "sn2_mod_load", "sn2_mod_status",
-             "sn2_mod_disable", "sn2_mod_reload"}
+             "sn2_mod_disable", "sn2_mod_reload", "sn2_content_environment",
+             "sn2_cook_recipe", "sn2_cook_mod", "sn2_cook_status", "sn2_cook_report",
+             "sn2_mod_install", "sn2_mod_uninstall", "sn2_mod_deployment_status"}
 PUBLIC_TOOLS = RUNTIME_TOOLS | SOURCE_TOOLS | BUILD_TOOLS | LIFECYCLE_TOOLS | MOD_TOOLS
 
 
@@ -77,6 +81,13 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                     "sn2_build": (False, False, False, False),
                     "sn2_create_mod_project": (False, False, False, False),
                     "sn2_package_artifact": (False, False, False, False),
+                    "sn2_cook_mod": (False, False, False, False),
+                    "sn2_mod_install": (False, True, False, True),
+                    "sn2_mod_uninstall": (False, True, False, True),
+                    "sn2_load_asset": (False, False, False, True),
+                    "sn2_load_class": (False, False, False, True),
+                    "sn2_blueprint_mod_enable": (False, False, False, True),
+                    "sn2_blueprint_mod_disable": (False, True, False, True),
                     "sn2_development_start": (False, False, False, True),
                     "sn2_development_stop": (False, True, False, True),
                     "sn2_development_restart": (False, True, False, True),
@@ -120,7 +131,8 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(status["server"]["version"], __version__)
                     self.assertTrue(status["server"]["ready"])
                     self.assertEqual(status["workspace"]["root"], str(workspace))
-                    self.assertFalse(status["workspace"]["installed_game_deployment"])
+                    self.assertEqual(status["workspace"]["deployment_state"], "not_checked")
+                    self.assertFalse(status["workspace"]["installed_game_deployment_known"])
                     self.assertEqual(status["native"]["endpoint"], "127.0.0.1:28223")
                     self.assertFalse(status["native"]["connection_checked"])
                     self.assertIsNone(status["target_process"])
@@ -262,7 +274,7 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
 class SubnauticaCliTests(unittest.TestCase):
     def test_gothic_cli_arguments_fail_before_server_creation(self):
         with tempfile.TemporaryDirectory() as directory:
-            for argument in ("--modkit-root", "--source-revision"):
+            for argument in ("--enable-ingame-tools", "--source-revision"):
                 with self.subTest(argument=argument):
                     stderr = io.StringIO()
                     with patch("sn2_mcp.server.create_server") as server_factory, \

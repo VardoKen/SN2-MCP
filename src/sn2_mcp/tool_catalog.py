@@ -282,17 +282,40 @@ for _name, _method in {"sn2_development_start": "start", "sn2_development_stop":
         state_tools=("sn2_target_processes", "sn2_native_status"))
 for _name, _method in {"sn2_create_mod_project": "create", "sn2_validate_mod_project": "validate",
         "sn2_package_artifact": "package", "sn2_verify_artifact_package": "verify"}.items():
-    _CONTRACTS[_name] = _entry("standalone_native_mod_project", ("configured_workspace", "native_sdk"),
-        "src/sn2_mcp/mod_projects.py:ModProjects." + _method,
-        ("kind", "project_path", "valid", "manifest_sha256", "artifact", "source_revision", "files"),
+    _CONTRACTS[_name] = _entry("content_blueprint_mod_project_or_package", ("configured_workspace",),
+        "src/sn2_mcp/content_projects.py:ContentProjects." + _method,
+        ("kind", "project_path", "valid", "manifest_sha256", "source_revision", "files", "activation"),
         state_tools=("sn2_validate_mod_project", "sn2_verify_artifact_package"))
-for _name, _method in {"sn2_mod_load": "load", "sn2_mod_status": "status", "sn2_mod_disable": "disable"}.items():
-    _CONTRACTS[_name] = _entry("selected_compiled_mod", ("verified_artifact_package", "exact_target_process"),
-        "src/sn2_mcp/mod_runtime.py:ModRuntime." + _method,
-        ("process", "dll_sha256", "module_loaded", "mod_receipt", "package", "outcome_unknown"),
-        state_tools=("sn2_mod_status", "sn2_target_processes"))
-_CONTRACTS["sn2_mod_reload"] = _entry("compiled_revision_restart_iteration",
-    ("verified_artifact_package", "exact_target_process", "expected_bridge_hash"),
+for _name, _method in {"sn2_content_environment": "inspect", "sn2_cook_recipe": "recipe",
+        "sn2_cook_mod": "build", "sn2_cook_status": "status", "sn2_cook_report": "read_report"}.items():
+    _CONTRACTS[_name] = _entry("content_mod_cooker", ("configured_workspace", "compatible_modkit_custom_engine"),
+        "src/sn2_mcp/content_cooker.py:ContentCooker." + _method,
+        ("state", "environment", "build_id", "inputs", "source_manifest_sha256", "outputs", "reports", "exact_source_compiled"),
+        state_tools=("sn2_content_environment", "sn2_cook_status", "sn2_cook_report"))
+for _name, _method in {"sn2_mod_install": "install", "sn2_mod_uninstall": "uninstall",
+        "sn2_mod_deployment_status": "status"}.items():
+    _CONTRACTS[_name] = _entry("installed_content_plugin_inventory", ("verified_content_package", "configured_game"),
+        "src/sn2_mcp/content_deployment.py:ContentDeployment." + _method,
+        ("state", "plugin_id", "destination", "installed_inventory", "installed_inventory_sha256", "receipt"),
+        state_tools=("sn2_mod_deployment_status", "sn2_target_processes"))
+for _name, _operation in {"sn2_load_asset": "load_asset", "sn2_load_class": "load_class"}.items():
+    _CONTRACTS[_name] = _entry("runtime_asset_loading", ("native_tick_reflection", "exact_asset_path"),
+        "native/src/game_access_assets.cpp:GameAccess::load_asset",
+        ("value", "stage", "effects", "requested_path", "process_id", "session_id", "world"),
+        state_tools=("sn2_native_status",))
+for _name, _method in {"sn2_blueprint_mod_enable": "blueprint_mod_enable",
+        "sn2_blueprint_mod_status": "blueprint_mod_status", "sn2_blueprint_mod_disable": "blueprint_mod_disable"}.items():
+    _CONTRACTS[_name] = _entry("blueprint_entry_actor_lifecycle", ("native_tick_reflection",),
+        "native/src/game_access_mods.cpp:GameAccess::" + _method,
+        ("mod_id", "state", "desired_enabled", "actor", "world", "lifecycle", "effects", "package_revision"),
+        state_tools=("sn2_blueprint_mod_status", "sn2_native_status"))
+for _name in ("sn2_mod_load", "sn2_mod_status", "sn2_mod_disable"):
+    _CONTRACTS[_name] = _entry("content_package_and_blueprint_lifecycle", ("verified_content_package", "exact_target_process"),
+        "src/sn2_mcp/server.py:" + _name,
+        ("package", "installation", "blueprint", "package_revision_role", "authored_effect_verification"),
+        state_tools=("sn2_mod_status", "sn2_mod_deployment_status", "sn2_target_processes"))
+_CONTRACTS["sn2_mod_reload"] = _entry("content_revision_restart_iteration",
+    ("verified_content_package", "exact_target_process", "expected_bridge_hash", "identified_installed_inventory"),
     "src/sn2_mcp/server.py:sn2_mod_reload",
-    ("state", "iteration", "process", "previous_process", "restart", "native_status", "mod"),
-    state_tools=("sn2_mod_status", "sn2_native_status", "sn2_target_processes"))
+    ("state", "iteration", "process", "previous_process", "stop", "installation", "start", "native_status", "mod"),
+    state_tools=("sn2_mod_status", "sn2_mod_deployment_status", "sn2_native_status", "sn2_target_processes"))

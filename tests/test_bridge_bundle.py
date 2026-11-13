@@ -1,6 +1,8 @@
 """Portable internal bundle: explicit inventory and complete file hashes."""
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import struct
 import tempfile
@@ -50,7 +52,6 @@ class BridgeBundleTests(unittest.TestCase):
         self.write("native/src/game_access.cpp", b'"bindings_source","runtime_image_patterns"\n')
         self.write(bundle.BINARIES[0], fake_pe(self.version.encode() + b"runtime_image_patterns" + bundle.PRODUCTION_MARKER))
         self.write(bundle.BINARIES[1], fake_pe())
-        self.write(bundle.BINARIES[2], fake_pe())
 
     def write(self, path, raw):
         file = self.repository / path
@@ -66,6 +67,13 @@ class BridgeBundleTests(unittest.TestCase):
         self.write("build/native/Release/native-tick.log", b"private log")
         self.write("artifacts/private.txt", b"user output")
         self.write("mods/UserMod/GothicMod.json", b"user mod")
+        self.write("src/sn2_mcp/mod_projects.py", b"# rejected DLL-mod route\n")
+        self.write("src/sn2_mcp/debug_session.py", b"# inactive donor debugger\n")
+        self.write("native/src/mod_entry.cpp", b"// rejected standalone DLL-mod entry\n")
+        self.write("native/tools/mod_control.cpp", b"// rejected DLL-mod controller\n")
+        self.write("native/include/sn2_mod/command.hpp", b"// rejected DLL-mod ABI\n")
+        self.write("development/mod_templates/widget_opacity/src/mod.cpp", b"// rejected mod template\n")
+        self.write("build/native/Release/sn2_mcp_mod_control.exe", fake_pe())
         result = self.prepare()
         self.assertEqual(result["version"], self.version)
         self.assertEqual(result["binding_method"], "runtime_image_patterns")
@@ -75,11 +83,15 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertTrue(result["verified_files"])
         self.assertTrue((self.target / "src/sn2_mcp/server.py").exists())
         self.assertTrue((self.target / bundle.BINARIES[0]).exists())
-        self.assertTrue((self.target / bundle.BINARIES[2]).exists())
-        self.assertTrue((self.target / "native/src/mod_entry.cpp").exists())
-        self.assertTrue((self.target / "development/mod_templates/widget_opacity/src/mod.cpp").exists())
+        self.assertTrue((self.target / "src/sn2_mcp/content_cooker.py").exists())
+        self.assertTrue((self.target / "native/src/game_access_assets.cpp").exists())
+        self.assertTrue((self.target / "native/src/game_access_mods.cpp").exists())
+        self.assertTrue((self.target / "development/mod_templates/content_plugin/Plugin.uplugin").exists())
         self.assertTrue((self.target / "tools/start_sn2_development.ps1").exists())
-        for path in (".venv", "artifacts/private.txt", "mods/UserMod", "build/native/Release/native-tick.log"):
+        for path in (".venv", "artifacts/private.txt", "mods/UserMod", "build/native/Release/native-tick.log",
+                     "src/sn2_mcp/mod_projects.py", "src/sn2_mcp/debug_session.py", "native/src/mod_entry.cpp",
+                     "native/tools/mod_control.cpp", "native/include/sn2_mod", "development/mod_templates/widget_opacity",
+                     "build/native/Release/sn2_mcp_mod_control.exe"):
             self.assertFalse((self.target / path).exists())
         verified = bundle.verify_bundle(self.target)
         self.assertEqual(verified["file_count"], result["file_count"])
@@ -88,7 +100,7 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertEqual(manifest["compatibility"]["binding_method"], "runtime_image_patterns")
         self.assertNotIn("supported_game_exe_sha256", manifest["compatibility"])
         self.assertIn("not an installer or a public release", (self.target / "START.md").read_text(encoding="utf-8"))
-        self.assertIn("does not hot-unload", (self.target / "START.md").read_text(encoding="utf-8"))
+        self.assertIn("hot package unload is", (self.target / "START.md").read_text(encoding="utf-8"))
         self.assertIn("Visual Studio 2022", (self.target / "START.md").read_text(encoding="utf-8"))
 
         old_dll = fake_pe(self.version.encode() + b"a" * 64 + bundle.PRODUCTION_MARKER)
@@ -273,14 +285,15 @@ class BridgeBundleTests(unittest.TestCase):
 
     def test_native_build_inputs_remain_required_when_manifest_is_rewritten(self):
         self.write("native/CMakeLists.txt", b"add_executable(native_probe tests/probe.cpp)\n")
-        self.write("native/tests/probe.cpp", b'#include "sn2_mcp/probe.hpp"\nint main() { return 0; }\n')
+        self.write("native/tests/probe.cpp", b'#include "sn2_mcp/probe.hpp"\n#include <sn2_mcp/angle.hpp>\nint main() { return 0; }\n')
         self.write("native/tests/retained.cpp", b"// retained directory fixture\n")
         self.write("native/include/sn2_mcp/probe.hpp", b"#pragma once\n")
+        self.write("native/include/sn2_mcp/angle.hpp", b"#pragma once\n")
         self.prepare()
         manifest_path = self.target / "manifest.json"
         original_manifest = manifest_path.read_bytes()
-        for relative in ("native/tests/probe.cpp", "native/include/sn2_mcp/probe.hpp",
-                         "native/src/mod_entry.cpp", "development/mod_templates/widget_opacity/mod.json"):
+        for relative in ("native/tests/probe.cpp", "native/include/sn2_mcp/probe.hpp", "native/include/sn2_mcp/angle.hpp",
+                         "native/src/game_access_mods.cpp", "development/mod_templates/content_plugin/mod.json"):
             with self.subTest(missing=relative):
                 raw = (self.target / relative).read_bytes()
                 manifest = json.loads(original_manifest)
@@ -296,14 +309,40 @@ class BridgeBundleTests(unittest.TestCase):
                 (self.target / relative).write_bytes(raw)
                 manifest_path.write_bytes(original_manifest)
 
+    def test_prepared_content_frontend_imports_and_cli_help_use_bundle_sources(self):
+        repository = TOOL.parents[1]
+        for name in bundle.SOURCE_FILES:
+            self.write("src/sn2_mcp/" + name, (repository / "src/sn2_mcp" / name).read_bytes())
+        version = bundle._version(repository)
+        self.write("pyproject.toml", (repository / "pyproject.toml").read_bytes())
+        self.write("uv.lock", (repository / "uv.lock").read_bytes())
+        self.write(bundle.BINARIES[0], fake_pe(version.encode() + b"runtime_image_patterns" + bundle.PRODUCTION_MARKER))
+        self.prepare()
+        script = """import importlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / 'src'))
+for name in ('server', 'content_projects', 'content_cooker', 'content_deployment'):
+    module = importlib.import_module('sn2_mcp.' + name)
+    assert pathlib.Path(module.__file__).is_relative_to(root), module.__file__
+from sn2_mcp.server import main
+sys.argv = ['sn2-mcp', '--help']
+main()
+"""
+        result = subprocess.run([sys.executable, "-I", "-c", script, str(self.target)],
+                                cwd=self.repository, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--engine-root", result.stdout)
+        self.assertIn("--modkit-root", result.stdout)
+        self.assertFalse((self.target / "src/sn2_mcp/mod_runtime.py").exists())
+
     def test_native_local_build_and_backup_files_are_excluded(self):
         self.write("native/build/private.cpp", b"private generated source")
         self.write("native/_deps/dependency/private.hpp", b"private dependency checkout")
         self.write("native/src/nppBackup/backup.cpp", b"editor backup")
-        self.write("development/mod_templates/widget_opacity/src/nppBackup/backup.cpp", b"template backup")
+        self.write("development/mod_templates/content_plugin/nppBackup/backup.cpp", b"template backup")
         self.prepare()
         for relative in ("native/build", "native/_deps", "native/src/nppBackup",
-                         "development/mod_templates/widget_opacity/src/nppBackup"):
+                         "development/mod_templates/content_plugin/nppBackup"):
             self.assertFalse((self.target / relative).exists())
 
 
@@ -314,12 +353,14 @@ class BridgeBundleDependencyTests(unittest.TestCase):
         "src/sn2_mcp/tool_catalog.py",
         "src/sn2_mcp/build_workflow.py",
         "src/sn2_mcp/runtime_lifecycle.py",
-        "src/sn2_mcp/mod_projects.py",
-        "src/sn2_mcp/mod_runtime.py",
-        "native/src/mod_entry.cpp",
-        "native/include/sn2_mod/command.hpp",
-        "native/tools/mod_control.cpp",
-        "development/mod_templates/widget_opacity/src/mod.cpp",
+        "src/sn2_mcp/content_projects.py",
+        "src/sn2_mcp/content_cooker.py",
+        "src/sn2_mcp/content_deployment.py",
+        "native/src/game_access_assets.cpp",
+        "native/src/game_access_mods.cpp",
+        "native/include/sn2_mcp/asset_path.hpp",
+        "native/include/sn2_mcp/blueprint_mod_record.hpp",
+        "development/mod_templates/content_plugin/Plugin.uplugin",
     )
 
     def test_selected_dependencies_copy_exact_bytes_without_bundle_generation(self):
