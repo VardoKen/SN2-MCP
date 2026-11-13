@@ -4,7 +4,7 @@ Native runtime MCP bridge adapted from the copied G1R MCP implementation. Python
 
 Current implementation version: **0.4.1**, with **61 `sn2_` registrations**. Content/Blueprint project validation, cook/report/package operations, stopped-game deployment and native asset/class/actor lifecycle complement retained reflection/invocation/observations, source authoring and bridge builds. Stdio/shared HTTP (`127.0.0.1:27224/mcp`), native TCP 27223 and the Windows x64 UE5.6.1 / CL131439 foundation are retained.
 
-The operator selected editable Content/Blueprint plugins with authoring on **D:**. Focused native asset/class/actor checks passed, including activation without duplication, reconnect and independently observed destruction. The custom V4 engine is acquired at `D:/SN2Modding/Engine`, and isolated Editor/compiler/UAT startup checks passed. Full captured Modkit startup fails on missing FMOD `fmodL.dll` and `fmodstudioL.dll`; actual authored cooking, new content and Blueprint revision effects remain incomplete. No real content package has been installed. The rejected `0.3.0` widget-DLL experiment remains historical evidence. The native bridge DLL is infrastructure, while the selected mod artifacts are content plugins and cooked containers.
+The operator selected editable Content/Blueprint plugins with authoring on **D:**. Focused native asset/class/actor checks passed, including activation without duplication, reconnect and independently observed destruction. Custom V4 engine at `D:/SN2Modding/Engine` and matching FMOD 2.03.09 for UE5.6 are acquired. Captured full Modkit startup/compiler dispatch passed with a local DDC and no selected assets. Actual authored compilation/cook, new content and Blueprint revision effects remain incomplete; no real content package has been installed. The rejected `0.3.0` widget-DLL experiment remains historical evidence. The native bridge DLL is infrastructure, while selected mod artifacts are content plugins and cooked containers.
 
 Detailed documentation belongs to the central repository:
 
@@ -12,7 +12,7 @@ Detailed documentation belongs to the central repository:
 - [Correction plan and required mod-development result](../docs/bridges/subnautica-2/implementation-plan.md).
 - [Source analysis and reuse map](../docs/bridges/subnautica-2/g1r-reuse-map.md).
 - [Game evidence](../docs/bridges/subnautica-2/baseline-and-evidence.md).
-- [Authoring environment and remaining Modkit/FMOD checks](../docs/bridges/subnautica-2/authoring-environment.md).
+- [Authoring environment and remaining authored checks](../docs/bridges/subnautica-2/authoring-environment.md).
 - [Current Content/Blueprint checks and remaining acceptance](../docs/bridges/subnautica-2/content-blueprint-acceptance.md).
 - [Runtime acceptance and reproducible checks](../docs/bridges/subnautica-2/runtime-acceptance.md).
 - [Historical source/prototype evidence](../docs/bridges/subnautica-2/mod-development-acceptance.md).
