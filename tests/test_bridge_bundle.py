@@ -42,7 +42,7 @@ class BridgeBundleTests(unittest.TestCase):
             self.write(name, b"# isolated development helper\n")
         for name in bundle.DOCUMENTS:
             self.write(name, b"# isolated document\n")
-        for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES):
+        for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES, *bundle.AUTHORING_FILES):
             self.write(name, b"// isolated development input\n")
         self.write("pyproject.toml", f'[project]\nversion = "{self.version}"\ndependencies=["mcp==2.3.0"]\n'.encode())
         self.write("uv.lock", f'[[package]]\nname="sn2-mcp"\nversion="{self.version.replace("-dev.", ".dev")}"\nsource={{editable="."}}\n[[package]]\nname="mcp"\nversion="2.3.0"\n'.encode())
@@ -84,9 +84,11 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertTrue((self.target / "src/sn2_mcp/server.py").exists())
         self.assertTrue((self.target / bundle.BINARIES[0]).exists())
         self.assertTrue((self.target / "src/sn2_mcp/content_cooker.py").exists())
+        self.assertTrue((self.target / "src/sn2_mcp/content_authoring.py").exists())
         self.assertTrue((self.target / "native/src/game_access_assets.cpp").exists())
         self.assertTrue((self.target / "native/src/game_access_mods.cpp").exists())
         self.assertTrue((self.target / "development/mod_templates/content_plugin/Plugin.uplugin").exists())
+        self.assertTrue((self.target / bundle.AUTHORING_FILES[0]).exists())
         self.assertTrue((self.target / "tools/start_sn2_development.ps1").exists())
         for path in (".venv", "artifacts/private.txt", "mods/UserMod", "build/native/Release/native-tick.log",
                      "src/sn2_mcp/mod_projects.py", "src/sn2_mcp/debug_session.py", "native/src/mod_entry.cpp",
@@ -293,7 +295,8 @@ class BridgeBundleTests(unittest.TestCase):
         manifest_path = self.target / "manifest.json"
         original_manifest = manifest_path.read_bytes()
         for relative in ("native/tests/probe.cpp", "native/include/sn2_mcp/probe.hpp", "native/include/sn2_mcp/angle.hpp",
-                         "native/src/game_access_mods.cpp", "development/mod_templates/content_plugin/mod.json"):
+                         "native/src/game_access_mods.cpp", "development/mod_templates/content_plugin/mod.json",
+                         "src/sn2_mcp/content_authoring.py", *bundle.AUTHORING_FILES):
             with self.subTest(missing=relative):
                 raw = (self.target / relative).read_bytes()
                 manifest = json.loads(original_manifest)
@@ -302,10 +305,15 @@ class BridgeBundleTests(unittest.TestCase):
                 manifest["file_count"] -= 1
                 manifest["total_bytes"] -= entry["bytes"]
                 (self.target / relative).unlink()
+                parent = (self.target / relative).parent
+                while parent != self.target and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
                 manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
                 with self.assertRaises(bundle.BundleError) as captured:
                     bundle.verify_bundle(self.target)
                 self.assertEqual(captured.exception.code, "incomplete_bundle")
+                (self.target / relative).parent.mkdir(parents=True, exist_ok=True)
                 (self.target / relative).write_bytes(raw)
                 manifest_path.write_bytes(original_manifest)
 
@@ -321,7 +329,7 @@ class BridgeBundleTests(unittest.TestCase):
         script = """import importlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(root / 'src'))
-for name in ('server', 'content_projects', 'content_cooker', 'content_deployment'):
+for name in ('server', 'content_projects', 'content_cooker', 'content_deployment', 'content_authoring'):
     module = importlib.import_module('sn2_mcp.' + name)
     assert pathlib.Path(module.__file__).is_relative_to(root), module.__file__
 from sn2_mcp.server import main
@@ -340,9 +348,15 @@ main()
         self.write("native/_deps/dependency/private.hpp", b"private dependency checkout")
         self.write("native/src/nppBackup/backup.cpp", b"editor backup")
         self.write("development/mod_templates/content_plugin/nppBackup/backup.cpp", b"template backup")
+        self.write("development/authoring/SN2MCPAuthoring/Binaries/Win64/UnrealEditor-SN2MCPAuthoring.dll", b"external Editor binary")
+        self.write("development/authoring/SN2MCPAuthoring/Intermediate/Build/generated.cpp", b"generated Editor source")
+        self.write("development/authoring/SN2MCPAuthoring/Source/nppBackup/backup.cpp", b"authoring backup")
         self.prepare()
         for relative in ("native/build", "native/_deps", "native/src/nppBackup",
-                         "development/mod_templates/content_plugin/nppBackup"):
+                         "development/mod_templates/content_plugin/nppBackup",
+                         "development/authoring/SN2MCPAuthoring/Binaries",
+                         "development/authoring/SN2MCPAuthoring/Intermediate",
+                         "development/authoring/SN2MCPAuthoring/Source/nppBackup"):
             self.assertFalse((self.target / relative).exists())
 
 
@@ -356,11 +370,13 @@ class BridgeBundleDependencyTests(unittest.TestCase):
         "src/sn2_mcp/content_projects.py",
         "src/sn2_mcp/content_cooker.py",
         "src/sn2_mcp/content_deployment.py",
+        "src/sn2_mcp/content_authoring.py",
         "native/src/game_access_assets.cpp",
         "native/src/game_access_mods.cpp",
         "native/include/sn2_mcp/asset_path.hpp",
         "native/include/sn2_mcp/blueprint_mod_record.hpp",
         "development/mod_templates/content_plugin/Plugin.uplugin",
+        *bundle.AUTHORING_FILES,
     )
 
     def test_selected_dependencies_copy_exact_bytes_without_bundle_generation(self):

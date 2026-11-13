@@ -27,7 +27,7 @@ from sn2_mcp.workspace import WorkspaceError, _checked, _destination_lock, _guar
 
 TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1", "build_native.ps1", "prepare_bridge_bundle.py")
 FIXTURE_DIRS = ()
-SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "content_projects.py", "content_cooker.py", "content_deployment.py")
+SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "content_projects.py", "content_cooker.py", "content_deployment.py", "content_authoring.py")
 HELPER_FILES = ()
 FIXTURE_SCRIPTS = {}
 DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock")
@@ -44,6 +44,12 @@ SDK_FILES = ("native/CMakeLists.txt", "native/src/entry.cpp",
              "native/tools/load_bridge.cpp")
 TEMPLATE_FILES = tuple("development/mod_templates/content_plugin/" + name for name in
                        ("Plugin.uplugin", "mod.json", "README.md"))
+AUTHORING_FILES = tuple("development/authoring/SN2MCPAuthoring/" + name for name in
+                       ("SN2MCPAuthoring.uplugin",
+                        "Source/SN2MCPAuthoring/SN2MCPAuthoring.Build.cs",
+                        "Source/SN2MCPAuthoring/Private/SN2MCPAuthoringCommandlet.cpp",
+                        "Source/SN2MCPAuthoring/Private/SN2MCPAuthoringModule.cpp",
+                        "Source/SN2MCPAuthoring/Public/SN2MCPAuthoringCommandlet.h"))
 LEGACY_NATIVE_FILES = {"native/src/mod_entry.cpp", "native/tools/mod_control.cpp"}
 
 
@@ -116,7 +122,7 @@ def _production_binary(dll: bytes) -> None:
 def _enumerate(repository: Path) -> list[str]:
     paths = (list(DOCUMENTS) + ["tools/" + name for name in TOOLS] + list(BINARIES)
              + list(HELPER_FILES) + ["src/sn2_mcp/" + name for name in SOURCE_FILES]
-             + list(TEMPLATE_FILES))
+             + list(TEMPLATE_FILES) + list(AUTHORING_FILES))
 
     def failure(error):
         raise BundleError("access_error", "Failed to enumerate all allowed bundle sources")
@@ -281,9 +287,14 @@ establish Subnautica runtime acceptance, load the DLL or launch the game.
    Read `sn2_build_status` and `sn2_compile_diagnostics` for recorded results.
    `tools/build_native.ps1 -Json` uses the same native build workflow.
 7. `sn2_create_mod_project` prepares an editable content-only Unreal plugin in
-   the configured workspace. Author and save real Content/Blueprint assets
-   with the compatible Subnautica 2 Modkit and custom Unreal Editor. Creating
-   the project does not author a Blueprint or establish a working mod.
+   the configured workspace. Inspect `sn2_authoring_recipe`, then use
+   `sn2_author_mod` with a workspace JSON specification to create, compile and
+   save real assets and executable Blueprint graphs. Read the complete
+   `sn2_authoring_status`/`sn2_authoring_report` evidence. The service builds
+   the included Editor-only helper sources against the configured custom
+   engine and reuses its identified build. That helper is authoring tooling;
+   it is not a native DLL mod included in a Content package. Project creation
+   alone does not author a Blueprint or establish a working mod.
    Inspect `sn2_content_environment` and `sn2_cook_recipe`, then run
    `sn2_cook_mod` and read `sn2_cook_status`/`sn2_cook_report`. The compatible
    engine and Modkit are separate dependencies, not included in this bundle.
@@ -315,8 +326,11 @@ preserves bytes but is separate from compiled artifact packaging.
 
 This bundle includes Python services, declared dependency locks, lifecycle/build
 scripts, the production bridge and loader, native CMake sources/tests,
-headers and the editable content-plugin template. Prebuilt runtime use does not
-require a compiler; source builds do. Native tests retained by CMake include
+headers, the editable content-plugin template and Editor authoring helper
+sources. The custom engine, Modkit, FMOD and compiled Editor helper modules are
+external environment dependencies, not bundle files. Prebuilt runtime use does
+not require a compiler; native bridge and Editor helper source builds do.
+Native tests retained by CMake include
 donor algorithms and do not claim Gothic game services as Subnautica tools.
 Gothic helper packages and game probes remain outside this bundle. PDB debug
 symbols are not required by this Release bundle and no symbol availability is
@@ -353,8 +367,9 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
                 "compatibility": compatibility, "files": files,
                 "file_count": len(files), "total_bytes": sum(item["bytes"] for item in files),
                 "includes": ["python_sources", "locked_dependencies", "runtime_tools", "prebuilt_native_bridge",
-                             "native_build_sources_and_tests", "content_plugin_template", "instructions"],
-                "excludes": ["virtual_environment", "game_files", "game_caches", "user_mods", "saved_games", "logs", "local_mcp_settings"],
+                             "native_build_sources_and_tests", "content_plugin_template", "editor_authoring_sources", "instructions"],
+                "excludes": ["virtual_environment", "game_files", "game_caches", "user_mods", "saved_games", "logs", "local_mcp_settings",
+                             "custom_engine", "modkit", "compiled_editor_helper_modules"],
                 "runtime_validation": "not_performed_by_packager", "installed": False}
     manifest["compatibility_source_sha256"] = compatibility_source
     raw_files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
@@ -455,7 +470,7 @@ def verify_bundle(bundle_root: Path) -> dict:
     required |= set(HELPER_FILES)
     required |= {f"tests/fixtures/{name}/GothicMod.json" for name in FIXTURE_DIRS}
     required |= {f"tests/fixtures/{name}/Script/{script}" for name, script in FIXTURE_SCRIPTS.items()}
-    required |= set(SDK_FILES) | set(TEMPLATE_FILES)
+    required |= set(SDK_FILES) | set(TEMPLATE_FILES) | set(AUTHORING_FILES)
     if not required.issubset(expected):
         raise BundleError("incomplete_bundle", "The bundle is missing a required runtime or development file")
     if not _required_native_inputs(root, expected).issubset(expected):

@@ -64,6 +64,44 @@ class ContentFrontendTests(unittest.IsolatedAsyncioTestCase):
                 runtime_factory.assert_not_called()
                 native.request.assert_not_called()
 
+    async def test_authoring_tools_forward_exact_spec_and_preserve_receipts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            authoring = Mock()
+            authoring.recipe.return_value = {"ready_to_attempt_authoring": True, "compiled": False}
+            authoring.author.return_value = {"state": "failed", "published": False, "authoring_id": "a" * 32}
+            authoring.status.return_value = {"state": "failed", "authoring_id": "a" * 32}
+            authoring.read_report.return_value = {"text": "Unknown variable", "content_truncated": False}
+            with patch("sn2_mcp.server.NativeClient"), patch("sn2_mcp.server.ContentAuthoring", return_value=authoring) as factory, \
+                 patch("sn2_mcp.server.RuntimeService") as runtime:
+                server = create_server(root, modkit_root=root / "Modkit", engine_root=root / "Engine")
+                recipe = await tool_call(server, "sn2_authoring_recipe", {"project_path": "projects/Test", "spec_path": "projects/Test/authoring.json"})
+                self.assertFalse(recipe.is_error)
+                result = await tool_call(server, "sn2_author_mod", {"project_path": "projects/Test", "spec_path": "projects/Test/authoring.json", "timeout_seconds": 1800})
+                self.assertEqual(result.structured_content["state"], "failed")
+                authoring.author.assert_called_once_with("projects/Test", "projects/Test/authoring.json", 1800.0)
+                await tool_call(server, "sn2_authoring_status", {"authoring_id": "a" * 32})
+                report = await tool_call(server, "sn2_authoring_report", {"authoring_id": "a" * 32, "stream": "structured"})
+                self.assertEqual(report.structured_content["text"], "Unknown variable")
+                self.assertEqual(factory.call_args.kwargs["workspace_root"], root)
+                runtime.assert_not_called()
+
+    async def test_authoring_recipe_hash_error_preserves_code_and_evidence(self):
+        from sn2_mcp.content_authoring import ContentAuthoringError
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = {"input_path": "projects/Test/authoring.json", "hash_complete": False}
+            authoring = Mock()
+            authoring.recipe.side_effect = ContentAuthoringError("input_changed", "The input changed while hashing", evidence)
+            with patch("sn2_mcp.server.NativeClient"), patch("sn2_mcp.server.ContentAuthoring", return_value=authoring):
+                server = create_server(root)
+                response = await tool_call(server, "sn2_authoring_recipe", {"project_path": "projects/Test", "spec_path": "projects/Test/authoring.json"})
+                self.assertTrue(response.is_error)
+                error = failure(response)
+                self.assertEqual(error["code"], "input_changed")
+                self.assertEqual(error["message"], "The input changed while hashing")
+                self.assertEqual(error["receipt"], evidence)
+
     async def test_configured_authoring_roots_are_local_metadata_and_cooker_overrides(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

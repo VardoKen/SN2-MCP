@@ -33,6 +33,7 @@ from .runtime_lifecycle import RuntimeLifecycle
 from .content_projects import ContentProjects, ContentProjectError
 from .content_cooker import ContentCooker, ContentCookError
 from .content_deployment import ContentDeployment
+from .content_authoring import ContentAuthoring, ContentAuthoringError
 
 
 def _tool_failure(error: SnapshotError | DevelopmentError | WorkspaceError | ExportError) -> ToolError:
@@ -82,6 +83,7 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     builds = None
     mods = None
     cooker = None
+    authoring = None
     deployment = None
 
     def mod_projects() -> ContentProjects:
@@ -109,6 +111,21 @@ def create_server(workspace_root: Path, native_port: int = 27223,
         try:
             return getattr(cook_service(), operation)(*args, **kwargs)
         except (ContentCookError, WorkspaceError) as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "receipt": getattr(error, "receipt", None)}, ensure_ascii=False)) from None
+
+    def authoring_service() -> ContentAuthoring:
+        nonlocal authoring
+        if authoring is None:
+            authoring = ContentAuthoring(configured_runtime_root, workspace_root=workspace_root,
+                modkit_root=configured_modkit_root, engine_root=configured_engine_root,
+                game_root=configured_game_root, workspace=source_workspace())
+        return authoring
+
+    def authoring_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(authoring_service(), operation)(*args, **kwargs)
+        except (ContentAuthoringError, ContentProjectError, BuildError, WorkspaceError) as error:
             raise ToolError(json.dumps({"code": error.code, "message": str(error),
                 "receipt": getattr(error, "receipt", None)}, ensure_ascii=False)) from None
 
@@ -233,6 +250,26 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     def sn2_verify_artifact_package(package_path: str) -> dict[str, Any]:
         """Verify content package bytes, container pairs and exact cook provenance without installation."""
         return mod_project_call("verify", package_path)
+
+    @server.tool(annotations=read_only)
+    def sn2_authoring_recipe(project_path: str, spec_path: str) -> dict[str, Any]:
+        """Identify captured editable-asset inputs, JSON graph specification and Editor-only helper without execution."""
+        return authoring_call("recipe", project_path, spec_path)
+
+    @server.tool(annotations=source_write)
+    def sn2_author_mod(project_path: str, spec_path: str, timeout_seconds: float = 3600) -> dict[str, Any]:
+        """Compile and save specified editable Blueprint/data assets; publish only after success and source-revision checks."""
+        return authoring_call("author", project_path, spec_path, timeout_seconds)
+
+    @server.tool(annotations=read_only)
+    def sn2_authoring_status(authoring_id: str | None = None) -> dict[str, Any]:
+        """Read captured authoring, compilation, output publication and process-completion receipts."""
+        return authoring_call("status", authoring_id)
+
+    @server.tool(annotations=read_only)
+    def sn2_authoring_report(authoring_id: str, stage: str = "authoring", stream: str = "stdout") -> dict[str, Any]:
+        """Read complete recorded authoring stdout/stderr or structured asset/graph diagnostics with exact byte identity."""
+        return authoring_call("read_report", authoring_id, stage, stream)
 
     @server.tool(annotations=read_only)
     def sn2_content_environment(project_path: str | None = None) -> dict[str, Any]:

@@ -2,9 +2,11 @@
 
 Native runtime MCP bridge adapted from the copied G1R MCP implementation. Python/MCP frontend, framed TCP transport, game-Tick dispatch, reflection, typed values, observations, loader and tests remain in this independent code repository. Detailed state and acceptance belong to the central documentation.
 
-Current implementation version: **0.4.1**, with **61 `sn2_` registrations**. Content/Blueprint project validation, cook/report/package operations, stopped-game deployment and native asset/class/actor lifecycle complement retained reflection/invocation/observations, source authoring and bridge builds. Stdio/shared HTTP (`127.0.0.1:27224/mcp`), native TCP 27223 and the Windows x64 UE5.6.1 / CL131439 foundation are retained.
+Implementation version: **0.5.1**, with **65 `sn2_` registrations**, including four editable-asset authoring tools. Content/Blueprint authoring, cook/report/package operations, stopped-game deployment and native asset/class/actor lifecycle complement retained reflection/invocation/observations, source tools and bridge builds. Stdio/shared HTTP (`127.0.0.1:27224/mcp`), native TCP 27223 and the Windows x64 UE5.6.1 / CL131439 foundation are retained.
 
-The operator selected editable Content/Blueprint plugins with authoring on **D:**. Focused native asset/class/actor checks passed, including activation without duplication, reconnect and independently observed destruction. Custom V4 engine at `D:/SN2Modding/Engine` and matching FMOD 2.03.09 for UE5.6 are acquired. Captured full Modkit startup/compiler dispatch passed with a local DDC and no selected assets. Actual authored compilation/cook, new content and Blueprint revision effects remain incomplete; no real content package has been installed. The rejected `0.3.0` widget-DLL experiment remains historical evidence. The native bridge DLL is infrastructure, while selected mod artifacts are content plugins and cooked containers.
+The selected editable Content/Blueprint workflow passed real revision A → attributed authoring failure → repaired revision B, with exact source/cook/package identities, installation and restart replacement, target recipe registration, natural Lobby BeginPlay/EndPlay effects, independent restoration and test-plugin removal. A/B authoring and cooking used `0.5.0`; the final B runtime check used `0.5.1`. A genuine Fabricator service classified both the mod recipe and a stock recipe with verified ownership. The selected game and temporary actors/components were closed or removed. The Editor-only helper remains outside Shipping packages; mods are content plugins and cooked containers.
+
+The checked result supports mod authoring and runtime iteration in the documented schema and target. Full crafting consumption/output and interactive crafting UI were not exercised. Cooked class/package replacement uses confirmed restart; universal live asset unload, every Blueprint node family and source-level debugging are not claimed. Detailed evidence preserves these limits and the separate historical experiments.
 
 Detailed documentation belongs to the central repository:
 
@@ -12,7 +14,8 @@ Detailed documentation belongs to the central repository:
 - [Correction plan and required mod-development result](../docs/bridges/subnautica-2/implementation-plan.md).
 - [Source analysis and reuse map](../docs/bridges/subnautica-2/g1r-reuse-map.md).
 - [Game evidence](../docs/bridges/subnautica-2/baseline-and-evidence.md).
-- [Authoring environment and remaining authored checks](../docs/bridges/subnautica-2/authoring-environment.md).
+- [Authoring environment and applicable dependencies](../docs/bridges/subnautica-2/authoring-environment.md).
+- [Editable asset authoring contract and initial verified scope](../docs/bridges/subnautica-2/authoring-contract.md).
 - [Current Content/Blueprint checks and remaining acceptance](../docs/bridges/subnautica-2/content-blueprint-acceptance.md).
 - [Runtime acceptance and reproducible checks](../docs/bridges/subnautica-2/runtime-acceptance.md).
 - [Historical source/prototype evidence](../docs/bridges/subnautica-2/mod-development-acceptance.md).

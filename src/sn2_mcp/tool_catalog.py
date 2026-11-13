@@ -286,6 +286,12 @@ for _name, _method in {"sn2_create_mod_project": "create", "sn2_validate_mod_pro
         "src/sn2_mcp/content_projects.py:ContentProjects." + _method,
         ("kind", "project_path", "valid", "manifest_sha256", "source_revision", "files", "activation"),
         state_tools=("sn2_validate_mod_project", "sn2_verify_artifact_package"))
+for _name, _method in {"sn2_authoring_recipe": "recipe", "sn2_author_mod": "author",
+        "sn2_authoring_status": "status", "sn2_authoring_report": "read_report"}.items():
+    _CONTRACTS[_name] = _entry("editable_content_blueprint_authoring", ("configured_workspace", "compatible_modkit_custom_engine"),
+        "src/sn2_mcp/content_authoring.py:ContentAuthoring." + _method,
+        ("state", "authoring_id", "source_manifest_sha256", "specification_sha256", "outputs", "published", "reports"),
+        state_tools=("sn2_authoring_recipe", "sn2_authoring_status", "sn2_authoring_report"))
 for _name, _method in {"sn2_content_environment": "inspect", "sn2_cook_recipe": "recipe",
         "sn2_cook_mod": "build", "sn2_cook_status": "status", "sn2_cook_report": "read_report"}.items():
     _CONTRACTS[_name] = _entry("content_mod_cooker", ("configured_workspace", "compatible_modkit_custom_engine"),

@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import time
 from typing import Callable
@@ -33,6 +34,9 @@ CookRunner = Callable[[list[str], Path, float, Path, Path], dict]
 _GENERATED = {".git", ".venv", "__pycache__", "nppBackup", "Saved", "Intermediate",
               "DerivedDataCache", "artifacts", "build", ".trash"}
 _MODKIT_DIRECTORIES = ("Binaries", "Config", "Content", "Plugins", "Releases", "Source")
+_ENGINE_RUNTIME_DIRECTORIES = ("Binaries", "Build", "Config", "Content", "Plugins", "Shaders", "Platforms")
+_COOK_UNUSED_DIRECTORIES = {"Source", "Documentation", "Extras", "Intermediate"}
+_COOK_UNUSED_SUFFIXES = {".pdb", ".lib", ".obj", ".exp"}
 _FMOD_FILES = ("fmod.dll", "fmodL.dll", "fmodstudio.dll", "fmodstudioL.dll",
                "resonanceaudio.dll", "fmod_vc.lib", "fmodL_vc.lib",
                "fmodstudio_vc.lib", "fmodstudioL_vc.lib")
@@ -75,7 +79,8 @@ def _file_info(path: Path, boundary: Path, relative: str, role: str) -> dict:
             "bytes": size, "role": role}
 
 
-def _inventory(root: Path, prefix: str, role: str, *, exclude: set[str] | None = None) -> list[dict]:
+def _inventory(root: Path, prefix: str, role: str, *, exclude: set[str] | None = None,
+               omit_suffixes: set[str] | None = None) -> list[dict]:
     root = _checked(root, directory=True)
     omitted = _GENERATED | (exclude or set())
     entries = []
@@ -85,13 +90,49 @@ def _inventory(root: Path, prefix: str, role: str, *, exclude: set[str] | None =
         for directory, children, names in os.walk(root, followlinks=False, onerror=failed):
             parent = _checked(Path(directory), root, directory=True)
             children[:] = sorted(name for name in children if name not in omitted)
-            for child in children:
-                _checked(parent / child, root, directory=True)
-            for name in sorted(names):
-                path = parent / name
-                relative = prefix + "/" + path.relative_to(root).as_posix()
-                entries.append(_file_info(path, root, relative, role))
+            with _guard_directories(parent, root):
+                for child in children:
+                    _checked(parent / child, root, directory=True)
+                for name in sorted(names):
+                    path = parent / name
+                    if omit_suffixes and path.suffix.lower() in omit_suffixes:
+                        continue
+                    relative = prefix + "/" + path.relative_to(root).as_posix()
+                    entries.append(_guarded_file_info(path, relative, role) if os.name == "nt"
+                                   else _file_info(path, root, relative, role))
     return sorted(entries, key=lambda item: item["path"])
+
+
+def _guarded_file_info(path: Path, relative: str, role: str) -> dict:
+    """Hash a direct child while its validated parent/ancestors cannot be renamed.
+
+    Windows directory guards make repeated ancestor traversal per file unnecessary.
+    The file itself still rejects reparse points and verifies lstat/open/read identity.
+    """
+    def checked_file_stat():
+        information = path.lstat()
+        if stat.S_ISLNK(information.st_mode) or getattr(information, "st_file_attributes", 0) & 0x400:
+            raise WorkspaceError("unsafe_path", "The cook dependency is a link or reparse point")
+        if not stat.S_ISREG(information.st_mode):
+            raise ContentCookError("invalid_input", "Cook inputs must be regular files")
+        return information
+
+    before = checked_file_stat()
+    digest, size = hashlib.sha256(), 0
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise ContentCookError("input_changed", "A cook input changed while opening")
+        while raw := stream.read(1024 * 1024):
+            digest.update(raw)
+            size += len(raw)
+        read = os.fstat(stream.fileno())
+    after = checked_file_stat()
+    stamp = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
+    if stamp(before) != stamp(read) or stamp(before) != stamp(after) or size != before.st_size:
+        raise ContentCookError("input_changed", "A cook input changed while hashing")
+    return {"path": relative, "source_path": str(path), "sha256": digest.hexdigest(),
+            "bytes": size, "role": role}
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -160,6 +201,8 @@ class ContentCooker:
             "engine_version": engine / "Build" / "Build.version",
             "editor_commandlet": engine / "Binaries" / "Win64" / "UnrealEditor-Cmd.exe",
             "run_uat": engine / "Build" / "BatchFiles" / "RunUAT.bat",
+            "dotnet": engine / "Binaries" / "ThirdParty" / "DotNet" / "8.0.300" / "win-x64" / "dotnet.exe",
+            "automation_tool": engine / "Binaries" / "DotNET" / "AutomationTool" / "AutomationTool.dll",
             "modkit_project": self.modkit_root / "Subnautica2.uproject",
             "base_asset_registry": self.modkit_root / "Releases" / "SN2Base" / "Windows" / "AssetRegistry.bin",
             "editor_receipt": self.modkit_root / "Binaries" / "Win64" / "Subnautica2Editor.target",
@@ -169,7 +212,10 @@ class ContentCooker:
             available = path.is_file()
             inventory[name] = {"path": str(path), "available": available}
             if available:
-                inventory[name].update(_file_info(path, path.parent, name, "dependency_metadata"))
+                identity = _file_info(path, path.parent, name, "dependency_metadata")
+                inventory[name].update(sha256=identity["sha256"], bytes=identity["bytes"],
+                                       source_path=identity["source_path"], role=identity["role"],
+                                       identity_path=identity["path"])
             else:
                 missing.append(name)
         version = None
@@ -238,13 +284,34 @@ class ContentCooker:
         source_hash = _manifest(inputs)
         if source_hash != project["project_source_manifest_sha256"]:
             raise ContentCookError("input_manifest_mismatch", "The project validation manifest does not match its files")
+        cache_path = self.workspace_root / "Cache" / "DDC"
         return {"source": "content_cook_recipe", "project_path": project_path,
                 "plugin_id": plugin_id, "environment": environment, "inputs": inputs,
                 "source_manifest_sha256": source_hash, "base_release": "SN2Base",
                 "target_platform": "Win64", "configuration": "Shipping",
                 "cook_options": ["-CookAgainstFixedBase", "-AllowUncookedAssetReferences",
+                                 "-ddc=NoZenLocalFallback", '-LocalDataCachePath="' + str(cache_path) + '"',
                                  "-ini:Engine:[/Script/EngineSettings.GameMapsSettings]:GameDefaultMap=/Engine/Maps/Entry"],
+                "ddc": {"graph": "NoZenLocalFallback", "path": str(cache_path),
+                        "scope": "cook_process", "configuration_changed": False,
+                        "source": "Engine/Config/BaseEngine.ini:NoZenLocalFallback"},
                 "command_contract_source": "Plugins/Alpakit/Source/Alpakit.Automation/PackagePlugin.cs:GetParams",
+                "launcher_contract_source": "Engine/Build/BatchFiles/RunUAT.bat:DoRunUAT; GetDotnetPath.bat",
+                "launcher": "bundled_dotnet_precompiled_automation_tool",
+                "dependency_contract": {
+                    "engine": "Declared precompiled cooker runtime, configuration, assets, shaders and staging metadata",
+                    "game": "Selected installed IoStore table-of-contents and data containers",
+                    "excluded": "Engine/plugin native source, rebuild libraries, SDK material, documentation and debug symbols are not precompiled cook inputs; project target source is retained",
+                    "sources": ["Engine/Source/Runtime/PakFile/Private/IPlatformFilePak.cpp:MountModKitGameContainers",
+                                "Engine/Build/BatchFiles/RunUAT.bat:DoRunUAT",
+                                "Engine/Source/Programs/AutomationTool/Scripts/BuildProjectCommand.Automation.cs:Build"]},
+                "staging_remap": {
+                    "from": "Subnautica2/Plugins/" + plugin_id,
+                    "to": "Subnautica2/Mods/" + plugin_id,
+                    "configuration": "Captured Config/DefaultGame.ini [Staging].RemapDirectories",
+                    "source": "Engine/Source/Programs/AutomationTool/AutomationUtils/DeploymentContext.cs:573; "
+                              "Plugins/Alpakit/Source/Alpakit.Automation/PackagePlugin.cs:RemapCookedPluginsContentPaths",
+                },
                 "command_contract_validation": "source_inspected; local UAT execution required",
                 "modkit_git": environment["modkit_git"], "compiled": False,
                 "installed_in_game": False, "runtime_validation": "not_performed"}
@@ -254,7 +321,9 @@ class ContentCooker:
         for name in _MODKIT_DIRECTORIES:
             path = self.modkit_root / name
             if path.is_dir():
-                dependencies.extend(_inventory(path, "modkit/" + name, "modkit_dependency"))
+                dependencies.extend(_inventory(path, "modkit/" + name, "modkit_dependency",
+                                               exclude=_COOK_UNUSED_DIRECTORIES,
+                                               omit_suffixes=_COOK_UNUSED_SUFFIXES))
         for name in ("Subnautica2.uproject", "AssetRegistry.bin", "GameInstallDirectory.txt"):
             path = self.modkit_root / name
             if path.is_file():
@@ -263,12 +332,21 @@ class ContentCooker:
         return sorted(dependencies, key=lambda item: item["path"])
 
     def _live_dependencies(self) -> list[dict]:
-        dependencies = _inventory(self._engine_directory(), "engine", "engine_dependency")
-        game_reference = self._game_reference_root()
-        for name in ("Content", "Binaries", "Plugins", "Mods", "Config"):
-            path = game_reference / name
+        dependencies = []
+        engine = self._engine_directory()
+        for name in _ENGINE_RUNTIME_DIRECTORIES:
+            path = engine / name
             if path.is_dir():
-                dependencies.extend(_inventory(path, "game/" + name, "game_reference"))
+                dependencies.extend(_inventory(path, "engine/" + name, "engine_dependency",
+                                               exclude=_COOK_UNUSED_DIRECTORIES,
+                                               omit_suffixes=_COOK_UNUSED_SUFFIXES))
+        game_reference = self._game_reference_root()
+        containers = game_reference / "Content" / "Paks"
+        if containers.is_dir():
+            for path in sorted(containers.iterdir()):
+                if path.suffix.lower() in {".utoc", ".ucas"}:
+                    dependencies.append(_file_info(path, game_reference,
+                                                  "game/Content/Paks/" + path.name, "game_reference"))
         return sorted(dependencies, key=lambda item: item["path"])
 
     def _captured_dependencies(self, source: Path, plugin_id: str) -> list[dict]:
@@ -277,7 +355,8 @@ class ContentCooker:
             selected = source / name
             if selected.is_dir():
                 dependencies.extend(_inventory(selected, "modkit/" + name, "modkit_dependency",
-                                               exclude={plugin_id} if name == "Plugins" else None))
+                                               exclude=_COOK_UNUSED_DIRECTORIES | ({plugin_id} if name == "Plugins" else set()),
+                                               omit_suffixes=_COOK_UNUSED_SUFFIXES))
         for name in ("Subnautica2.uproject", "AssetRegistry.bin", "GameInstallDirectory.txt"):
             if (source / name).is_file():
                 dependencies.append(_file_info(source / name, source, "modkit/" + name, "modkit_dependency"))
@@ -312,6 +391,15 @@ class ContentCooker:
             captured.append({**item, "origin_path": item["source_path"], "source_path": str(destination)})
         # A source checkout's generic example path is replaced only in this fresh capture.
         (source / "GameInstallDirectory.txt").write_text(str(self._game_reference_root()) + "\n", encoding="utf-8")
+        # The target discovers this plugin under Mods; stored pak/UFS paths must agree.
+        # This is the standard UAT configuration equivalent of Alpakit's staging remap.
+        staging_config = source / "Config" / "DefaultGame.ini"
+        self._directory(staging_config.parent)
+        previous_config = staging_config.read_bytes() if staging_config.exists() else b""
+        remap = recipe["staging_remap"]
+        staging_config.write_bytes(previous_config + (
+            '\n[Staging]\n+RemapDirectories=(From="' + remap["from"] + '",To="' + remap["to"] + '")\n'
+        ).encode("utf-8"))
         for item in recipe["inputs"]:
             destination = plugin.joinpath(*_parts(item["path"]))
             if destination.exists():
@@ -331,23 +419,55 @@ class ContentCooker:
         if not any(item["path"] == "modkit/GameInstallDirectory.txt" for item in captured):
             captured.append(_file_info(source / "GameInstallDirectory.txt", source,
                                       "modkit/GameInstallDirectory.txt", "modkit_dependency"))
+        staged_config_identity = _file_info(staging_config, source, "modkit/Config/DefaultGame.ini", "modkit_dependency")
+        for item in captured:
+            if item["path"] == staged_config_identity["path"]:
+                item.update(sha256=staged_config_identity["sha256"], bytes=staged_config_identity["bytes"],
+                            local_adaptation="Fresh-build selected plugin UFS staging remap from Plugins to Mods")
+                break
+        else:
+            captured.append({**staged_config_identity,
+                             "local_adaptation": "Fresh-build selected plugin UFS staging remap from Plugins to Mods"})
         captured.extend(item for item in dependencies if not item["path"].startswith("modkit/"))
         return source, plugin, sorted(captured, key=lambda item: item["path"])
 
     def _commands(self, recipe: dict, source: Path, stage: Path) -> list[str]:
         environment = recipe["environment"]
-        return [environment["files"]["run_uat"]["path"], "-noP4", "-nocompileuat", "BuildCookRun",
+        # Direct execution preserves the quoted nested cooker arguments that cmd.exe splits.
+        # RunUAT's precompiled branch runs this same bundled host and AutomationTool assembly.
+        return [environment["files"]["dotnet"]["path"], environment["files"]["automation_tool"]["path"],
+                "-noP4", "-nocompile", "BuildCookRun",
                 "-project=" + str(source / "Subnautica2.uproject"), "-unrealexe=" + environment["files"]["editor_commandlet"]["path"],
                 "-platform=Win64", "-clientconfig=Shipping", "-cook", "-stage", "-pak", "-iostore", "-compressed",
                 "-dlcname=" + recipe["plugin_id"], "-basedonreleaseversion=SN2Base",
                 "-additionalcookeroptions=" + " ".join(recipe["cook_options"]),
-                "-stagingdirectory=" + str(stage), "-utf8output", "-unattended", "-nop4"]
+                "-stagingdirectory=" + str(stage), "-utf8output", "-unattended", "-nop4",
+                "uebp_LogFolder=" + str(stage.parent / "uat-logs"),
+                "uebp_FinalLogFolder=" + str(stage.parent / "uat-logs"),
+                "uebp_EngineSavedFolder=" + str(stage.parent / "uat-saved")]
+
+    def _immutable_inputs(self, recipe: dict, captured: list[dict]) -> list[Path]:
+        """Protect selected source/capture and launched tools, not every vendor asset.
+
+        Engine/game dependencies retain complete initial and final byte inventories.
+        Read handles for all vendor files add no source-capture evidence and can make
+        a precompiled cook's preparation exceed its caller deadline on Windows.
+        """
+        paths = [Path(item[key]) for item in recipe["inputs"]
+                 for key in ("origin_path", "source_path")]
+        paths.extend(Path(item["source_path"]) for item in captured
+                     if item["path"].startswith("modkit/"))
+        paths.extend(Path(item["path"]) for item in recipe["environment"]["files"].values()
+                     if item["available"])
+        return sorted(set(paths), key=lambda path: os.path.normcase(str(path)))
 
     def _outputs(self, stage: Path, plugin: Path, output: Path, plugin_id: str) -> list[dict]:
         candidates = [stage / project / kind / plugin_id
                       for project in ("Subnautica2", "Windows/Subnautica2")
                       for kind in ("Plugins", "Mods")]
-        found = [path for path in candidates if path.is_dir()]
+        # UAT can remap the descriptor/UFS entries while retaining container output
+        # under Plugins. Select the container subtree rather than every staged root.
+        found = [path for path in candidates if (path / "Content" / "Paks" / "Windows").is_dir()]
         if len(found) != 1:
             raise ContentCookError("unidentified_cook_output", "The cooker did not produce one identified selected-plugin staging subtree")
         staged = _checked(found[0], stage, directory=True)
@@ -401,14 +521,19 @@ class ContentCooker:
             if recipe["environment"]["missing"]:
                 receipt.update(state="blocked", blocked_reasons=recipe["environment"]["missing"])
                 return self._finish(receipt, receipt_path, started)
+            receipt["state"] = "hashing_dependencies"
+            _write_json(receipt_path, receipt)
             dependencies = self._dependencies()
             receipt["origin_dependencies"] = dependencies
+            receipt["state"] = "capturing_inputs"
+            _write_json(receipt_path, receipt)
             source, plugin, captured = self._capture(recipe, directory, dependencies)
             receipt.update(staged_source_root=str(plugin), staged_modkit_root=str(source),
                            shared_dependencies=captured, dependency_manifest_sha256=_manifest(captured),
                            output_root=str(directory / "output" / recipe["plugin_id"]))
             stage = self._directory(directory / "stage")
             output = self._directory(Path(receipt["output_root"]))
+            self._directory(Path(recipe["ddc"]["path"]))
             receipt["build_identity"] = {"build_id": build_id, "source_manifest_sha256": receipt["source_manifest_sha256"],
                                          "dependency_manifest_sha256": receipt["dependency_manifest_sha256"],
                                          "engine_version": recipe["environment"]["engine_version"],
@@ -420,8 +545,16 @@ class ContentCooker:
             with _destination_lock(self.workspace_root / "artifacts" / "content-builds"), ExitStack() as guards:
                 for selected in (source, self._engine_directory(), self._game_reference_root()):
                     guards.enter_context(_guard_directories(selected, selected))
-                guards.enter_context(_guard_input_files([Path(item["source_path"]) for item in [*recipe["inputs"], *captured]]))
+                immutable_inputs = self._immutable_inputs(recipe, captured)
+                guards.enter_context(_guard_input_files(immutable_inputs))
                 receipt["input_files_write_protected_during_cook"] = os.name == "nt"
+                receipt["immutable_input_scope"] = {
+                    "selected_source_and_capture": True,
+                    "captured_modkit_and_launch_tools": True,
+                    "write_protected_file_count": len(immutable_inputs) if os.name == "nt" else 0,
+                    "shared_engine_and_game_dependencies": "Full initial and final byte inventories; directory guards",
+                    "all_shared_dependency_files_write_protected": False,
+                }
                 receipt["dependency_capture_complete"] = True
                 receipt["cleanup"]["worker_started"] = True
                 receipt["state"] = "cooking"
@@ -446,6 +579,8 @@ class ContentCooker:
                 if any(report["error_reported"] for report in reports):
                     raise ContentCookError("cooker_errors", "The cooker reported errors; inspect the complete reports")
                 receipt["outputs"] = self._outputs(stage, plugin, output, recipe["plugin_id"])
+                receipt["state"] = "verifying_dependencies"
+                _write_json(receipt_path, receipt)
                 after = self._captured_dependencies(source, recipe["plugin_id"])
                 receipt["dependencies_stable"] = _manifest(after) == receipt["dependency_manifest_sha256"]
                 captured_inputs = _validate_project(plugin.parent, recipe["plugin_id"])["files"]

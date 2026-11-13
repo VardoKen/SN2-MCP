@@ -350,6 +350,31 @@ class ContentProjectTests(unittest.TestCase):
             self.assertTrue(result["valid"])
             self.assertTrue(self.service.verify("artifacts/TestMod-streaming")["valid"])
 
+    def test_failed_preparation_uses_cross_volume_recovery(self):
+        real_rename = Path.rename
+        real_move = shutil.move
+        moves = []
+
+        def rename_only_within_workspace(source, target):
+            if Path(target).is_relative_to(self.repository.parent / ".trash"):
+                raise OSError(18, "Cross-device link")
+            return real_rename(source, target)
+
+        def record_move(source, target):
+            moves.append((source, target))
+            return real_move(source, target)
+
+        with patch("sn2_mcp.content_projects.verify_content_package", side_effect=ValueError("invalid generated package")), \
+             patch("sn2_mcp.content_projects.shutil.move", side_effect=record_move), \
+             patch.object(Path, "rename", rename_only_within_workspace):
+            with self.assertRaises(ContentProjectError) as raised:
+                self.service._publish("artifacts/broken", {"manifest.json": b"{}"}, package=True)
+        self.assertEqual(raised.exception.code, "publish_failed")
+        self.assertEqual(len(moves), 1)
+        recovered = Path(raised.exception.receipt["trash_path"])
+        self.assertEqual((recovered / "manifest.json").read_bytes(), b"{}")
+        self.assertFalse((self.workspace / "artifacts/broken").exists())
+
     def test_streaming_read_access_error_is_predictable(self):
         self.service.create("mods/ReadFailure", "ReadFailure")
         import sn2_mcp.content_projects as content_projects

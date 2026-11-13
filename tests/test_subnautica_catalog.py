@@ -36,7 +36,8 @@ MOD_TOOLS = {"sn2_create_mod_project", "sn2_validate_mod_project", "sn2_package_
              "sn2_verify_artifact_package", "sn2_mod_load", "sn2_mod_status",
              "sn2_mod_disable", "sn2_mod_reload", "sn2_content_environment",
              "sn2_cook_recipe", "sn2_cook_mod", "sn2_cook_status", "sn2_cook_report",
-             "sn2_mod_install", "sn2_mod_uninstall", "sn2_mod_deployment_status"}
+             "sn2_mod_install", "sn2_mod_uninstall", "sn2_mod_deployment_status",
+             "sn2_authoring_recipe", "sn2_author_mod", "sn2_authoring_status", "sn2_authoring_report"}
 PUBLIC_TOOLS = RUNTIME_TOOLS | SOURCE_TOOLS | BUILD_TOOLS | LIFECYCLE_TOOLS | MOD_TOOLS
 
 
@@ -82,6 +83,7 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                     "sn2_create_mod_project": (False, False, False, False),
                     "sn2_package_artifact": (False, False, False, False),
                     "sn2_cook_mod": (False, False, False, False),
+                    "sn2_author_mod": (False, False, False, False),
                     "sn2_mod_install": (False, True, False, True),
                     "sn2_mod_uninstall": (False, True, False, True),
                     "sn2_load_asset": (False, False, False, True),

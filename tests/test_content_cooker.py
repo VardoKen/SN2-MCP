@@ -6,12 +6,13 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from sn2_mcp.content_cooker import ContentCooker, ContentCookError, _manifest
-from sn2_mcp.build_workflow import run_build_command
+from sn2_mcp.content_cooker import ContentCooker, ContentCookError, _manifest, _guarded_file_info
+from sn2_mcp.build_workflow import run_build_command, _guard_input_files
 from sn2_mcp.workspace import SourceWorkspace, WorkspaceError
 
 
@@ -98,6 +99,8 @@ class ContentCookerTests(unittest.TestCase):
         for relative, raw in {
             "Build/Build.version": json.dumps({"MajorVersion": 5, "MinorVersion": 6, "PatchVersion": 1}).encode(),
             "Build/BatchFiles/RunUAT.bat": b"@echo synthetic UAT contract",
+            "Binaries/ThirdParty/DotNet/8.0.300/win-x64/dotnet.exe": b"synthetic bundled dotnet",
+            "Binaries/DotNET/AutomationTool/AutomationTool.dll": b"synthetic AutomationTool assembly",
             "Binaries/Win64/UnrealEditor-Cmd.exe": b"synthetic commandlet",
         }.items():
             target = self.engine / relative
@@ -148,6 +151,30 @@ class ContentCookerTests(unittest.TestCase):
         self.assertEqual(recipe["base_release"], "SN2Base")
         self.assertIn("-CookAgainstFixedBase", recipe["cook_options"])
         self.assertIn("-AllowUncookedAssetReferences", recipe["cook_options"])
+
+    def test_recipe_selects_verified_process_local_filesystem_cache_with_quoted_path(self):
+        workspace = self.root / "authoring with spaces"
+        self.workspace.rename(workspace)
+        self.workspace = workspace
+        self.modkit = workspace / "Modkit"
+        self.project = workspace / "projects/TestMod"
+        self.engine = workspace / "Engine/Engine"
+        self.engine_file = self.engine / "Binaries/Win64/UnrealEditor-Cmd.exe"
+        cooker = self.cooker()
+        recipe = cooker.recipe("projects/TestMod")
+        cache = workspace / "Cache/DDC"
+        self.assertEqual(recipe["ddc"]["graph"], "NoZenLocalFallback")
+        self.assertEqual(recipe["ddc"]["path"], str(cache))
+        self.assertFalse(recipe["ddc"]["configuration_changed"])
+        arguments = cooker._commands(recipe, workspace / "captured", workspace / "stage")
+        options = next(item for item in arguments if item.startswith("-additionalcookeroptions="))
+        self.assertEqual(arguments[:2], [str(self.engine / "Binaries/ThirdParty/DotNet/8.0.300/win-x64/dotnet.exe"),
+                                        str(self.engine / "Binaries/DotNET/AutomationTool/AutomationTool.dll")])
+        self.assertIn("-nocompile", arguments)
+        self.assertIn("-ddc=NoZenLocalFallback", options)
+        self.assertIn('-LocalDataCachePath="' + str(cache) + '"', options)
+        self.assertFalse(options.endswith('"'), "UAT trims trailing quotes from AdditionalCookerOptions")
+        self.assertFalse(cache.exists(), "Preparing a recipe must not create the cache")
 
     def test_absent_fmod_setup_files_are_conditional_warnings_not_unverified_cook_blockers(self):
         for path in (self.modkit / "Plugins/FMODStudio/Binaries/Win64").iterdir():
@@ -217,6 +244,11 @@ class ContentCookerTests(unittest.TestCase):
         self.assertIn("-dlcname=TestMod", arguments)
         self.assertIn("-iostore", arguments)
         self.assertNotIn("PackagePlugin", arguments)
+        stage = Path(receipt["staging_directory"])
+        self.assertIn("uebp_LogFolder=" + str(stage.parent / "uat-logs"), arguments)
+        self.assertIn("uebp_FinalLogFolder=" + str(stage.parent / "uat-logs"), arguments)
+        self.assertIn("uebp_EngineSavedFolder=" + str(stage.parent / "uat-saved"), arguments)
+        self.assertTrue((self.workspace / "Cache/DDC").is_dir())
         self.assertTrue(Path(cwd).is_relative_to(self.workspace))
         self.assertGreater(timeout, 4000)
         captured = Path(receipt["staged_modkit_root"])
@@ -235,6 +267,79 @@ class ContentCookerTests(unittest.TestCase):
         self.assertIn("/TestMod/Marker", receipt["reports"][0]["text"])
         self.assertTrue(receipt["reports"][0]["error_reported"])
 
+    def test_immutable_scope_protects_sources_capture_tools_and_still_hashes_shared_dependencies(self):
+        shared = self.engine / "Content/Shared.uasset"
+        shared.parent.mkdir(parents=True)
+        shared.write_bytes(b"shared dependency")
+        reference = self.game / "Content/Paks/Game.utoc"
+        with patch("sn2_mcp.content_cooker._guard_input_files", wraps=_guard_input_files) as guarded:
+            receipt = self.cooker().build("projects/TestMod")
+        self.assertEqual(receipt["state"], "succeeded", receipt.get("error"))
+        protected = set(guarded.call_args.args[0])
+        self.assertIn(self.project / "Content/Marker.uasset", protected)
+        self.assertIn(Path(receipt["staged_source_root"]) / "Content/Marker.uasset", protected)
+        self.assertIn(Path(receipt["staged_modkit_root"]) / "Config/DefaultGame.ini", protected)
+        self.assertIn(self.engine_file, protected)
+        self.assertNotIn(shared, protected)
+        self.assertNotIn(reference, protected)
+        dependencies = {item["source_path"] for item in receipt["shared_dependencies"]}
+        self.assertIn(str(shared), dependencies)
+        self.assertIn(str(reference), dependencies)
+        self.assertTrue(receipt["dependencies_stable"])
+        self.assertFalse(receipt["immutable_input_scope"]["all_shared_dependency_files_write_protected"])
+
+    def test_capture_remaps_selected_plugin_ufs_to_actual_mods_without_modifying_modkit(self):
+        original = self.modkit / "Config/DefaultGame.ini"
+        original_bytes = original.read_bytes()
+        receipt = self.cooker().build("projects/TestMod")
+        self.assertEqual(receipt["state"], "succeeded", receipt.get("error"))
+        self.assertEqual(original.read_bytes(), original_bytes)
+        captured = Path(receipt["staged_modkit_root"]) / "Config/DefaultGame.ini"
+        self.assertEqual(captured.read_bytes(), original_bytes + (
+            '\n[Staging]\n+RemapDirectories=(From="Subnautica2/Plugins/TestMod",To="Subnautica2/Mods/TestMod")\n'
+        ).encode("utf-8"))
+        identity = next(item for item in receipt["shared_dependencies"]
+                        if item["path"] == "modkit/Config/DefaultGame.ini")
+        self.assertEqual(identity["sha256"], sha(captured.read_bytes()))
+        self.assertIn("staging remap", identity["local_adaptation"])
+        self.assertTrue(receipt["dependencies_stable"])
+
+    def test_split_staging_descriptor_root_does_not_ambiguate_unique_container_root(self):
+        fixture = FixtureRunner(self)
+
+        def split_stage(arguments, cwd, timeout, stdout, stderr):
+            result = fixture(arguments, cwd, timeout, stdout, stderr)
+            stage = Path(next(item.split("=", 1)[1] for item in arguments
+                              if item.startswith("-stagingdirectory=")))
+            descriptor = stage / "Subnautica2/Mods/TestMod/TestMod.uplugin"
+            descriptor.parent.mkdir(parents=True)
+            descriptor.write_bytes((Path(cwd) / "Plugins/TestMod/TestMod.uplugin").read_bytes())
+            return result
+
+        receipt = self.cooker(split_stage).build("projects/TestMod")
+        self.assertEqual(receipt["state"], "succeeded", receipt.get("error"))
+        self.assertEqual({item["role"] for item in receipt["outputs"]},
+                         {"plugin_descriptor", "pak", "utoc", "ucas"})
+        self.assertTrue(receipt["exact_source_compiled"])
+
+    def test_changed_unlocked_shared_dependency_prevents_authoritative_output(self):
+        shared = self.engine / "Content/Shared.uasset"
+        shared.parent.mkdir(parents=True)
+        shared.write_bytes(b"original shared dependency")
+        fixture = FixtureRunner(self)
+
+        def mutate_shared(*args):
+            result = fixture(*args)
+            shared.write_bytes(b"changed shared dependency")
+            return result
+
+        receipt = self.cooker(mutate_shared).build("projects/TestMod")
+        self.assertEqual(receipt["state"], "failed")
+        self.assertEqual(receipt["failure_code"], "inputs_changed")
+        self.assertFalse(receipt["dependencies_stable"])
+        self.assertFalse(receipt["exact_source_compiled"])
+        self.assertTrue(all(not item["authoritative_cook_output"] for item in receipt["outputs"]))
+
     def test_reported_errors_with_zero_exit_do_not_claim_success(self):
         receipt = self.cooker(FixtureRunner(self, output_error=True)).build("projects/TestMod")
         self.assertEqual(receipt["state"], "failed")
@@ -250,7 +355,15 @@ class ContentCookerTests(unittest.TestCase):
         self.assertEqual(receipt["outputs"], [])
 
     def test_current_workspace_change_does_not_change_captured_revision(self):
-        receipt = self.cooker(FixtureRunner(self, mutate=True)).build("projects/TestMod")
+        cooker = self.cooker()
+        finish = cooker._finish
+
+        def changed_after_cook(receipt, path, started):
+            self.project.joinpath("Content/Marker.uasset").write_bytes(b"edited after captured cook")
+            return finish(receipt, path, started)
+
+        with patch.object(cooker, "_finish", side_effect=changed_after_cook):
+            receipt = cooker.build("projects/TestMod")
         self.assertEqual(receipt["state"], "succeeded")
         self.assertTrue(receipt["exact_source_compiled"])
         self.assertFalse(receipt["workspace_current_revision_compiled"])
@@ -270,6 +383,55 @@ class ContentCookerTests(unittest.TestCase):
         self.assertFalse(receipt["exact_source_compiled"])
         self.assertFalse(receipt["dependencies_stable"])
         self.assertTrue(all(not item["authoritative_cook_output"] for item in receipt["outputs"]))
+
+    def test_precompiled_cook_dependencies_exclude_rebuild_and_unmounted_game_files(self):
+        ignored = {
+            self.engine / "Source/Unused.cpp": b"engine source not rebuilt",
+            self.engine / "Extras/SDK/archive.zip": b"unused SDK archive",
+            self.engine / "Binaries/Win64/UnrealEditor.pdb": b"debug symbols",
+            self.engine / "Plugins/Unused/Source/Unused.cpp": b"plugin source not rebuilt",
+            self.modkit / "Plugins/FMODStudio/Binaries/Win64/fmod_vc.lib": b"link input",
+            self.game / "Binaries/Win64/Game.exe": b"installed game not executed by cook",
+            self.game / "Content/Paks/Game.pak": b"not mounted by the custom Editor game-reference path",
+        }
+        for path, raw in ignored.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        required = {
+            self.engine / "Shaders/Private/Probe.usf": b"shader source consumed by the cooker",
+            self.engine / "Plugins/Probe/Config/DefaultProbe.ini": b"runtime plugin config",
+            self.modkit / "Source/Game.Target.cs": b"project target metadata",
+            self.game / "Content/Paks/Game.ucas": b"game IoStore data",
+        }
+        for path, raw in required.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        paths = {item["source_path"] for item in self.cooker()._dependencies()}
+        self.assertTrue(all(str(path) not in paths for path in ignored))
+        self.assertTrue(all(str(path) in paths for path in required))
+
+    def test_guarded_inventory_detects_file_replacement_during_read(self):
+        path = self.root / "dependency.dll"
+        path.write_bytes(b"original")
+        before = path.stat()
+        changed = SimpleNamespace(st_mode=before.st_mode, st_file_attributes=0,
+            st_dev=before.st_dev, st_ino=before.st_ino + 1, st_size=before.st_size,
+            st_mtime_ns=before.st_mtime_ns)
+        with patch.object(Path, "lstat", side_effect=[before, changed]):
+            with self.assertRaises(ContentCookError) as error:
+                _guarded_file_info(path, "dependency.dll", "engine_dependency")
+        self.assertEqual(error.exception.code, "input_changed")
+
+    def test_guarded_inventory_rejects_reparse_file_before_opening(self):
+        path = self.root / "dependency.dll"
+        path.write_bytes(b"original")
+        before = path.stat()
+        linked = SimpleNamespace(st_mode=before.st_mode, st_file_attributes=0x400)
+        with patch.object(Path, "lstat", return_value=linked), patch.object(Path, "open") as opened:
+            with self.assertRaises(WorkspaceError) as error:
+                _guarded_file_info(path, "dependency.dll", "engine_dependency")
+        self.assertEqual(error.exception.code, "unsafe_path")
+        opened.assert_not_called()
 
     def test_added_captured_source_is_detected_by_complete_source_inventory(self):
         receipt = self.cooker(FixtureRunner(self, source_addition=True)).build("projects/TestMod")
@@ -353,6 +515,20 @@ class ContentCookerTests(unittest.TestCase):
         self.assertTrue(command["tree_exit_confirmed"])
         self.assertTrue(command["output_complete"])
         self.assertIn(b"neutral-fixture argument with spaces", stdout.read_bytes())
+
+    @unittest.skipUnless(os.name == "nt", "Windows contained executable argv")
+    def test_inherited_runner_preserves_nested_cooker_quotes_for_direct_executable(self):
+        argument = ('-additionalcookeroptions=-ddc=NoZenLocalFallback '
+                    '-LocalDataCachePath="D:\\authoring with spaces\\Cache\\DDC" '
+                    '-ini:Engine:Probe=True')
+        stdout, stderr = self.root / "argv.stdout.log", self.root / "argv.stderr.log"
+        command = run_build_command(
+            [sys.executable, "-I", "-S", "-c", "import json,sys;print(json.dumps(sys.argv[1:]))", argument],
+            self.root, 30, stdout, stderr)
+        self.assertEqual(json.loads(stdout.read_text(encoding="utf-8")), [argument])
+        self.assertEqual(command["exit_code"], 0)
+        self.assertTrue(command["tree_exit_confirmed"])
+        self.assertTrue(command["output_complete"])
 
 
 if __name__ == "__main__":

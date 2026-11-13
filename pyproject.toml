@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sn2-mcp"
-version = "0.4.1"
+version = "0.5.1"
 description = "Game interface research and mod development with the Subnautica 2 native MCP bridge"
 readme = {text = """
 # Subnautica 2 MCP
 
 Python MCP frontend for game-interface research and mod development/prototyping
 through the Subnautica 2 native runtime bridge. Tools provide exact editing,
-source/interface evidence, native bridge builds, Content/Blueprint project and
+source/interface evidence, native bridge builds, editable Content/Blueprint authoring and compilation,
 cook/package workflows, installation receipts and Blueprint entry actor lifecycle.
 Cooking requires the separately configured compatible Unreal authoring environment.
 Configure the workspace, native runtime artifacts and game separately.

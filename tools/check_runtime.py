@@ -26,7 +26,7 @@ MODULES = (
     "test_source_workspace",
     "test_build_workflow", "test_cpp_diagnostics", "test_runtime_lifecycle", "test_command_executor",
     "test_mcp_build_lifecycle", "test_content_projects", "test_content_cooker",
-    "test_content_deployment", "test_content_frontend",
+    "test_content_deployment", "test_content_frontend", "test_content_authoring",
 )
 
 if __name__ == "__main__":

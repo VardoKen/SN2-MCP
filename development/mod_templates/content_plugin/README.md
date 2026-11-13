@@ -10,6 +10,17 @@ Use the compatible Subnautica 2 custom Unreal Editor and Modkit to author and
 save mod-owned assets under this plugin's `Content/` directory. Retain the
 Modkit's game stubs and references in the configured authoring environment;
 they are neither original game source nor payload to copy into this plugin.
+For MCP authoring, save a schema-1 JSON specification in this project's
+`Authoring/` directory. `sn2_authoring_recipe(project_path, spec_path)` identifies
+the selected project, exact specification, required tools and helper build.
+`sn2_author_mod` creates editable data assets and Blueprint graphs in an isolated
+Modkit capture, compiles them and publishes saved assets only after complete
+success and source-revision validation. Inspect `sn2_authoring_status` and
+`sn2_authoring_report` for full output and asset/node/pin diagnostics.
+The Editor-only C++ helper belongs to the build environment; it is not a native
+module of this content plugin. `development/authoring/SN2MCPAuthoring` owns its
+source and authoring specification contract in the bridge repository.
+
 Create an Actor Blueprint when the mod requires executable logic, author its
 behavior, compile it and save its `.uasset`. New game content must use the
 target's actual registration mechanism; mounting an archive alone does not

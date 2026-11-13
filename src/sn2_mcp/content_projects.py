@@ -476,7 +476,7 @@ class ContentProjects:
                     trash = self.repository.parent / ".trash" / self.repository.name / "content-preparation"
                     trash.mkdir(parents=True, exist_ok=True)
                     recovered = trash / uuid.uuid4().hex
-                    stage.rename(recovered)
+                    shutil.move(str(stage), str(recovered))
                     if isinstance(error, (WorkspaceError, ContentProjectError)):
                         raise
                     raise ContentProjectError("publish_failed", "Preparation failed; partial files moved to project trash",

@@ -1,0 +1,11 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.5.1",
+  "FriendlyName": "Subnautica 2 MCP Authoring",
+  "Description": "Editor commandlet for editable Content and Blueprint assets.",
+  "Category": "Modding",
+  "EnabledByDefault": false,
+  "CanContainContent": false,
+  "Modules": [{"Name": "SN2MCPAuthoring", "Type": "Editor", "LoadingPhase": "Default"}]
+}
