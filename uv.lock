@@ -705,7 +705,7 @@ wheels = [
 
 [[package]]
 name = "sn2-mcp"
-version = "0.5.1"
+version = "0.6.3"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

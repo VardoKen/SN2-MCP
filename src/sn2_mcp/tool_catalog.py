@@ -325,3 +325,10 @@ _CONTRACTS["sn2_mod_reload"] = _entry("content_revision_restart_iteration",
     "src/sn2_mcp/server.py:sn2_mod_reload",
     ("state", "iteration", "process", "previous_process", "stop", "installation", "start", "native_status", "mod"),
     state_tools=("sn2_mod_status", "sn2_mod_deployment_status", "sn2_native_status", "sn2_target_processes"))
+for _name, _method in {"sn2_service_status": "status", "sn2_service_enable": "enable",
+                       "sn2_service_disable": "disable", "sn2_service_call": "call"}.items():
+    _CONTRACTS[_name] = _entry("in_game_development_service",
+        ("native_tick_reflection", "loaded_cooked_development_service"),
+        "src/sn2_mcp/service_mod.py:ServiceMod." + _method,
+        ("service_id", "entry_class_path", "blueprint", "actor", "functions", "function", "invocation"),
+        dynamic=True, state_tools=("sn2_service_status", "sn2_native_status"))

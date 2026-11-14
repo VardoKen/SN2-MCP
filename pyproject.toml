@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sn2-mcp"
-version = "0.5.1"
+version = "0.6.3"
 description = "Game interface research and mod development with the Subnautica 2 native MCP bridge"
 readme = {text = """
 # Subnautica 2 MCP

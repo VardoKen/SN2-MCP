@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "kind": "sn2_content_mod_project",
+  "mod_id": "SN2MCPDevelopmentServices",
+  "plugin_name": "SN2MCPDevelopmentServices",
+  "title": "SN2 MCP Development Services",
+  "entry_class": "/SN2MCPDevelopmentServices/BP_DevelopmentServices.BP_DevelopmentServices_C"
+}
+

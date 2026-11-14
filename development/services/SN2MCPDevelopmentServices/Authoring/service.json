@@ -1,0 +1,854 @@
+{
+  "schema": 1,
+  "plugin_id": "SN2MCPDevelopmentServices",
+  "assets": [
+    {
+      "kind": "blueprint",
+      "path": "/SN2MCPDevelopmentServices/BP_DevelopmentServices.BP_DevelopmentServices",
+      "parent_class": "/Script/Engine.Actor",
+      "variables": [
+        {
+          "name": "HeldObjects",
+          "type": "object",
+          "class_path": "/Script/CoreUObject.Object",
+          "container": "array"
+        },
+        {
+          "name": "ServicePurpose",
+          "type": "string",
+          "default": "In-game development services for the native MCP bridge"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "end",
+          "kind": "event",
+          "function": "ReceiveEndPlay"
+        },
+        {
+          "id": "held",
+          "kind": "variable_get",
+          "variable": "HeldObjects"
+        },
+        {
+          "id": "clear",
+          "kind": "call_function",
+          "class": "/Script/Engine.KismetArrayLibrary",
+          "function": "Array_Clear"
+        }
+      ],
+      "connections": [
+        {
+          "from": {
+            "node": "end",
+            "pin": "then"
+          },
+          "to": {
+            "node": "clear",
+            "pin": "execute"
+          }
+        },
+        {
+          "from": {
+            "node": "held",
+            "pin": "HeldObjects"
+          },
+          "to": {
+            "node": "clear",
+            "pin": "TargetArray"
+          }
+        }
+      ],
+      "functions": [
+        {
+          "name": "GetServiceVersion",
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "Version",
+              "type": "string"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "result",
+              "kind": "function_result",
+              "defaults": {
+                "Version": "0.6.3"
+              }
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            }
+          ]
+        },
+        {
+          "name": "ReadWidgetText",
+          "inputs": [
+            {
+              "name": "Widget",
+              "type": "object",
+              "class_path": "/Script/UMG.TextBlock"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "Text",
+              "type": "string"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "read",
+              "kind": "call_function",
+              "class": "/Script/UMG.TextBlock",
+              "function": "GetText"
+            },
+            {
+              "id": "string",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetTextLibrary",
+              "function": "Conv_TextToString"
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Widget"
+              },
+              "to": {
+                "node": "read",
+                "pin": "self"
+              }
+            },
+            {
+              "from": {
+                "node": "read",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "string",
+                "pin": "InText"
+              }
+            },
+            {
+              "from": {
+                "node": "string",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "result",
+                "pin": "Text"
+              }
+            }
+          ]
+        },
+        {
+          "name": "WriteWidgetText",
+          "inputs": [
+            {
+              "name": "Widget",
+              "type": "object",
+              "class_path": "/Script/UMG.TextBlock"
+            },
+            {
+              "name": "Text",
+              "type": "string"
+            }
+          ],
+          "outputs": [],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "text",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetTextLibrary",
+              "function": "Conv_StringToText"
+            },
+            {
+              "id": "write",
+              "kind": "call_function",
+              "class": "/Script/UMG.TextBlock",
+              "function": "SetText"
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "write",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "write",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Widget"
+              },
+              "to": {
+                "node": "write",
+                "pin": "self"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Text"
+              },
+              "to": {
+                "node": "text",
+                "pin": "InString"
+              }
+            },
+            {
+              "from": {
+                "node": "text",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "write",
+                "pin": "InText"
+              }
+            }
+          ]
+        },
+        {
+          "name": "SetObjectTextProperty",
+          "inputs": [
+            {
+              "name": "Target",
+              "type": "object",
+              "class_path": "/Script/CoreUObject.Object"
+            },
+            {
+              "name": "PropertyName",
+              "type": "name"
+            },
+            {
+              "name": "Text",
+              "type": "string"
+            }
+          ],
+          "outputs": [],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "text",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetTextLibrary",
+              "function": "Conv_StringToText"
+            },
+            {
+              "id": "write",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetSystemLibrary",
+              "function": "SetTextPropertyByName"
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "write",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "write",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Target"
+              },
+              "to": {
+                "node": "write",
+                "pin": "Object"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "PropertyName"
+              },
+              "to": {
+                "node": "write",
+                "pin": "PropertyName"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Text"
+              },
+              "to": {
+                "node": "text",
+                "pin": "InString"
+              }
+            },
+            {
+              "from": {
+                "node": "text",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "write",
+                "pin": "Value"
+              }
+            }
+          ]
+        },
+        {
+          "name": "TraceImpactPoint",
+          "inputs": [
+            {
+              "name": "Start",
+              "type": "struct",
+              "struct_path": "/Script/CoreUObject.Vector"
+            },
+            {
+              "name": "End",
+              "type": "struct",
+              "struct_path": "/Script/CoreUObject.Vector"
+            },
+            {
+              "name": "Channel",
+              "type": "enum",
+              "enum_path": "/Script/Engine.ETraceTypeQuery"
+            },
+            {
+              "name": "TraceComplex",
+              "type": "bool"
+            },
+            {
+              "name": "ActorsToIgnore",
+              "type": "object",
+              "class_path": "/Script/Engine.Actor",
+              "container": "array"
+            },
+            {
+              "name": "IgnoreSelf",
+              "type": "bool"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "Hit",
+              "type": "bool"
+            },
+            {
+              "name": "ImpactPoint",
+              "type": "struct",
+              "struct_path": "/Script/CoreUObject.Vector"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "trace",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetSystemLibrary",
+              "function": "LineTraceSingle",
+              "split_pins": [
+                "OutHit"
+              ],
+              "defaults": {
+                "DrawDebugType": "None"
+              }
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "trace",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "trace",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Start"
+              },
+              "to": {
+                "node": "trace",
+                "pin": "Start"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "End"
+              },
+              "to": {
+                "node": "trace",
+                "pin": "End"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Channel"
+              },
+              "to": {
+                "node": "trace",
+                "pin": "TraceChannel"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "TraceComplex"
+              },
+              "to": {
+                "node": "trace",
+                "pin": "bTraceComplex"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "ActorsToIgnore"
+              },
+              "to": {
+                "node": "trace",
+                "pin": "ActorsToIgnore"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "IgnoreSelf"
+              },
+              "to": {
+                "node": "trace",
+                "pin": "bIgnoreSelf"
+              }
+            },
+            {
+              "from": {
+                "node": "trace",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "result",
+                "pin": "Hit"
+              }
+            },
+            {
+              "from": {
+                "node": "trace",
+                "pin": "OutHit_ImpactPoint"
+              },
+              "to": {
+                "node": "result",
+                "pin": "ImpactPoint"
+              }
+            }
+          ]
+        },
+        {
+          "name": "CreateHeldObject",
+          "inputs": [
+            {
+              "name": "ObjectClass",
+              "type": "class",
+              "class_path": "/Script/CoreUObject.Object"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "Index",
+              "type": "int"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "spawn",
+              "kind": "call_function",
+              "class": "/Script/Engine.GameplayStatics",
+              "function": "SpawnObject"
+            },
+            {
+              "id": "held",
+              "kind": "variable_get",
+              "variable": "HeldObjects"
+            },
+            {
+              "id": "add",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetArrayLibrary",
+              "function": "Array_Add"
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "spawn",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "spawn",
+                "pin": "then"
+              },
+              "to": {
+                "node": "add",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "add",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "ObjectClass"
+              },
+              "to": {
+                "node": "spawn",
+                "pin": "ObjectClass"
+              }
+            },
+            {
+              "from": {
+                "node": "spawn",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "add",
+                "pin": "NewItem"
+              }
+            },
+            {
+              "from": {
+                "node": "held",
+                "pin": "HeldObjects"
+              },
+              "to": {
+                "node": "add",
+                "pin": "TargetArray"
+              }
+            },
+            {
+              "from": {
+                "node": "add",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "result",
+                "pin": "Index"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GetHeldObjects",
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "Objects",
+              "type": "object",
+              "class_path": "/Script/CoreUObject.Object",
+              "container": "array"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "held",
+              "kind": "variable_get",
+              "variable": "HeldObjects"
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "held",
+                "pin": "HeldObjects"
+              },
+              "to": {
+                "node": "result",
+                "pin": "Objects"
+              }
+            }
+          ]
+        },
+        {
+          "name": "ReleaseHeldObject",
+          "inputs": [
+            {
+              "name": "Object",
+              "type": "object",
+              "class_path": "/Script/CoreUObject.Object"
+            }
+          ],
+          "outputs": [
+            {
+              "name": "Released",
+              "type": "bool"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "held",
+              "kind": "variable_get",
+              "variable": "HeldObjects"
+            },
+            {
+              "id": "remove",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetArrayLibrary",
+              "function": "Array_RemoveItem"
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "remove",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "remove",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "held",
+                "pin": "HeldObjects"
+              },
+              "to": {
+                "node": "remove",
+                "pin": "TargetArray"
+              }
+            },
+            {
+              "from": {
+                "node": "entry",
+                "pin": "Object"
+              },
+              "to": {
+                "node": "remove",
+                "pin": "Item"
+              }
+            },
+            {
+              "from": {
+                "node": "remove",
+                "pin": "ReturnValue"
+              },
+              "to": {
+                "node": "result",
+                "pin": "Released"
+              }
+            }
+          ]
+        },
+        {
+          "name": "ClearHeldObjects",
+          "inputs": [],
+          "outputs": [],
+          "nodes": [
+            {
+              "id": "entry",
+              "kind": "function_entry"
+            },
+            {
+              "id": "held",
+              "kind": "variable_get",
+              "variable": "HeldObjects"
+            },
+            {
+              "id": "clear",
+              "kind": "call_function",
+              "class": "/Script/Engine.KismetArrayLibrary",
+              "function": "Array_Clear"
+            },
+            {
+              "id": "result",
+              "kind": "function_result"
+            }
+          ],
+          "connections": [
+            {
+              "from": {
+                "node": "entry",
+                "pin": "then"
+              },
+              "to": {
+                "node": "clear",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "clear",
+                "pin": "then"
+              },
+              "to": {
+                "node": "result",
+                "pin": "execute"
+              }
+            },
+            {
+              "from": {
+                "node": "held",
+                "pin": "HeldObjects"
+              },
+              "to": {
+                "node": "clear",
+                "pin": "TargetArray"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+

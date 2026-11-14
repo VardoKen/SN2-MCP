@@ -24,10 +24,11 @@ PRODUCTION_MARKER = b"SN2_MCP_DEVELOPMENT_PROBES=0"
 DEVELOPMENT_MARKER = b"SN2_MCP_DEVELOPMENT_PROBES=1"
 sys.path.insert(0, str(ROOT / "src"))
 from sn2_mcp.workspace import WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
+from sn2_mcp.content_projects import ContentProjectError, verify_content_package
 
-TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1", "build_native.ps1", "prepare_bridge_bundle.py")
+TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1", "build_native.ps1", "prepare_bridge_bundle.py", "build_development_services.py", "accept_development_services.py")
 FIXTURE_DIRS = ()
-SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "content_projects.py", "content_cooker.py", "content_deployment.py", "content_authoring.py")
+SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "content_projects.py", "content_cooker.py", "content_deployment.py", "content_authoring.py", "service_mod.py")
 HELPER_FILES = ()
 FIXTURE_SCRIPTS = {}
 DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock")
@@ -50,6 +51,11 @@ AUTHORING_FILES = tuple("development/authoring/SN2MCPAuthoring/" + name for name
                         "Source/SN2MCPAuthoring/Private/SN2MCPAuthoringCommandlet.cpp",
                         "Source/SN2MCPAuthoring/Private/SN2MCPAuthoringModule.cpp",
                         "Source/SN2MCPAuthoring/Public/SN2MCPAuthoringCommandlet.h"))
+SERVICE_ID = "SN2MCPDevelopmentServices"
+SERVICE_ENTRY_CLASS = "/SN2MCPDevelopmentServices/BP_DevelopmentServices.BP_DevelopmentServices_C"
+SERVICE_DIRECTORY = "services/" + SERVICE_ID
+SERVICE_SOURCE_FILES = tuple("development/services/" + SERVICE_ID + "/" + name for name in
+    (SERVICE_ID + ".uplugin", "mod.json", "README.md", "Authoring/service.json"))
 LEGACY_NATIVE_FILES = {"native/src/mod_entry.cpp", "native/tools/mod_control.cpp"}
 
 
@@ -122,7 +128,7 @@ def _production_binary(dll: bytes) -> None:
 def _enumerate(repository: Path) -> list[str]:
     paths = (list(DOCUMENTS) + ["tools/" + name for name in TOOLS] + list(BINARIES)
              + list(HELPER_FILES) + ["src/sn2_mcp/" + name for name in SOURCE_FILES]
-             + list(TEMPLATE_FILES) + list(AUTHORING_FILES))
+             + list(TEMPLATE_FILES) + list(AUTHORING_FILES) + list(SERVICE_SOURCE_FILES))
 
     def failure(error):
         raise BundleError("access_error", "Failed to enumerate all allowed bundle sources")
@@ -252,12 +258,110 @@ def _directory_set(root: Path) -> set[str]:
     return directories
 
 
-def _instructions(version: str, native_version: str | None = None) -> bytes:
+def _service_package(package_root: Path | None) -> tuple[dict, dict[str, bytes]]:
+    """Capture a verified cooked companion without claiming runtime acceptance."""
+    if package_root is None:
+        return {"state": "missing", "package_included": False,
+                "runtime_validation": "not_performed_by_packager"}, {}
+    package = _checked(package_root, directory=True)
+    verified = verify_content_package(package)
+    if (verified["plugin_id"] != SERVICE_ID
+            or verified["activation"].get("entry_class") != SERVICE_ENTRY_CLASS):
+        raise BundleError("service_identity_mismatch", "The selected package is not the bridge's development service mod")
+    paths = {entry["path"] for entry in verified["files"]} | {"manifest.json"}
+    raw_files = {SERVICE_DIRECTORY + "/" + path: _read(package / path, package) for path in sorted(paths)}
+    again = verify_content_package(package)
+    if again["manifest_sha256"] != verified["manifest_sha256"]:
+        raise BundleError("service_package_changed", "The service package changed during capture")
+    for entry in verified["files"]:
+        raw = raw_files[SERVICE_DIRECTORY + "/" + entry["path"]]
+        if len(raw) != entry["bytes"] or _sha(raw) != entry["sha256"]:
+            raise BundleError("service_package_changed", "A service package file changed during capture")
+    if _sha(raw_files[SERVICE_DIRECTORY + "/manifest.json"]) != verified["manifest_sha256"]:
+        raise BundleError("service_package_changed", "The service package manifest changed during capture")
+    return {"state": "included", "package_included": True, "package_verified": True,
+            "package_directory": SERVICE_DIRECTORY, "plugin_id": SERVICE_ID,
+            "entry_class": SERVICE_ENTRY_CLASS, "manifest_sha256": verified["manifest_sha256"],
+            "source_revision": verified["source_revision"],
+            "runtime_validation": "not_performed_by_packager"}, raw_files
+
+
+def _verify_service(root: Path, manifest: dict, expected: set[str]) -> dict:
+    declaration = manifest.get("service_mod")
+    packaged = {path for path in expected if path.startswith(SERVICE_DIRECTORY + "/")}
+    if declaration is None:
+        if packaged:
+            raise BundleError("invalid_manifest", "An included service package lacks its declaration")
+        return {"state": "missing", "package_included": False,
+                "runtime_validation": "not_performed_by_packager"}
+    if not isinstance(declaration, dict) or declaration.get("state") not in {"missing", "included"}:
+        raise BundleError("invalid_manifest", "The service package declaration is invalid")
+    if declaration["state"] == "missing":
+        if (packaged or declaration.get("package_included") is not False
+                or declaration.get("runtime_validation") != "not_performed_by_packager"):
+            raise BundleError("invalid_manifest", "A missing service declaration conflicts with bundle contents")
+        return declaration
+    if (declaration.get("package_included") is not True or declaration.get("package_verified") is not True
+            or declaration.get("package_directory") != SERVICE_DIRECTORY
+            or declaration.get("plugin_id") != SERVICE_ID or declaration.get("entry_class") != SERVICE_ENTRY_CLASS
+            or declaration.get("runtime_validation") != "not_performed_by_packager"):
+        raise BundleError("invalid_manifest", "The service package identity or verification declaration is invalid")
+    verified = verify_content_package(root / SERVICE_DIRECTORY)
+    required = {SERVICE_DIRECTORY + "/" + entry["path"] for entry in verified["files"]}
+    required.add(SERVICE_DIRECTORY + "/manifest.json")
+    if (packaged != required or verified["plugin_id"] != SERVICE_ID
+            or verified["activation"].get("entry_class") != SERVICE_ENTRY_CLASS
+            or declaration.get("manifest_sha256") != verified["manifest_sha256"]
+            or declaration.get("source_revision") != verified["source_revision"]):
+        raise BundleError("service_identity_mismatch", "The bundled service package differs from its declared contract")
+    return declaration
+
+
+def _service_source_correlation(service_mod: dict, raw_files: dict[str, bytes]) -> dict:
+    """Observe selected cooked-source correspondence; this does not gate runtime use."""
+    if service_mod.get("package_included") is not True:
+        return {"state": "package_missing", "matches_current_sources": None, "files": []}
+    packaged = json.loads(raw_files[SERVICE_DIRECTORY + "/source-manifest.json"].decode("utf-8-sig"))
+    inputs = {item["path"]: item for item in packaged["inputs"]}
+    prefix = "development/services/" + SERVICE_ID + "/"
+    files = []
+    for path in SERVICE_SOURCE_FILES:
+        relative = path[len(prefix):]
+        raw = raw_files[path]
+        selected = inputs.get(relative)
+        observed = {"path": relative, "current_source_sha256": _sha(raw), "current_source_bytes": len(raw),
+                    "packaged_source_sha256": selected.get("sha256") if selected else None,
+                    "packaged_source_bytes": selected.get("bytes") if selected else None}
+        observed["matches"] = (observed["current_source_sha256"], observed["current_source_bytes"]) == (
+            observed["packaged_source_sha256"], observed["packaged_source_bytes"])
+        files.append(observed)
+    matches = all(item["matches"] for item in files)
+    return {"state": "matched" if matches else "different_revision", "matches_current_sources": matches,
+            "method": "packaged_cook_source_inventory_vs_bundled_service_build_sources",
+            "startup_gate": False, "files": files}
+
+
+def _instructions(version: str, native_version: str | None = None, *, service_included: bool = False) -> bytes:
+    service_status = (f"The verified cooked service package is included at `{SERVICE_DIRECTORY}`. "
+                      "Use its manifest identity for installation and activation; packaging has not tested its runtime functions."
+                      if service_included else
+                      "The cooked development service package is missing. This folder is an incomplete development artifact, "
+                      "not the complete bridge and in-game service delivery.")
     return f"""# Subnautica 2 MCP development bundle {version}
 
 Python version: {version}. Native version: {native_version or version}.
 This folder is not an installer or a public release. Hash verification does not
 establish Subnautica runtime acceptance, load the DLL or launch the game.
+
+{service_status}
+
+The companion service is part of the bridge's runtime delivery. Custom Engine,
+Modkit, FMOD and the Editor helper are build-time tools for producing that
+component. Its in-game calls do not launch an external Editor. Use
+`sn2_service_status`, `sn2_service_enable`, `sn2_service_call` and
+`sn2_service_disable` with the installed companion. Inspect actual function
+contracts before invoking. Creating a new cooked Content/Blueprint mod inside
+Shipping remains a separate capability; wrappers do not establish a compiler.
 
 1. Keep the installed game separate. Verify from this folder with
    `python -B tools/prepare_bridge_bundle.py --verify-root .`.
@@ -286,7 +390,8 @@ establish Subnautica runtime acceptance, load the DLL or launch the game.
    compiler reports, source correlation, process cleanup and artifact hashes.
    Read `sn2_build_status` and `sn2_compile_diagnostics` for recorded results.
    `tools/build_native.ps1 -Json` uses the same native build workflow.
-7. `sn2_create_mod_project` prepares an editable content-only Unreal plugin in
+7. The retained external build-time workflow can build the companion service
+   and editable content projects. `sn2_create_mod_project` prepares an editable content-only Unreal plugin in
    the configured workspace. Inspect `sn2_authoring_recipe`, then use
    `sn2_author_mod` with a workspace JSON specification to create, compile and
    save real assets and executable Blueprint graphs. Read the complete
@@ -297,7 +402,8 @@ establish Subnautica runtime acceptance, load the DLL or launch the game.
    alone does not author a Blueprint or establish a working mod.
    Inspect `sn2_content_environment` and `sn2_cook_recipe`, then run
    `sn2_cook_mod` and read `sn2_cook_status`/`sn2_cook_report`. The compatible
-   engine and Modkit are separate dependencies, not included in this bundle.
+   engine and Modkit are build-time dependencies, not requirements for invoking
+   the cooked service and are not included in this bundle.
    Configure `--modkit-root` and `--engine-root`; defaults are
    `D:/SN2Modding/Modkit` and `D:/SN2Modding/Engine`.
 8. Package a successful source-correlated cook using `sn2_package_artifact`
@@ -327,8 +433,9 @@ preserves bytes but is separate from compiled artifact packaging.
 This bundle includes Python services, declared dependency locks, lifecycle/build
 scripts, the production bridge and loader, native CMake sources/tests,
 headers, the editable content-plugin template and Editor authoring helper
-sources. The custom engine, Modkit, FMOD and compiled Editor helper modules are
-external environment dependencies, not bundle files. Prebuilt runtime use does
+sources and the companion's substantive build specification. The custom engine,
+Modkit, FMOD and compiled Editor helper modules are external build-time
+dependencies, not bundle files. Prebuilt runtime use does
 not require a compiler; native bridge and Editor helper source builds do.
 Native tests retained by CMake include
 donor algorithms and do not claim Gothic game services as Subnautica tools.
@@ -341,7 +448,8 @@ results so strict manifest verification remains meaningful.
 """.encode("utf-8")
 
 
-def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_version: str | None = None) -> dict:
+def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_version: str | None = None,
+                   service_package: Path | None = None) -> dict:
     repository = _checked(repository_root, directory=True)
     target = _target(destination, repository)
     version = _version(repository)
@@ -355,7 +463,10 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
         raw_files[relative] = raw
     compatibility = _compatibility(repository, native_version, *(raw_files[path] for path in BINARIES))
     compatibility_source = _sha(_read(repository / "native/src/game_access.cpp", repository))
-    raw_files["README.md"] = _instructions(version, native_version)
+    service_mod, service_files = _service_package(service_package)
+    raw_files.update(service_files)
+    service_source_correlation = _service_source_correlation(service_mod, raw_files)
+    raw_files["README.md"] = _instructions(version, native_version, service_included=service_mod["package_included"])
     raw_files["START.md"] = raw_files["README.md"]
     # Revalidate the source before writing; reject subsequent changes.
     if selected != _enumerate(repository) or any(_sha(_read(repository / path, repository)) != _sha(raw_files[path]) for path in selected if path != "README.md"):
@@ -367,10 +478,15 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
                 "compatibility": compatibility, "files": files,
                 "file_count": len(files), "total_bytes": sum(item["bytes"] for item in files),
                 "includes": ["python_sources", "locked_dependencies", "runtime_tools", "prebuilt_native_bridge",
-                             "native_build_sources_and_tests", "content_plugin_template", "editor_authoring_sources", "instructions"],
+                             "native_build_sources_and_tests", "content_plugin_template", "editor_authoring_sources",
+                             "development_service_sources", "instructions"],
                 "excludes": ["virtual_environment", "game_files", "game_caches", "user_mods", "saved_games", "logs", "local_mcp_settings",
                              "custom_engine", "modkit", "compiled_editor_helper_modules"],
-                "runtime_validation": "not_performed_by_packager", "installed": False}
+                "runtime_validation": "not_performed_by_packager", "installed": False,
+                "service_mod": service_mod, "service_source_correlation": service_source_correlation,
+                "complete_service_delivery": "not_established_by_packager"}
+    if service_mod["package_included"]:
+        manifest["includes"].append("cooked_development_service_package")
     manifest["compatibility_source_sha256"] = compatibility_source
     raw_files["manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
     stage = None
@@ -424,7 +540,9 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
                     "total_bytes": verified["total_bytes"], "manifest_sha256": _sha(raw_files["manifest.json"]),
                     "binding_method": compatibility["binding_method"],
                     "verified_files": True, "installed": False, "game_launched": False,
-                    "runtime_validation": "not_performed_by_packager"}
+                    "runtime_validation": "not_performed_by_packager", "service_mod": verified["service_mod"],
+                    "service_source_correlation": verified["service_source_correlation"],
+                    "complete_service_delivery": "not_established_by_packager"}
         finally:
             if stage is not None:
                 _cleanup(stage, target.parent, own_files, own_directories)
@@ -471,6 +589,13 @@ def verify_bundle(bundle_root: Path) -> dict:
     required |= {f"tests/fixtures/{name}/GothicMod.json" for name in FIXTURE_DIRS}
     required |= {f"tests/fixtures/{name}/Script/{script}" for name, script in FIXTURE_SCRIPTS.items()}
     required |= set(SDK_FILES) | set(TEMPLATE_FILES) | set(AUTHORING_FILES)
+    if manifest.get("service_mod") is not None:
+        required |= set(SERVICE_SOURCE_FILES)
+    else:
+        # Older development bundles predate companion tooling and sources.
+        required.discard("tools/build_development_services.py")
+        required.discard("tools/accept_development_services.py")
+        required.discard("src/sn2_mcp/service_mod.py")
     if not required.issubset(expected):
         raise BundleError("incomplete_bundle", "The bundle is missing a required runtime or development file")
     if not _required_native_inputs(root, expected).issubset(expected):
@@ -504,8 +629,21 @@ def verify_bundle(bundle_root: Path) -> dict:
         offset = struct.unpack_from("<I", content, 60)[0]
         if offset < 64 or offset + 6 > len(content) or content[offset:offset + 4] != b"PE\0\0" or struct.unpack_from("<H", content, offset + 4)[0] != 0x8664:
             raise BundleError("invalid_binary", "The bundle binary is not a PE x64 binary")
+    service_mod = _verify_service(root, manifest, expected)
+    if "service_source_correlation" in manifest:
+        service_raw = {path: _read(root / path, root) for path in SERVICE_SOURCE_FILES}
+        if service_mod.get("package_included"):
+            service_raw[SERVICE_DIRECTORY + "/source-manifest.json"] = _read(
+                root / SERVICE_DIRECTORY / "source-manifest.json", root)
+        correlation = _service_source_correlation(service_mod, service_raw)
+        if manifest["service_source_correlation"] != correlation:
+            raise BundleError("service_source_correlation_mismatch", "The service source-correlation observation differs from bundled inputs")
+    else:
+        correlation = {"state": "not_recorded", "matches_current_sources": None, "files": []}
     return {"version": manifest.get("version"), "native_version": native_version, "file_count": len(files), "total_bytes": total,
-            "verified_files": True, "runtime_validation": "not_performed_by_packager"}
+            "verified_files": True, "runtime_validation": "not_performed_by_packager", "service_mod": service_mod,
+            "service_source_correlation": correlation,
+            "complete_service_delivery": "not_established_by_packager"}
 
 
 def main() -> int:
@@ -514,14 +652,18 @@ def main() -> int:
     group.add_argument("--destination", type=Path, help="A new directory within artifacts in the current Git workspace")
     group.add_argument("--verify-root", type=Path, help="Verify all unpacked bundle hashes without launching the game")
     parser.add_argument("--native-version", help="Explicit DLL version when it differs from the Python package version")
+    parser.add_argument("--service-package", type=Path, help="Verified cooked SN2MCPDevelopmentServices package to include")
     args = parser.parse_args()
     try:
         if args.native_version is not None and args.destination is None:
             parser.error("--native-version requires --destination; verification reads the manifest version")
-        result = prepare_bundle(args.destination, native_version=args.native_version) if args.destination else verify_bundle(args.verify_root)
+        if args.service_package is not None and args.destination is None:
+            parser.error("--service-package requires --destination; verification reads the packaged service")
+        result = prepare_bundle(args.destination, native_version=args.native_version,
+                                service_package=args.service_package) if args.destination else verify_bundle(args.verify_root)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
-    except (BundleError, WorkspaceError, OSError, UnicodeError, ValueError) as error:
+    except (BundleError, ContentProjectError, WorkspaceError, OSError, UnicodeError, ValueError) as error:
         print(json.dumps({"code": getattr(error, "code", "bundle_failed"), "message": (f"The file operation failed (errno={error.errno}, winerror={getattr(error, 'winerror', None)})" if isinstance(error, OSError) else str(error))}, ensure_ascii=False), file=sys.stderr)
         return 2
 

@@ -135,6 +135,9 @@ private:
     std::string handle_for(void* object, int index);
     Handle validate_object(void* object) const;
     void validate_class(void* object_class) const;
+    void validate_development_service_call(void* object, void* function_owner,
+        const std::string& function_name, std::uintptr_t function, const unsigned char* parameters) const;
+    nlohmann::json function_execution_metadata(std::uintptr_t function) const;
     bool is_compatible_object(void* object, void* expected_class) const;
     bool is_compatible_class(void* represented_class, void* property_class, void* meta_class) const;
     nlohmann::json object_descriptor(void* object, void* expected_class);

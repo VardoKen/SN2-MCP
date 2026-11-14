@@ -34,6 +34,7 @@ from .content_projects import ContentProjects, ContentProjectError
 from .content_cooker import ContentCooker, ContentCookError
 from .content_deployment import ContentDeployment
 from .content_authoring import ContentAuthoring, ContentAuthoringError
+from .service_mod import ServiceMod, ServiceModError
 
 
 def _tool_failure(error: SnapshotError | DevelopmentError | WorkspaceError | ExportError) -> ToolError:
@@ -199,7 +200,9 @@ def create_server(workspace_root: Path, native_port: int = 27223,
                       "Source tools operate on the configured workspace without assuming game source or a mod format. "
                       "Begin with sn2_status and sn2_capabilities. "
                       "Inspect sn2_target_processes before selecting an exact target. DLL loading, transport, "
-                      "discovery and observed Tick are distinct states. Read current object/function metadata "
+                      "discovery and observed Tick are distinct states. "
+                      "Use sn2_service_status and sn2_service_call for the cooked in-game development service. "
+                      "Read current object/function metadata "
                       "before an explicit sn2_invoke. Handles and observations belong to a native session; "
                       "refresh after reconnect. Investigate uncertain effects; never automatically replay commands."))
     read_only = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
@@ -444,6 +447,39 @@ def create_server(workspace_root: Path, native_port: int = 27223,
                                   target_process: dict[str, Any] | None = None) -> dict[str, Any]:
         """Disable the recorded actor through validated destruction; package/class unload and authored cleanup are separate facts."""
         return blueprint_request("blueprint_mod_disable", {"mod_id": mod_id}, timeout_seconds, target_process)
+
+    def service_mod_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(ServiceMod(blueprint_request), operation)(*args, **kwargs)
+        except ServiceModError as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                                        "details": error.details}, ensure_ascii=False)) from None
+
+    @server.tool(annotations=read_only)
+    def sn2_service_status(timeout_seconds: float | None = None,
+                           target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Inspect the live cooked development-service actor and all reflected own functions; does not build or launch Editor."""
+        return service_mod_call("status", timeout_seconds, target_process)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_service_enable(package_revision: str, source_revision: str | None = None,
+                           timeout_seconds: float | None = None,
+                           target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Load and activate the cooked in-game development service; revision labels do not verify package bytes or install files."""
+        return service_mod_call("enable", package_revision, source_revision, timeout_seconds, target_process)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_service_disable(timeout_seconds: float | None = None,
+                            target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Destroy the retained development-service actor through its natural lifecycle; loaded packages remain resident."""
+        return service_mod_call("disable", timeout_seconds, target_process)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
+    def sn2_service_call(function: str, arguments: dict[str, Any] | None = None,
+                         timeout_seconds: float | None = None,
+                         target_process: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call an exact reflected own function of the live in-game service; revalidate its signature and never retry unknown effects."""
+        return service_mod_call("call", function, arguments, timeout_seconds, target_process)
 
     def package_runtime_call(operation: str, target_process: dict[str, Any], package_path: str,
                              expected_manifest_sha256: str | None, timeout_seconds: float,

@@ -8,6 +8,8 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
+from sn2_mcp.content_projects import ContentProjects, source_manifest_sha256
+from sn2_mcp.workspace import SourceWorkspace
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "prepare_bridge_bundle.py"
 SPEC = importlib.util.spec_from_file_location("prepare_bridge_bundle", TOOL)
@@ -42,7 +44,7 @@ class BridgeBundleTests(unittest.TestCase):
             self.write(name, b"# isolated development helper\n")
         for name in bundle.DOCUMENTS:
             self.write(name, b"# isolated document\n")
-        for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES, *bundle.AUTHORING_FILES):
+        for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES, *bundle.AUTHORING_FILES, *bundle.SERVICE_SOURCE_FILES):
             self.write(name, b"// isolated development input\n")
         self.write("pyproject.toml", f'[project]\nversion = "{self.version}"\ndependencies=["mcp==2.3.0"]\n'.encode())
         self.write("uv.lock", f'[[package]]\nname="sn2-mcp"\nversion="{self.version.replace("-dev.", ".dev")}"\nsource={{editable="."}}\n[[package]]\nname="mcp"\nversion="2.3.0"\n'.encode())
@@ -61,6 +63,135 @@ class BridgeBundleTests(unittest.TestCase):
 
     def prepare(self):
         return bundle.prepare_bundle(self.target, repository_root=self.repository)
+
+    def service_package(self, plugin=None):
+        """Create structural cooker provenance fixtures, not runtime acceptance."""
+        plugin = plugin or bundle.SERVICE_ID
+        workspace = self.repository / "fixture-workspace"
+        workspace.mkdir()
+        templates = self.repository / "development/mod_templates/content_plugin"
+        (templates / "Plugin.uplugin").write_text(json.dumps({"FileVersion": 3, "Version": 1,
+            "VersionName": "1.0.0", "FriendlyName": "Fixture", "CanContainContent": True,
+            "EnabledByDefault": True}), encoding="utf-8")
+        (templates / "mod.json").write_text(json.dumps({"schema": 1, "kind": "sn2_content_mod_project"}), encoding="utf-8")
+        service = ContentProjects(SourceWorkspace(workspace), self.repository)
+        project_path = "projects/" + plugin
+        entry_class = "/" + plugin + "/BP_DevelopmentServices.BP_DevelopmentServices_C"
+        service.create(project_path, plugin, entry_class=entry_class)
+        project = workspace / project_path
+        (project / "Content/BP_DevelopmentServices.uasset").write_bytes(b"structural asset fixture, not compiled Blueprint")
+        validated = service.validate(project_path)
+        inputs = [{**item, "source_path": str(project / item["path"]), "origin_path": str(project / item["path"])}
+                  for item in validated["files"]]
+        dependencies = [{"path": "modkit/Subnautica2.uproject", "sha256": bundle._sha(b"fixture"),
+                         "bytes": 7, "role": "modkit_project"}]
+        revision = source_manifest_sha256(inputs)
+        dependency_revision = source_manifest_sha256(dependencies)
+        output = workspace / "cooked" / plugin
+        containers = output / "Content/Paks/Windows"
+        containers.mkdir(parents=True)
+        (output / (plugin + ".uplugin")).write_bytes((project / (plugin + ".uplugin")).read_bytes())
+        for suffix in ("pak", "utoc", "ucas"):
+            (containers / (plugin + "-Windows." + suffix)).write_bytes(("structural cooker fixture " + suffix).encode())
+        outputs = [{"path": str(path), "relative_path": path.relative_to(output).as_posix(),
+                    "sha256": bundle._sha(path.read_bytes()), "bytes": path.stat().st_size,
+                    "role": "plugin_descriptor" if path.suffix == ".uplugin" else path.suffix[1:],
+                    "authoritative_cook_output": True}
+                   for path in sorted(output.rglob("*")) if path.is_file()]
+        receipt = {"kind": "sn2_content_cook_receipt", "state": "succeeded", "plugin_id": plugin,
+                   "project_path": project_path, "exact_source_compiled": True,
+                   "workspace_current_revision_compiled": True, "source_manifest_sha256": revision,
+                   "inputs": inputs, "shared_dependencies": dependencies,
+                   "dependency_manifest_sha256": dependency_revision,
+                   "staged_source_root": str(project), "output_root": str(output), "outputs": outputs,
+                   "build_identity": {"build_id": "fixture-build", "source_manifest_sha256": revision,
+                       "dependency_manifest_sha256": dependency_revision, "engine_version": "5.6.1",
+                       "modkit_head": "fixture", "target_platform": "Win64", "configuration": "Shipping",
+                       "base_release": "SN2Base"}}
+        receipt_path = workspace / "cook-receipt.json"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        return Path(service.package(str(receipt_path), "packages/" + plugin)["package_root"])
+
+    def test_missing_service_is_explicit_and_does_not_establish_complete_delivery(self):
+        result = self.prepare()
+        self.assertEqual(result["service_mod"]["state"], "missing")
+        self.assertFalse(result["service_mod"]["package_included"])
+        self.assertEqual(result["complete_service_delivery"], "not_established_by_packager")
+        self.assertIn("incomplete development artifact", (self.target / "START.md").read_text(encoding="utf-8"))
+
+    def test_pre_service_bundle_verifies_without_later_companion_tools_and_sources(self):
+        self.prepare()
+        manifest_path = self.target / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        later_files = set(bundle.SERVICE_SOURCE_FILES) | {
+            "tools/build_development_services.py", "tools/accept_development_services.py",
+            "src/sn2_mcp/service_mod.py"}
+        for relative in later_files:
+            file = self.target / relative
+            file.unlink()
+            parent = file.parent
+            while parent != self.target and not any(parent.iterdir()):
+                parent.rmdir()
+                parent = parent.parent
+        manifest["files"] = [entry for entry in manifest["files"] if entry["path"] not in later_files]
+        manifest["file_count"] = len(manifest["files"])
+        manifest["total_bytes"] = sum(entry["bytes"] for entry in manifest["files"])
+        manifest.pop("service_mod")
+        manifest.pop("service_source_correlation")
+        manifest.pop("complete_service_delivery")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        verified = bundle.verify_bundle(self.target)
+        self.assertTrue(verified["verified_files"])
+        self.assertEqual(verified["service_mod"]["state"], "missing")
+        self.assertEqual(verified["service_source_correlation"]["state"], "not_recorded")
+
+    def test_verified_cooked_companion_is_included_and_nested_integrity_rechecked(self):
+        package = self.service_package()
+        result = bundle.prepare_bundle(self.target, repository_root=self.repository, service_package=package)
+        self.assertEqual(result["service_mod"]["state"], "included")
+        self.assertTrue(result["service_mod"]["package_verified"])
+        self.assertEqual(result["service_mod"]["entry_class"], bundle.SERVICE_ENTRY_CLASS)
+        self.assertEqual(result["service_mod"]["runtime_validation"], "not_performed_by_packager")
+        self.assertEqual(result["service_source_correlation"]["state"], "different_revision")
+        self.assertFalse(result["service_source_correlation"]["matches_current_sources"])
+        self.assertFalse(result["service_source_correlation"]["startup_gate"])
+        nested = self.target / bundle.SERVICE_DIRECTORY
+        self.assertTrue((nested / "manifest.json").is_file())
+        self.assertTrue(bundle.verify_bundle(self.target)["service_mod"]["package_verified"])
+        manifest_path = self.target / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["service_mod"]["source_revision"] = "a" * 64
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(bundle.BundleError) as captured:
+            bundle.verify_bundle(self.target)
+        self.assertEqual(captured.exception.code, "service_identity_mismatch")
+
+    def test_other_content_package_cannot_be_claimed_as_companion(self):
+        package = self.service_package("OtherContentFixture")
+        with self.assertRaises(bundle.BundleError) as captured:
+            bundle.prepare_bundle(self.target, repository_root=self.repository, service_package=package)
+        self.assertEqual(captured.exception.code, "service_identity_mismatch")
+        self.assertFalse(self.target.exists())
+
+    def test_matching_service_sources_are_observed_without_a_version_gate(self):
+        package = self.service_package()
+        packaged_sources = json.loads((package / "source-manifest.json").read_text(encoding="utf-8"))
+        captured = Path(json.loads((package / "cook-receipt.json").read_text(encoding="utf-8"))["staged_source_root"])
+        prefix = "development/services/" + bundle.SERVICE_ID + "/"
+        current_files = {path: (captured / path[len(prefix):]).read_bytes() for path in bundle.SERVICE_SOURCE_FILES
+                         if path[len(prefix):] in {item["path"] for item in packaged_sources["inputs"]}}
+        # This fixture has no authoring spec; supply its recorded source entry
+        # to check complete correspondence without emulating a Blueprint compiler.
+        spec_path = next(path for path in bundle.SERVICE_SOURCE_FILES if path.endswith("Authoring/service.json"))
+        spec_raw = b"fixture build specification"
+        current_files[spec_path] = spec_raw
+        packaged_sources["inputs"].append({"path": "Authoring/service.json", "sha256": bundle._sha(spec_raw),
+                                            "bytes": len(spec_raw), "role": "authoring_source"})
+        current_files[bundle.SERVICE_DIRECTORY + "/source-manifest.json"] = json.dumps(packaged_sources).encode()
+        observation = bundle._service_source_correlation({"package_included": True}, current_files)
+        self.assertTrue(observation["matches_current_sources"])
+        self.assertEqual(observation["state"], "matched")
+        self.assertFalse(observation["startup_gate"])
 
     def test_bundle_preserves_layout_and_excludes_local_user_data(self):
         self.write(".venv/secret.txt", b"user environment")

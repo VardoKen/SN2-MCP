@@ -42,6 +42,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <optional>
 #include <sstream>
 #include <set>
@@ -71,6 +72,8 @@ std::chrono::duration<double,std::milli> request_wait(const json& envelope) {
 }
 constexpr uint64_t kReferenceParm=vector_parameter_direction::reference_parm;
 constexpr uint64_t kConstParm=vector_parameter_direction::const_parm;
+// UE 5.6 Object.h IsValid rejects RF_MirroredGarbage before BeginDestroy.
+constexpr uint32_t kInvalidObjectFlags=0x40018000;
 bool supported_scalar_output_type(const std::string& type) {
     return type=="BoolProperty" || type=="IntProperty" || type=="Int64Property"
         || type=="UInt32Property" || type=="UInt64Property" || type=="FloatProperty" || type=="DoubleProperty";
@@ -511,7 +514,7 @@ void GameAccess::validate_runtime_layout() {
         const auto pointer=reinterpret_cast<std::uintptr_t>(object);
         if(read<std::int32_t>(pointer+0xc)!=index)
             throw HandlerError("registry_layout_mismatch","A live UObject index disagrees with its registry slot");
-        if(read<std::uint32_t>(pointer+8)&0x18000){++destroying;continue;}
+        if(read<std::uint32_t>(pointer+8)&kInvalidObjectFlags){++destroying;continue;}
         ++live;
         // Only known metadata is followed through its outer chain here. All
         // returned objects are validated again by the existing handle guards.
@@ -660,7 +663,7 @@ json GameAccess::status() const {
         target["creation_filetime"]=std::to_string(sn2::loader::creation_filetime(GetCurrentProcess()));
     } catch(const std::exception& error) {target["error"]=error.what();}
     const bool reflection=reflection_validated_.load();
-    return {{"version","0.5.1"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+    return {{"version","0.6.3"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
             {"tick_hook_current",tick_hook},
             {"process_id",GetCurrentProcessId()},{"process_creation_filetime",target.at("creation_filetime")},{"target_process",target},
             {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},
@@ -1052,13 +1055,15 @@ GameAccess::Handle GameAccess::validate_object(void* object) const {
     const auto index=read<int32_t>(ptr+0xc);
     const auto item=slot_identity(index);
     if(index<0 || item.object!=object)throw HandlerError("stale_handle","The object does not match its registry slot");
-    if(read<uint32_t>(ptr+8)&0x18000)throw HandlerError("object_destroying","The object is being destroyed");
+    const auto object_flags=read<uint32_t>(ptr+8);
+    if(object_flags&kInvalidObjectFlags)throw HandlerError("object_destroying","The object is garbage or being destroyed",
+        {{"object_flags",object_flags},{"invalid_object_flags",kInvalidObjectFlags}});
     const auto object_class=read<uintptr_t>(ptr+0x10);
     if(!object_class)throw HandlerError("invalid_object_class","The object has no class");
     const auto class_index=read<int32_t>(object_class+0xc);
     const auto class_item=slot_identity(class_index);
     if(class_index<0 || class_item.object!=reinterpret_cast<void*>(object_class)
-       || (read<uint32_t>(object_class+8)&0x18000))
+       || (read<uint32_t>(object_class+8)&kInvalidObjectFlags))
         throw HandlerError("invalid_object_class","The object class does not match a live registry slot");
     const auto object_fname=read<uint64_t>(ptr+0x18);
     const auto class_fname=read<uint64_t>(object_class+0x18);
@@ -1070,8 +1075,10 @@ GameAccess::Handle GameAccess::validate_object(void* object) const {
        || read<uint64_t>(ptr+0x18)!=object_fname || read<int32_t>(object_class+0xc)!=class_index
        || read<uint64_t>(object_class+0x18)!=class_fname)
         throw HandlerError("stale_handle","Object or class identity changed during the read; obtain a new handle");
-    if((read<uint32_t>(ptr+8)|read<uint32_t>(object_class+8))&0x18000)
-        throw HandlerError("object_destroying","The object or its class is being destroyed");
+    const auto final_flags=read<uint32_t>(ptr+8)|read<uint32_t>(object_class+8);
+    if(final_flags&kInvalidObjectFlags)
+        throw HandlerError("object_destroying","The object or its class is garbage or being destroyed",
+            {{"object_flags",final_flags},{"invalid_object_flags",kInvalidObjectFlags}});
     return {object,reinterpret_cast<void*>(object_class),index,object_fname,item.serial,class_index,class_fname,class_item.serial};
 }
 void GameAccess::validate_class(void* object_class) const {
@@ -1087,6 +1094,160 @@ void GameAccess::validate_class(void* object_class) const {
         metaclass=read<uintptr_t>(metaclass+0x40);
     }
     throw HandlerError("invalid_object_class","The PropertyClass object is not a confirmed UClass");
+}
+void GameAccess::validate_development_service_call(void* object,void* function_owner,
+        const std::string& function_name,uintptr_t function,const unsigned char* parameters) const {
+    if(object_path(function_owner)!="/SN2MCPDevelopmentServices/BP_DevelopmentServices.BP_DevelopmentServices_C")return;
+    if(function_name!="CreateHeldObject" && function_name!="ReadWidgetText"
+       && function_name!="WriteWidgetText" && function_name!="SetObjectTextProperty")return;
+    const auto parameter_bytes=read<uint16_t>(function+0xb6);
+    auto argument=[&](const std::string& key,const std::string& expected_type) {
+        std::set<uintptr_t> fields;
+        for(auto field=read<uintptr_t>(function+0x50);field;field=read<uintptr_t>(field+0x18)) {
+            if(!fields.insert(field).second)
+                throw HandlerError("service_signature_changed","The service parameter chain contains a cycle");
+            if(!(read<uint64_t>(field+0x38)&0x80) || name(read<uint64_t>(field+0x20))!=key)continue;
+            const auto offset=read<int32_t>(field+0x44),size=read<int32_t>(field+0x34);
+            const auto flags=read<uint64_t>(field+0x38);
+            const bool const_name_reference=expected_type=="NameProperty" && (flags&kConstParm)
+                && (flags&(0x100|kReferenceParm)) && !(flags&0x400);
+            if(field_type(field,[this](auto value){return name(value);})!=expected_type || size!=8
+               || read<int32_t>(field+0x30)!=1 || offset<0 || offset>parameter_bytes-8
+               || ((flags&(0x100|0x400|kReferenceParm)) && !const_name_reference))
+                throw HandlerError("service_signature_changed","The service argument no longer has its expected value layout");
+            return read<uintptr_t>(reinterpret_cast<uintptr_t>(parameters)+static_cast<uintptr_t>(offset));
+        }
+        throw HandlerError("service_signature_changed","The expected service argument was not found: "+key);
+    };
+    if(function_name=="ReadWidgetText" || function_name=="WriteWidgetText") {
+        auto widget=reinterpret_cast<void*>(argument("Widget","ObjectProperty"));
+        if(!widget)throw HandlerError("service_object_required","A live TextBlock is required for the text operation");
+        validate_object(widget);
+        if(!class_is(widget,"/Script/UMG.TextBlock"))
+            throw HandlerError("incompatible_object_argument","The text operation requires a TextBlock");
+        return;
+    }
+    if(function_name=="SetObjectTextProperty") {
+        auto target=reinterpret_cast<void*>(argument("Target","ObjectProperty"));
+        if(!target)throw HandlerError("service_object_required","A live object is required for the text property operation");
+        validate_object(target);
+        const auto requested=argument("PropertyName","NameProperty");
+        std::set<uintptr_t> classes,fields;
+        for(auto klass=read<uintptr_t>(reinterpret_cast<uintptr_t>(target)+0x10);klass;klass=read<uintptr_t>(klass+0x40)) {
+            if(!classes.insert(klass).second)
+                throw HandlerError("property_scan_cycle","The text property owner chain contains a cycle");
+            validate_class(reinterpret_cast<void*>(klass));
+            for(auto field=read<uintptr_t>(klass+0x50);field;field=read<uintptr_t>(field+0x18)) {
+                if(!fields.insert(field).second)
+                    throw HandlerError("property_scan_cycle","The text property field chain contains a cycle");
+                if(read<uint64_t>(field+0x20)!=requested)continue;
+                const auto offset=read<int32_t>(field+0x44),size=read<int32_t>(field+0x34),extent=read<int32_t>(klass+0x58);
+                if(field_type(field,[this](auto value){return name(value);})!="TextProperty")
+                    throw HandlerError("service_text_property_required","The selected property is not an FText property");
+                if(offset<0 || size<=0 || size>extent || offset>extent-size || read<int32_t>(field+0x30)!=1)
+                    throw HandlerError("unsupported_property_layout","The selected FText property has an invalid extent or array dimension");
+                validate_object(target);return;
+            }
+        }
+        throw HandlerError("property_not_found","The selected FText property was not found");
+    }
+    auto represented=reinterpret_cast<void*>(argument("ObjectClass","ClassProperty"));
+    if(!represented)throw HandlerError("service_class_required","A concrete UObject class is required for prototype creation");
+    validate_class(represented);
+    // Exact Shipping code corroborates UClass.ClassFlags +0xd4 and ClassWithin
+    // +0xe0: SpawnObject 0x3fecf80 -> StaticConstructObject_Internal 0x16e7af0;
+    // CreateDefaultSubobject 0x16d86b0 tests CLASS_Abstract (ObjectMacros.h).
+    // These are operation-specific ABI checks, never a build-version gate.
+    auto opcode=[&](uintptr_t rva,std::initializer_list<unsigned char> expected) {
+        std::vector<unsigned char> actual(expected.size());
+        if(!game_memory::copy(actual.data(),reinterpret_cast<const void*>(base_+rva),actual.size())
+           || !std::equal(actual.begin(),actual.end(),expected.begin()))
+            throw HandlerError("construction_layout_unconfirmed","The current game code does not confirm the UObject construction layout",
+                {{"checkpoint_rva",rva},{"executed",false},{"may_have_executed",false}});
+    };
+    opcode(0x16e7b41,{0x41,0xf7,0x87,0xd4,0,0,0,0x80,0,0,0x10});
+    opcode(0x16d87d3,{0xf6,0x87,0xd4,0,0,0,0x01});
+    opcode(0x3fed03b,{0x48,0x39,0xb8,0xe0,0,0,0});
+    opcode(0x3fed083,{0x48,0x8b,0x9b,0xe0,0,0,0});
+    const auto class_pointer=reinterpret_cast<uintptr_t>(represented);
+    const auto class_identity=serial_identity(validate_object(represented));
+    const auto flags=read<uint32_t>(class_pointer+0xd4);
+    const auto within=read<uintptr_t>(class_pointer+0xe0);
+    if(flags&0x1)throw HandlerError("abstract_class","An abstract class cannot be constructed as a UObject prototype");
+    if(flags&0x02000000)throw HandlerError("deprecated_class","A deprecated class cannot be constructed as a UObject prototype");
+    if(flags&0x80000000)throw HandlerError("class_replaced","The selected class has been superseded by a newer class");
+    std::set<uintptr_t> classes;
+    for(auto klass=class_pointer;klass;klass=read<uintptr_t>(klass+0x40)) {
+        if(!classes.insert(klass).second)throw HandlerError("invalid_object_class","The represented class hierarchy contains a cycle");
+        validate_class(reinterpret_cast<void*>(klass));
+        const auto path=object_path(reinterpret_cast<void*>(klass));
+        if(path=="/Script/Engine.Actor" || path=="/Script/Engine.ActorComponent")
+            throw HandlerError("prototype_lifecycle_required","Actors and ActorComponents require their own spawn or component lifecycle");
+    }
+    if(within) {
+        validate_class(reinterpret_cast<void*>(within));
+        if(!is_compatible_object(object,reinterpret_cast<void*>(within)))
+            throw HandlerError("incompatible_object_outer","The service Actor does not satisfy the class's required outer type");
+    }
+    if(flags!=read<uint32_t>(class_pointer+0xd4) || within!=read<uintptr_t>(class_pointer+0xe0)
+       || !same_serial_identity(class_identity,serial_identity(validate_object(represented))))
+        throw HandlerError("class_changed","The selected construction class changed during validation");
+}
+json GameAccess::function_execution_metadata(uintptr_t function) const {
+    json result={{"state","checking"},{"function_address",function},
+        {"method","exact_code_checkpoints_and_live_function_memory"},
+        {"limits",{"This is a synchronous memory sample, not proof that bytecode executed"}}};
+    try {
+        const auto identity=serial_identity(validate_object(reinterpret_cast<void*>(function)));
+        // Class.h UStruct::Script and Stack.h FFrame::Code; exact Shipping
+        // ProcessEvent tests Script.Num +0x68, FFrame reads Script.Data +0x60.
+        const auto opcode=[&](uintptr_t rva,std::initializer_list<unsigned char> expected) {
+            std::vector<unsigned char> bytes(expected.size());
+            return game_memory::copy(bytes.data(),reinterpret_cast<const void*>(base_+rva),bytes.size())
+                && std::equal(bytes.begin(),bytes.end(),expected.begin());
+        };
+        if(!opcode(0x16b91a9,{0x39,0x72,0x68})
+           || !opcode(0x16afaa5,{0x48,0x8b,0x47,0x60})
+           || !opcode(0x16b91b2,{0x48,0x8b,0x8f,0xc8,0,0,0})
+           || !opcode(0x157e9a3,{0xff,0x95,0xd8,0,0,0})) {
+            result["state"]="layout_unconfirmed";return result;
+        }
+        const auto data=read<uintptr_t>(function+0x60);
+        const auto count=read<int32_t>(function+0x68),capacity=read<int32_t>(function+0x6c);
+        const auto implementation=read<uintptr_t>(function+0xd8);
+        const auto event_graph=read<uintptr_t>(function+0xc8);
+        const auto event_offset=read<int32_t>(function+0xd0);
+        result["layout"]={{"script_data_offset",0x60},{"script_count_offset",0x68},
+            {"script_capacity_offset",0x6c},{"function_pointer_offset",0xd8}};
+        result["script"]={{"data",data},{"byte_count",count},{"capacity",capacity}};
+        result["implementation"]=sample_hook_jump(implementation);
+        result["process_event_entry"]=sample_hook_jump(reinterpret_cast<uintptr_t>(process_event_));
+        result["event_graph_function"]=event_graph;
+        result["event_graph_call_offset"]=event_offset;
+        if(count<0 || capacity<count || (count && !data)) {
+            result["state"]="invalid_script_header";return result;
+        }
+        std::vector<unsigned char> bytes(static_cast<size_t>(count));
+        if(count && !game_memory::copy(bytes.data(),reinterpret_cast<const void*>(data),bytes.size())) {
+            result["state"]="script_unreadable";return result;
+        }
+        if(read<uintptr_t>(function+0x60)!=data || read<int32_t>(function+0x68)!=count
+           || read<int32_t>(function+0x6c)!=capacity || read<uintptr_t>(function+0xd8)!=implementation
+           || read<uintptr_t>(function+0xc8)!=event_graph || read<int32_t>(function+0xd0)!=event_offset
+           || !same_serial_identity(identity,serial_identity(validate_object(reinterpret_cast<void*>(function))))) {
+            result["state"]="function_changed";return result;
+        }
+        constexpr char digits[]="0123456789abcdef";
+        std::string encoded;encoded.reserve(bytes.size()*2);
+        for(const auto value:bytes){encoded.push_back(digits[value>>4]);encoded.push_back(digits[value&15]);}
+        result["script"]["bytecode_hex"]=std::move(encoded);
+        result["state"]=count?"sampled":"empty_script";
+    } catch(const HandlerError& error) {
+        result["state"]="unavailable";result["error"]={{"code",error.code()},{"message",error.what()}};
+    } catch(const std::exception& error) {
+        result["state"]="unavailable";result["error"]={{"message",error.what()}};
+    }
+    return result;
 }
 bool GameAccess::is_compatible_object(void* object,void* expected_class) const {
     const auto identity=validate_object(object);
@@ -1950,6 +2111,8 @@ json GameAccess::functions(void* object,std::size_t limit,std::size_t offset,con
                 item["signature_token"]=store_function_contract(signature_contracts_,next_signature_token_,contract);
                 item["signature_status"]="complete";
         }catch(const HandlerError& error){item["signature_status"]=error.code();item["signature_error"]={{"code",error.code()},{"message",error.what()},{"details",error.details()}};}
+            if(object_path(reinterpret_cast<void*>(klass))=="/SN2MCPDevelopmentServices/BP_DevelopmentServices.BP_DevelopmentServices_C")
+                item["execution_metadata"]=function_execution_metadata(field);
             items.push_back(std::move(item));
             if(parameters_truncated)scan_truncated=true;
         }
@@ -1969,8 +2132,9 @@ json GameAccess::invoke(void* object,const std::string& function_name,const json
         if(name_constructions_started_.load()!=prepared_before)result["preparation_effect"]={{"name_pool_may_have_changed",true}};
         return result;
     }catch(const HandlerError& error) {
-        if(name_constructions_started_.load()==prepared_before)throw;
-        auto details=error.details();details["preparation_effect"]={{"name_pool_may_have_changed",true}};
+        auto details=error.details();
+        if(name_constructions_started_.load()!=prepared_before)
+            details["preparation_effect"]={{"name_pool_may_have_changed",true}};
         if(process_events_started_.load()==events_before) {
             details["executed"]=false;details["may_have_executed"]=false;details["process_event_returned"]=false;
         }else if(process_events_returned_.load()!=returned_before) {
@@ -2893,6 +3057,7 @@ json GameAccess::invoke_impl(void* object,const std::string& function_name,const
         if(!(capture_name(input.source.source)==input.source))
             throw HandlerError("name_source_changed","The FName source value or metadata changed before the call");
     }
+    validate_development_service_call(object,reinterpret_cast<void*>(function_owner),function_name,function,buffer);
     string_event_started=true;
     native_exception::Diagnostic native_fault{};
     bool event_returned{};

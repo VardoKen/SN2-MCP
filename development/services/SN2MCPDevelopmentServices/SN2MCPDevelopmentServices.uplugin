@@ -1,0 +1,11 @@
+{
+  "FileVersion": 3,
+  "Version": 603,
+  "VersionName": "0.6.3",
+  "FriendlyName": "SN2 MCP Development Services",
+  "Description": "Cooked in-game development services for the native MCP bridge.",
+  "Category": "Modding",
+  "EnabledByDefault": true,
+  "CanContainContent": true
+}
+
