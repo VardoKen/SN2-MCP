@@ -28,7 +28,7 @@ from sn2_mcp.content_projects import ContentProjectError, verify_content_package
 
 TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1", "build_native.ps1", "prepare_bridge_bundle.py", "build_development_services.py", "accept_development_services.py")
 FIXTURE_DIRS = ()
-SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "content_projects.py", "content_cooker.py", "content_deployment.py", "content_authoring.py", "service_mod.py")
+SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "content_projects.py", "content_cooker.py", "content_deployment.py", "content_authoring.py", "service_mod.py", "runtime_authoring.py")
 HELPER_FILES = ()
 FIXTURE_SCRIPTS = {}
 DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock")
@@ -57,6 +57,9 @@ SERVICE_DIRECTORY = "services/" + SERVICE_ID
 SERVICE_SOURCE_FILES = tuple("development/services/" + SERVICE_ID + "/" + name for name in
     (SERVICE_ID + ".uplugin", "mod.json", "README.md", "Authoring/service.json"))
 LEGACY_NATIVE_FILES = {"native/src/mod_entry.cpp", "native/tools/mod_control.cpp"}
+VENDOR_FILES = tuple("native/vendor/blake3/" + name for name in
+                     ("blake3.c", "blake3_dispatch.c", "blake3_portable.c",
+                      "blake3.h", "blake3_impl.h", "LICENSE", "source-lock.json"))
 
 
 class BundleError(Exception):
@@ -128,7 +131,8 @@ def _production_binary(dll: bytes) -> None:
 def _enumerate(repository: Path) -> list[str]:
     paths = (list(DOCUMENTS) + ["tools/" + name for name in TOOLS] + list(BINARIES)
              + list(HELPER_FILES) + ["src/sn2_mcp/" + name for name in SOURCE_FILES]
-             + list(TEMPLATE_FILES) + list(AUTHORING_FILES) + list(SERVICE_SOURCE_FILES))
+             + list(TEMPLATE_FILES) + list(AUTHORING_FILES) + list(SERVICE_SOURCE_FILES)
+             + list(VENDOR_FILES))
 
     def failure(error):
         raise BundleError("access_error", "Failed to enumerate all allowed bundle sources")
@@ -138,7 +142,7 @@ def _enumerate(repository: Path) -> list[str]:
         _checked(root, repository, directory=True)
         for directory, directories, files in os.walk(root, followlinks=False, onerror=failure):
             parent = _checked(Path(directory), repository, directory=True)
-            directories[:] = [name for name in directories if name not in {"__pycache__", "nppBackup", "build", "_deps", "CMakeFiles", "sn2_mod"}]
+            directories[:] = [name for name in directories if name not in {"__pycache__", "nppBackup", "build", "_deps", "CMakeFiles", "sn2_mod", "vendor"}]
             for name in directories:
                 _checked(parent / name, repository, directory=True)
             for name in files:
@@ -159,14 +163,19 @@ def _required_native_inputs(root: Path, selected: set[str]) -> set[str]:
 
     The bundle carries the declared native tests because CMake configures those
     targets even when the caller selects only the bridge target.
-    Third-party includes remain normal FetchContent dependencies.
+    Vendored source and provenance travel with the bundle; other third-party
+    includes remain normal FetchContent dependencies.
     """
     required = set(SDK_FILES) | set(TEMPLATE_FILES)
     cmake = _read(root / "native/CMakeLists.txt", root).decode("utf-8-sig")
-    for relative in re.findall(r"(?<![A-Za-z0-9_])((?:src|tools|tests|include)/[A-Za-z0-9_./-]+\.(?:cpp|hpp|h|cmake))", cmake):
+    for relative in re.findall(r"(?<![A-Za-z0-9_])((?:src|tools|tests|include|vendor)/[A-Za-z0-9_./-]+\.(?:cpp|c|hpp|h|cmake))", cmake):
         required.add("native/" + relative)
+    vendor_directories = {Path(path).parent.as_posix() for path in required
+                          if path.startswith("native/vendor/")}
+    if "native/vendor/blake3" in vendor_directories:
+        required.update(VENDOR_FILES)
     checked = set()
-    pending = [path for path in required if path.endswith((".cpp", ".hpp", ".h"))]
+    pending = [path for path in required if path.endswith((".cpp", ".c", ".hpp", ".h"))]
     while pending:
         relative = pending.pop()
         if relative in checked or relative not in selected:
@@ -177,6 +186,12 @@ def _required_native_inputs(root: Path, selected: set[str]) -> set[str]:
             normalized = include.replace("\\", "/")
             if normalized.startswith(("sn2_mcp/", "sn2_mod/")):
                 target = "native/include/" + normalized
+            elif any(directory + "/" + normalized in required for directory in vendor_directories):
+                targets = {directory + "/" + normalized for directory in vendor_directories
+                           if directory + "/" + normalized in required}
+                if len(targets) != 1:
+                    raise BundleError("unsafe_source", "A vendored native include has ambiguous ownership")
+                target = targets.pop()
             elif delimiter == "<":
                 continue
             else:
@@ -361,7 +376,15 @@ component. Its in-game calls do not launch an external Editor. Use
 `sn2_service_status`, `sn2_service_enable`, `sn2_service_call` and
 `sn2_service_disable` with the installed companion. Inspect actual function
 contracts before invoking. Creating a new cooked Content/Blueprint mod inside
-Shipping remains a separate capability; wrappers do not establish a compiler.
+Shipping uses the native runtime-authoring backend rather than these wrappers.
+Inspect `sn2_runtime_authoring_recipe`, compile the captured graph with
+`sn2_runtime_compile_blueprint` and read `sn2_runtime_authoring_status` and
+`sn2_runtime_authoring_report`. `sn2_runtime_save_package` and
+`sn2_runtime_build_status` report persistent output separately; use
+`sn2_package_runtime_artifact` for verified runtime-produced containers.
+Backend binding readiness, successful compilation, package writing and actual
+fresh-game loading require their own evidence. Tool registration does not
+establish runtime acceptance.
 
 1. Keep the installed game separate. Verify from this folder with
    `python -B tools/prepare_bridge_bundle.py --verify-root .`.
@@ -371,7 +394,9 @@ Shipping remains a separate capability; wrappers do not establish a compiler.
    consumer needs the Microsoft Visual C++ x64 runtime. Building requires
    Visual Studio 2022/MSVC x64, CMake 3.24+ and Git on PATH. CMake obtains the
    declared nlohmann JSON v3.12.0 and MinHook 8af6b4acae5a9388fd742b56fa79ece89d96f823
-   dependencies; their source checkout identities are recorded by the build.
+dependencies; their source checkout identities are recorded by the build.
+The selected portable BLAKE3 C sources, headers, original LICENSE and
+source-lock.json are vendored in this folder; its upstream version is 1.3.1.
 3. Start the frontend with the external environment's Python:
    `python -B -m sn2_mcp.server --transport streamable-http --host 127.0.0.1
    --port 27224 --native-port 27223 --workspace-root <workspace>
@@ -478,7 +503,8 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
                 "compatibility": compatibility, "files": files,
                 "file_count": len(files), "total_bytes": sum(item["bytes"] for item in files),
                 "includes": ["python_sources", "locked_dependencies", "runtime_tools", "prebuilt_native_bridge",
-                             "native_build_sources_and_tests", "content_plugin_template", "editor_authoring_sources",
+                             "native_build_sources_and_tests", "vendored_native_dependencies", "runtime_authoring_sources",
+                             "content_plugin_template", "editor_authoring_sources",
                              "development_service_sources", "instructions"],
                 "excludes": ["virtual_environment", "game_files", "game_caches", "user_mods", "saved_games", "logs", "local_mcp_settings",
                              "custom_engine", "modkit", "compiled_editor_helper_modules"],
@@ -585,6 +611,15 @@ def verify_bundle(bundle_root: Path) -> dict:
         raise BundleError("integrity_mismatch", "The complete bundle contents differ from the manifest")
     required = set(DOCUMENTS) | {"tools/" + name for name in TOOLS} | set(BINARIES) | {"START.md"}
     required |= {"src/sn2_mcp/" + name for name in SOURCE_FILES}
+    if ("runtime_authoring_sources" not in manifest.get("includes", [])
+            and "src/sn2_mcp/server.py" in expected):
+        server = ast.parse(_read(root / "src/sn2_mcp/server.py", root).decode("utf-8-sig"))
+        if not any(isinstance(node, ast.ImportFrom) and node.level == 1
+                   and node.module == "runtime_authoring" for node in ast.walk(server)):
+            # Historical frontends do not import the later runtime backend.
+            required.discard("src/sn2_mcp/runtime_authoring.py")
+    if "vendored_native_dependencies" in manifest.get("includes", []):
+        required |= set(VENDOR_FILES)
     required |= set(HELPER_FILES)
     required |= {f"tests/fixtures/{name}/GothicMod.json" for name in FIXTURE_DIRS}
     required |= {f"tests/fixtures/{name}/Script/{script}" for name, script in FIXTURE_SCRIPTS.items()}

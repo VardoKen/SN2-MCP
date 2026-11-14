@@ -441,6 +441,8 @@ uintptr_t GameAccess::ensure_image_base() {
         "48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 83 EC 30 45 33 E4 49 63 E8 4C 89 21");
     discover_function(bindings_.name_construct,"name_construct",
         "49 83 C1 02 0F B7 C0 44 0B D0 41 0F B7 01 66 85 C0 75 ED 41 F7 C2 80 FF FF FF 4C 89 5C 24 20",0x30);
+    discover_function(bindings_.create_package,"create_package",
+        "48 89 5C 24 10 48 89 74 24 18 48 89 7C 24 20 55 41 56 41 57 48 8D AC 24 E0 FB FF FF 48 81 EC 20 05 00 00",0);
     kTick=bindings_.tick.rva;
     kProcessEvent=bindings_.process_event.rva;
     kNames=bindings_.names.rva;
@@ -663,7 +665,7 @@ json GameAccess::status() const {
         target["creation_filetime"]=std::to_string(sn2::loader::creation_filetime(GetCurrentProcess()));
     } catch(const std::exception& error) {target["error"]=error.what();}
     const bool reflection=reflection_validated_.load();
-    return {{"version","0.6.3"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+    return {{"version","0.7.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
             {"tick_hook_current",tick_hook},
             {"process_id",GetCurrentProcessId()},{"process_creation_filetime",target.at("creation_filetime")},{"target_process",target},
             {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},
@@ -3538,6 +3540,9 @@ json GameAccess::execute(const json& request) {
     if(op=="blueprint_mod_enable")return blueprint_mod_enable(params);
     if(op=="blueprint_mod_status")return blueprint_mod_status(params);
     if(op=="blueprint_mod_disable")return blueprint_mod_disable(params);
+if(op=="runtime_create_package")return runtime_create_package(params);
+if(op=="runtime_compile_blueprint")return runtime_compile_blueprint(params);
+if(op=="runtime_save_package")return runtime_save_package(params);
     if(op=="snapshot") {
         if(!params.contains("targets"))throw HandlerError("invalid_snapshot_params","targets is required");
         return snapshot(params.at("targets"));

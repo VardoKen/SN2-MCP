@@ -1,4 +1,4 @@
-"""Editable Unreal content plugins and packages from identified cooker outputs.
+"""Editable Unreal content plugins and identified cook/runtime packages.
 
 Source preparation, compilation, installation, mounting and Blueprint activation
 are distinct outcomes. This service does not synthesize cooked assets or load a
@@ -23,6 +23,7 @@ from .workspace import (
 PROJECT_KIND = "sn2_content_mod_project"
 PACKAGE_KIND = "sn2_content_mod_package"
 COOK_RECEIPT_KIND = "sn2_content_cook_receipt"
+RUNTIME_BUILD_RECEIPT_KIND = "sn2_runtime_build_receipt"
 TEMPLATE_FILES = ("Plugin.uplugin", "mod.json", "README.md")
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _IDENTITY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -98,12 +99,14 @@ def _read(path: Path, boundary: Path) -> bytes:
     return _read_bytes(_checked(path, boundary), boundary, None)
 
 
-def _absolute_path(value: object, field: str) -> Path:
+def _absolute_path(value: object, field: str, *, runtime: bool = False) -> Path:
+    code = "invalid_runtime_build_receipt" if runtime else "invalid_cook_receipt"
+    producer = "runtime build" if runtime else "cook"
     if not isinstance(value, str) or not value:
-        raise ContentProjectError("invalid_cook_receipt", "The cook receipt requires an absolute " + field)
+        raise ContentProjectError(code, "The " + producer + " receipt requires an absolute " + field)
     path = Path(value)
     if not path.is_absolute() or ".." in path.parts or "." in path.parts:
-        raise ContentProjectError("invalid_cook_receipt", "The cook receipt requires a canonical absolute " + field)
+        raise ContentProjectError(code, "The " + producer + " receipt requires a canonical absolute " + field)
     return path
 
 
@@ -302,7 +305,68 @@ def _receipt(receipt: dict) -> tuple[str, str, list[dict]]:
     return plugin, revision, inputs
 
 
-def _container_contract(entries: list[dict], plugin: str) -> list[dict]:
+def _runtime_receipt(receipt: dict) -> tuple[str, str, list[dict]]:
+    if (receipt.get("kind") != RUNTIME_BUILD_RECEIPT_KIND or receipt.get("schema") != 1
+            or receipt.get("method") != "runtime_blueprint"):
+        raise ContentProjectError("invalid_runtime_build_receipt", "Select an actual runtime Blueprint build receipt")
+    if receipt.get("containerized") is not True:
+        raise ContentProjectError("containerization_not_completed", "Raw serialized assets are not an installable Pak/IoStore package")
+    if (receipt.get("state") != "succeeded" or receipt.get("compiled") is not True
+            or receipt.get("persisted") is not True or receipt.get("exact_source_compiled") is not True):
+        raise ContentProjectError("runtime_build_not_succeeded", "Packaging requires a successful exact-source compiled and persisted runtime build")
+    plugin = _identity(receipt.get("plugin_id"))
+    revision, inputs = receipt.get("source_manifest_sha256"), receipt.get("inputs")
+    if not isinstance(revision, str) or source_manifest_sha256(inputs) != revision:
+        raise ContentProjectError("source_provenance_mismatch", "Runtime build inputs do not match their source revision")
+    if any(item["role"] != _role(item["path"], plugin) for item in inputs):
+        raise ContentProjectError("source_provenance_mismatch", "Runtime source roles do not match the identified project files")
+    identity = receipt.get("build_identity")
+    if (not isinstance(identity, dict) or not isinstance(identity.get("build_id"), str) or not identity["build_id"]
+            or identity.get("source_manifest_sha256") != revision
+            or identity.get("target_platform") != "Win64" or identity.get("configuration") != "Shipping"):
+        raise ContentProjectError("runtime_build_provenance_mismatch", "The runtime build requires its source and Shipping target identity")
+    specification = receipt.get("compiler_specification")
+    specification_revision = receipt.get("specification_sha256")
+    if (not isinstance(specification, dict) or not isinstance(specification_revision, str)
+            or not _SHA.fullmatch(specification_revision) or specification.get("sha256") != specification_revision
+            or type(specification.get("bytes")) is not int or specification["bytes"] <= 0
+            or identity.get("specification_sha256") != specification_revision):
+        raise ContentProjectError("runtime_build_provenance_mismatch", "The runtime build must identify its exact captured compiler specification")
+    _absolute_path(specification.get("source_path"), "compiler_specification.source_path", runtime=True)
+    generated = receipt.get("generated_class_paths")
+    if (not isinstance(generated, list) or not generated or any(not isinstance(path, str) for path in generated)
+            or len({path.casefold() for path in generated}) != len(generated)):
+        raise ContentProjectError("runtime_build_provenance_mismatch", "The runtime build requires its generated-class identities")
+    for path in generated:
+        _entry_class(path, plugin)
+    assets = receipt.get("compiled_asset_paths")
+    if (not isinstance(assets, list) or any(not isinstance(path, str) for path in assets)
+            or len(assets) != len(generated) or set(assets) != {path[:-2] for path in generated}):
+        raise ContentProjectError("runtime_build_provenance_mismatch", "The compiled assets must identify the generated classes in this runtime build")
+    if not isinstance(receipt.get("outputs"), list) or not receipt["outputs"]:
+        raise ContentProjectError("containerization_not_completed", "The runtime build has no identified container outputs")
+    _parts(receipt.get("project_path"))
+    return plugin, revision, inputs
+
+
+def _runtime_entry(receipt: dict, entry: str | None) -> None:
+    if entry is not None and entry not in receipt["generated_class_paths"]:
+        raise ContentProjectError("source_provenance_mismatch", "The declared entry class was not compiled in the selected runtime build")
+
+
+def _runtime_specification(receipt: dict, raw: bytes) -> None:
+    evidence = receipt["compiler_specification"]
+    if {"sha256": _sha(raw), "bytes": len(raw)} != {key: evidence[key] for key in ("sha256", "bytes")}:
+        raise ContentProjectError("compiler_specification_changed", "The compiler specification differs from the selected exact-source runtime build")
+    specification = _json(raw)
+    assets = specification.get("assets")
+    if (specification.get("schema") != 1 or specification.get("plugin_id") != receipt["plugin_id"]
+            or not isinstance(assets, list) or not all(isinstance(asset, dict) for asset in assets)
+            or not set(receipt["compiled_asset_paths"]) <= {asset.get("path") for asset in assets if isinstance(asset.get("path"), str)}):
+        raise ContentProjectError("runtime_build_provenance_mismatch", "The compiler specification does not identify the runtime build's compiled assets")
+
+
+def _container_contract(entries: list[dict], plugin: str, *, missing_code: str = "missing_cook_output") -> list[dict]:
     containers = []
     groups = {}
     for item in entries:
@@ -322,12 +386,12 @@ def _container_contract(entries: list[dict], plugin: str) -> list[dict]:
         roles.add(role)
         containers.append(item)
     if not groups or any(roles != {"pak", "utoc", "ucas"} for roles in groups.values()):
-        raise ContentProjectError("missing_cook_output", "Each selected IoStore container stem requires .pak, .utoc and .ucas outputs")
+        raise ContentProjectError(missing_code, "Each selected IoStore container stem requires .pak, .utoc and .ucas outputs")
     return containers
 
 
 def verify_content_package(package_root: Path) -> dict:
-    """Recheck packaged bytes and their source/cook correlation without installation."""
+    """Recheck packaged bytes and their source/build correlation without installation."""
     root = _checked(package_root, directory=True)
     manifest_raw = _read(root / "manifest.json", root)
     manifest = _json(manifest_raw)
@@ -351,22 +415,35 @@ def verify_content_package(package_root: Path) -> dict:
         files[path] = root / path
     if _file_set(root) != expected | {"manifest.json"}:
         raise ContentProjectError("package_inventory_mismatch", "Package contents differ from the complete file inventory")
-    required = {"cook-receipt.json", "source-manifest.json", "project-metadata.json", "activation.json", "README.md", plugin + "/" + plugin + ".uplugin"}
+    build = manifest.get("build")
+    runtime = isinstance(build, dict) and build.get("method") == "runtime_blueprint"
+    receipt_name = "runtime-build-receipt.json" if runtime else "cook-receipt.json"
+    provenance_code = "runtime_build_provenance_mismatch" if runtime else "cook_provenance_mismatch"
+    output_marker = "authoritative_runtime_output" if runtime else "authoritative_cook_output"
+    required = {receipt_name, "source-manifest.json", "project-metadata.json", "activation.json", "README.md", plugin + "/" + plugin + ".uplugin"}
+    if runtime:
+        required.add("compiler-specification.json")
     if not required <= expected:
-        raise ContentProjectError("invalid_package", "The package lacks its descriptor, cook, source or activation contract")
+        raise ContentProjectError("invalid_package", "The package lacks its descriptor, build, source or activation contract")
     if any(Path(path).suffix.casefold() in {".dll", ".exe"} for path in expected):
         raise ContentProjectError("native_payload_unsupported", "A content/Blueprint package must not include native executable payloads")
-    receipt_raw = _read(files["cook-receipt.json"], root)
+    receipt_raw = _read(files[receipt_name], root)
     receipt = _json(receipt_raw)
-    receipt_plugin, revision, inputs = _receipt(receipt)
-    build = manifest.get("build")
+    receipt_plugin, revision, inputs = (_runtime_receipt if runtime else _receipt)(receipt)
     if (not isinstance(build, dict) or receipt_plugin != plugin or manifest.get("source_revision") != revision
             or build.get("source_manifest_sha256") != revision or build.get("receipt_sha256") != _sha(receipt_raw)
             or build.get("project_path") != receipt.get("project_path")
             or build.get("identity") != receipt.get("build_identity")):
-        raise ContentProjectError("cook_provenance_mismatch", "The package does not identify its exact successful cook")
+        raise ContentProjectError(provenance_code, "The package does not identify its exact successful build")
+    if runtime:
+        if build.get("specification_sha256") != receipt["specification_sha256"]:
+            raise ContentProjectError(provenance_code, "The package does not identify its exact compiler specification")
+        specification_entry = next(item for item in entries if item["path"] == "compiler-specification.json")
+        if specification_entry["role"] != "compiler_specification":
+            raise ContentProjectError(provenance_code, "The captured compiler specification requires its identified package role")
+        _runtime_specification(receipt, _read(files["compiler-specification.json"], root))
     if _json(_read(files["source-manifest.json"], root)) != {"source_manifest_sha256": revision, "inputs": inputs}:
-        raise ContentProjectError("source_provenance_mismatch", "Packaged source identities differ from the cook inputs")
+        raise ContentProjectError("source_provenance_mismatch", "Packaged source identities differ from the build inputs")
     metadata_raw = _read(files["project-metadata.json"], root)
     source_metadata = _json(metadata_raw)
     metadata_inputs = [item for item in inputs if item["path"] == "mod.json" and item["role"] == "project_manifest"]
@@ -384,35 +461,35 @@ def verify_content_package(package_root: Path) -> dict:
     if (len(descriptor_inputs) != 1 or descriptor_inputs[0]["sha256"] != _sha(descriptor_raw)
             or descriptor_inputs[0]["bytes"] != len(descriptor_raw)):
         raise ContentProjectError("source_provenance_mismatch", "The packaged descriptor differs from the captured source descriptor")
-    containers = _container_contract(entries, plugin)
+    containers = _container_contract(entries, plugin, missing_code="containerization_not_completed" if runtime else "missing_cook_output")
     if manifest.get("containers") != containers:
-        raise ContentProjectError("cook_provenance_mismatch", "The package container identities differ from its inventory")
+        raise ContentProjectError(provenance_code, "The package container identities differ from its inventory")
     payload = [item for item in entries if item["path"].startswith(plugin + "/")]
     if len(payload) != len(containers) + 1 or manifest.get("descriptor") != next(item for item in payload if item["path"] == descriptor_path):
         raise ContentProjectError("invalid_package", "The selected game payload must contain exactly the plugin descriptor and cooked containers")
     if expected != required | {item["path"] for item in containers}:
-        raise ContentProjectError("invalid_package", "The package contains entries outside its complete content/cook contract")
+        raise ContentProjectError("invalid_package", "The package contains entries outside its complete content/build contract")
     outputs = receipt["outputs"]
     if len(outputs) != len(payload):
-        raise ContentProjectError("cook_provenance_mismatch", "The package does not account for every identified cook output")
-    output_root = _absolute_path(receipt.get("output_root"), "output_root")
+        raise ContentProjectError(provenance_code, "The package does not account for every identified build output")
+    output_root = _absolute_path(receipt.get("output_root"), "output_root", runtime=runtime)
     output_paths = set()
     for output in outputs:
         if (not isinstance(output, dict) or not isinstance(output.get("path"), str)
-                or output.get("authoritative_cook_output") is not True):
-            raise ContentProjectError("cook_provenance_mismatch", "Invalid cook output identity")
-        absolute = _absolute_path(output["path"], "output path")
+                or output.get(output_marker) is not True):
+            raise ContentProjectError(provenance_code, "Invalid build output identity")
+        absolute = _absolute_path(output["path"], "output path", runtime=runtime)
         if not absolute.is_relative_to(output_root):
-            raise ContentProjectError("cook_provenance_mismatch", "A cook output is outside its recorded output root")
+            raise ContentProjectError(provenance_code, "A build output is outside its recorded output root")
         relative = absolute.relative_to(output_root).as_posix()
         _parts(relative)
         package_path = plugin + "/" + relative
         if package_path.casefold() in output_paths:
-            raise ContentProjectError("duplicate_path", "The cook output inventory repeats a Windows path")
+            raise ContentProjectError("duplicate_path", "The build output inventory repeats a Windows path")
         output_paths.add(package_path.casefold())
         candidate = next((item for item in payload if item["path"] == package_path), None)
         if candidate is None or any(candidate[key] != output.get(key) for key in ("sha256", "bytes", "role")):
-            raise ContentProjectError("cook_provenance_mismatch", "A packaged payload differs from its identified cook output")
+            raise ContentProjectError(provenance_code, "A packaged payload differs from its identified build output")
     activation = _json(_read(files["activation.json"], root))
     if (manifest.get("activation") != activation or activation.get("plugin_name") != plugin
             or activation.get("mount_root") != "/" + plugin + "/"
@@ -420,14 +497,18 @@ def verify_content_package(package_root: Path) -> dict:
             or activation.get("replacement_boundary") != "game_restart"):
         raise ContentProjectError("activation_contract_mismatch", "The package activation identity is inconsistent")
     entry, entry_asset = _entry_class(activation.get("entry_class"), plugin)
-    if entry_asset is not None and not any(item["path"] == entry_asset and item["role"] == "authored_asset" for item in inputs):
+    if runtime:
+        _runtime_entry(receipt, entry)
+    elif entry_asset is not None and not any(item["path"] == entry_asset and item["role"] == "authored_asset" for item in inputs):
         raise ContentProjectError("source_provenance_mismatch", "The entry class lacks an identified authored source asset")
     return {"source": "content_mod_artifact_package", "valid": True, "package_root": str(root),
             "manifest_sha256": _sha(manifest_raw), "metadata": manifest, "plugin_id": plugin,
             "files": entries, "activation": activation, "containers": containers,
             "descriptor": manifest["descriptor"], "source_revision": revision,
+            **({"specification_sha256": receipt["specification_sha256"]} if runtime else {}),
             "file_count": len(entries), "compiled": True, "installed": False,
-            "container_validation": "identified_cooker_outputs_not_runtime_mount_verification",
+            "container_validation": ("identified_runtime_outputs_not_fresh_load_verification" if runtime
+                                     else "identified_cooker_outputs_not_runtime_mount_verification"),
             "runtime_validation": "not_performed"}
 
 
@@ -515,14 +596,25 @@ class ContentProjects:
         return validate_content_project(self.workspace.root, project_path, workspace=self.workspace)
 
     def package(self, cook_receipt_path: str, destination: str) -> dict:
-        path = Path(cook_receipt_path)
+        return self._package(cook_receipt_path, destination, runtime=False)
+
+    def runtime_package(self, runtime_build_receipt: str, destination: str) -> dict:
+        """Publish identified native-built containers without fabricating a cook."""
+        return self._package(runtime_build_receipt, destination, runtime=True)
+
+    def _package(self, producer_receipt_path: str, destination: str, *, runtime: bool) -> dict:
+        path = Path(producer_receipt_path)
         if not path.is_absolute():
-            path = self.repository.joinpath(*_parts(cook_receipt_path))
+            path = self.repository.joinpath(*_parts(producer_receipt_path))
         receipt_path = _checked(path)
         receipt_raw = _read(receipt_path, receipt_path.parent)
         receipt = _json(receipt_raw)
-        plugin, revision, inputs = _receipt(receipt)
-        captured = _checked(_absolute_path(receipt.get("staged_source_root"), "staged_source_root"), directory=True)
+        plugin, revision, inputs = (_runtime_receipt if runtime else _receipt)(receipt)
+        receipt_name = "runtime-build-receipt.json" if runtime else "cook-receipt.json"
+        receipt_role = "runtime_build_receipt" if runtime else "cook_receipt"
+        output_marker = "authoritative_runtime_output" if runtime else "authoritative_cook_output"
+        provenance_code = "runtime_build_provenance_mismatch" if runtime else "cook_provenance_mismatch"
+        captured = _checked(_absolute_path(receipt.get("staged_source_root"), "staged_source_root", runtime=runtime), directory=True)
         captured_files = {}
         for item in inputs:
             source = captured.joinpath(*_parts(item["path"]))
@@ -542,20 +634,22 @@ class ContentProjects:
                 or metadata.get("mod_id") != plugin or metadata.get("plugin_name") != plugin):
             raise ContentProjectError("source_provenance_mismatch", "The captured source is not the selected content/Blueprint project")
         entry, entry_asset = _entry_class(metadata.get("entry_class"), plugin)
-        if entry_asset is not None and entry_asset not in captured_files:
+        if runtime:
+            _runtime_entry(receipt, entry)
+        elif entry_asset is not None and entry_asset not in captured_files:
             raise ContentProjectError("source_provenance_mismatch", "The captured entry class has no authored source asset")
-        output_root = _checked(_absolute_path(receipt.get("output_root"), "output_root"), directory=True)
+        output_root = _checked(_absolute_path(receipt.get("output_root"), "output_root", runtime=runtime), directory=True)
         files = {}
         roles = {}
         for item in receipt["outputs"]:
             if (not isinstance(item, dict) or not isinstance(item.get("path"), str)
-                    or item.get("authoritative_cook_output") is not True):
-                raise ContentProjectError("missing_cook_output", "A cook output lacks its path identity")
-            output = _absolute_path(item["path"], "output path")
+                    or item.get(output_marker) is not True):
+                raise ContentProjectError("missing_runtime_output" if runtime else "missing_cook_output", "A build output lacks its producer and path identity")
+            output = _absolute_path(item["path"], "output path", runtime=runtime)
             output = _checked(output, output_root)
             identity = _stream_identity(output, output_root)
             if identity["sha256"] != item.get("sha256") or identity["bytes"] != item.get("bytes"):
-                raise ContentProjectError("cook_output_changed", "A cook output differs from its successful receipt")
+                raise ContentProjectError("runtime_output_changed" if runtime else "cook_output_changed", "A build output differs from its successful receipt")
             relative = output.relative_to(output_root).as_posix()
             _parts(relative)
             destination_path = plugin + "/" + relative
@@ -564,10 +658,10 @@ class ContentProjects:
             files[destination_path] = output
             roles[destination_path] = item.get("role")
         if _file_set(output_root) != {path[len(plugin) + 1:] for path in files}:
-            raise ContentProjectError("cook_provenance_mismatch", "The cook output directory differs from its complete output inventory")
+            raise ContentProjectError(provenance_code, "The build output directory differs from its complete output inventory")
         descriptor_path = plugin + "/" + plugin + ".uplugin"
         if descriptor_path not in files or plugin + ".uplugin" not in captured_files or roles.get(descriptor_path) != "plugin_descriptor":
-            raise ContentProjectError("source_provenance_mismatch", "The cooked descriptor differs from the captured source descriptor")
+            raise ContentProjectError("source_provenance_mismatch", "The built descriptor differs from the captured source descriptor")
         descriptor_raw = _read(files[descriptor_path], output_root)
         if descriptor_raw != _read(captured_files[plugin + ".uplugin"], captured):
             raise ContentProjectError("source_provenance_mismatch", "The cooked descriptor differs from the captured source descriptor")
@@ -575,19 +669,21 @@ class ContentProjects:
         if _descriptor_issues(descriptor, descriptor_path):
             raise ContentProjectError("invalid_descriptor", "The captured plugin descriptor is not content-only")
         payload = _inventory(files, roles=roles)
-        containers = _container_contract(payload, plugin)
+        containers = _container_contract(payload, plugin, missing_code="containerization_not_completed" if runtime else "missing_cook_output")
         if len(payload) != len(containers) + 1:
             raise ContentProjectError("invalid_package", "The selected payload must contain only its descriptor and cooked containers")
         activation = {"plugin_name": plugin, "mount_root": "/" + plugin + "/", "entry_class": entry,
                       "mechanism": "shipping_plugin_discovery_and_native_bridge_asset_activation",
                       "replacement_boundary": "game_restart", "requires_installation": True,
                       "runtime_validation": "not_performed", "entry_class_load_verified": False}
-        files.update({"cook-receipt.json": receipt_raw,
+        files.update({receipt_name: receipt_raw,
                       "source-manifest.json": _json_bytes({"source_manifest_sha256": revision, "inputs": inputs}),
                       "project-metadata.json": metadata_raw,
                       "activation.json": _json_bytes(activation),
-                      "README.md": ("# Cooked content and Blueprint modification package\n\n"
+                      "README.md": (("# Runtime-built content and Blueprint modification package\n\n" if runtime
+                                     else "# Cooked content and Blueprint modification package\n\n") +
                                     f"Plugin `{plugin}` was produced from identified source revision `{revision}`. "
+                                    + ("The build ran through the native runtime Blueprint backend. " if runtime else "") +
                                     "The descriptor and cooked Pak/IoStore containers are recorded in manifest.json. "
                                     "This package preparation does not install, mount or activate the mod.\n\n"
                                     "Install the selected plugin subtree through the bridge's installation tool. "
@@ -595,14 +691,23 @@ class ContentProjects:
                                     "state, and independently verify content registration and authored Blueprint "
                                     "effects. A generated-class reference identifies intended activation; it does "
                                     "not prove class loading or BeginPlay. Replacement uses confirmed game restart.\n").encode("utf-8")})
-        roles.update({"cook-receipt.json": "cook_receipt", "source-manifest.json": "source_inventory",
+        roles.update({receipt_name: receipt_role, "source-manifest.json": "source_inventory",
                       "project-metadata.json": "project_manifest",
                       "activation.json": "activation_manifest", "README.md": "package_documentation"})
+        if runtime:
+            specification_path = _absolute_path(receipt["compiler_specification"]["source_path"],
+                                                "compiler_specification.source_path", runtime=True)
+            specification_raw = _read(specification_path, specification_path.parent)
+            _runtime_specification(receipt, specification_raw)
+            files["compiler-specification.json"] = specification_raw
+            roles["compiler-specification.json"] = "compiler_specification"
         manifest = {"schema": 1, "kind": PACKAGE_KIND, "mod_id": plugin, "plugin_id": plugin,
                     "source_revision": revision,
                     "build": {"receipt_path": str(receipt_path), "receipt_sha256": _sha(receipt_raw),
                               "source_manifest_sha256": revision, "project_path": receipt.get("project_path"),
-                              "identity": receipt.get("build_identity")},
+                              "identity": receipt.get("build_identity"),
+                              **({"method": "runtime_blueprint", "specification_sha256": receipt["specification_sha256"]}
+                                 if runtime else {})},
                     "descriptor": next(item for item in payload if item["path"] == descriptor_path),
                     "containers": containers, "files": _inventory(files, roles=roles), "activation": activation,
                     "compiled": True, "installed": False, "runtime_validation": "not_performed"}

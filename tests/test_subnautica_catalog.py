@@ -37,7 +37,10 @@ MOD_TOOLS = {"sn2_create_mod_project", "sn2_validate_mod_project", "sn2_package_
              "sn2_mod_disable", "sn2_mod_reload", "sn2_content_environment",
              "sn2_cook_recipe", "sn2_cook_mod", "sn2_cook_status", "sn2_cook_report",
              "sn2_mod_install", "sn2_mod_uninstall", "sn2_mod_deployment_status",
-             "sn2_authoring_recipe", "sn2_author_mod", "sn2_authoring_status", "sn2_authoring_report"}
+             "sn2_authoring_recipe", "sn2_author_mod", "sn2_authoring_status", "sn2_authoring_report",
+             "sn2_runtime_authoring_recipe", "sn2_runtime_compile_blueprint", "sn2_runtime_save_package",
+             "sn2_runtime_authoring_status", "sn2_runtime_authoring_report", "sn2_runtime_build_status",
+             "sn2_package_runtime_artifact", "sn2_service_status", "sn2_service_enable", "sn2_service_disable", "sn2_service_call"}
 PUBLIC_TOOLS = RUNTIME_TOOLS | SOURCE_TOOLS | BUILD_TOOLS | LIFECYCLE_TOOLS | MOD_TOOLS
 
 
@@ -69,6 +72,9 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                     "sn2_native_enable": {"target_process", "expected_native_session_id"},
                     "sn2_invoke": {"handle", "function"},
                     "sn2_watch_start": {"handle", "properties", "duration_ms", "interval_ms"},
+                    "sn2_runtime_compile_blueprint": {"project_path", "spec_path"},
+                    "sn2_runtime_save_package": {"authoring_id"},
+                    "sn2_package_runtime_artifact": {"runtime_build_receipt", "destination"},
                 }
                 for name, required in expected_required.items():
                     with self.subTest(tool=name):
@@ -84,6 +90,12 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                     "sn2_package_artifact": (False, False, False, False),
                     "sn2_cook_mod": (False, False, False, False),
                     "sn2_author_mod": (False, False, False, False),
+                    "sn2_runtime_compile_blueprint": (False, False, False, True),
+                    "sn2_runtime_save_package": (False, False, False, True),
+                    "sn2_package_runtime_artifact": (False, False, False, False),
+                    "sn2_service_enable": (False, False, False, True),
+                    "sn2_service_disable": (False, True, False, True),
+                    "sn2_service_call": (False, True, False, True),
                     "sn2_mod_install": (False, True, False, True),
                     "sn2_mod_uninstall": (False, True, False, True),
                     "sn2_load_asset": (False, False, False, True),
@@ -116,6 +128,39 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                         actual = (annotations.read_only_hint, annotations.destructive_hint,
                                   annotations.idempotent_hint, annotations.open_world_hint)
                         self.assertEqual(actual, mutation_effects.get(name, (True, False, True, False)))
+
+    async def test_runtime_authoring_tools_forward_native_uncertainty_and_saved_receipts(self):
+        from sn2_mcp.native_client import NativeError
+        from mcp.server.mcpserver.exceptions import ToolError
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            service = Mock()
+            service.recipe.return_value = {"execution_performed": False, "backend": "native_unreal_runtime"}
+            service.save.return_value = {"state": "serialized_raw_package", "persisted": True, "containerized": False}
+            service.status.return_value = {"state": "outcome_unknown", "compiled": False}
+            native_error = NativeError("response_lost", "The compile outcome is unknown", True, "compile-17", {"do_not_retry": True})
+            service.compile.side_effect = native_error
+            with patch("sn2_mcp.server.NativeClient") as native, patch("sn2_mcp.server.RuntimeAuthoring", return_value=service), \
+                 patch("sn2_mcp.server.ContentAuthoring") as editor:
+                server = create_server(workspace)
+                await server.call_tool("sn2_runtime_authoring_recipe", {"project_path": "projects/UserMod", "spec_path": "spec.json"})
+                try:
+                    result = await server.call_tool("sn2_runtime_compile_blueprint", {"project_path": "projects/UserMod", "spec_path": "spec.json", "timeout_seconds": 8})
+                    self.assertTrue(result.is_error)
+                    raw = next(item.text for item in result.content if item.type == "text")
+                except ToolError as error:
+                    raw = str(error)
+                error = json.loads(raw[raw.index("{"):])
+                self.assertEqual(error["code"], "response_lost")
+                self.assertTrue(error["may_have_executed"])
+                self.assertEqual(error["effect"], native_error.details)
+                result = await server.call_tool("sn2_runtime_save_package", {"authoring_id": "a" * 32, "timeout_seconds": 12})
+                self.assertEqual(result.structured_content["state"], "serialized_raw_package")
+                self.assertFalse(result.structured_content["containerized"])
+                service.compile.assert_called_once_with("projects/UserMod", "spec.json", None, 8.0)
+                service.save.assert_called_once_with("a" * 32, 12.0)
+                editor.assert_not_called()
+                native.return_value.request.assert_not_called()
 
     async def test_local_status_does_not_create_target_service_or_probe_native(self):
         with tempfile.TemporaryDirectory() as directory:

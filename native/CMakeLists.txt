@@ -23,7 +23,8 @@ set(SN2_GAME_ACCESS_SOURCES
     src/game_access.cpp src/game_access_array.cpp src/game_access_containers.cpp
     src/game_access_struct.cpp src/game_access_vector.cpp src/game_access_transform.cpp
     src/game_access_object_array.cpp src/game_access_linear_color.cpp
-    src/game_access_assets.cpp src/game_access_mods.cpp)
+    src/game_access_assets.cpp src/game_access_mods.cpp src/game_access_runtime_authoring.cpp
+    src/runtime_blueprint_compiler.cpp src/runtime_archive.cpp)
 
 add_library(sn2_mcp_transport STATIC src/transport.cpp)
 target_include_directories(sn2_mcp_transport PUBLIC include)
@@ -44,6 +45,33 @@ endif()
 set_target_properties(sn2_mcp_native PROPERTIES OUTPUT_NAME "SN2_MCP")
 
 enable_testing()
+add_library(sn2_mcp_blake3 STATIC
+    vendor/blake3/blake3.c vendor/blake3/blake3_dispatch.c vendor/blake3/blake3_portable.c)
+target_include_directories(sn2_mcp_blake3 PUBLIC vendor/blake3)
+target_compile_definitions(sn2_mcp_blake3 PRIVATE
+    BLAKE3_NO_SSE2=1 BLAKE3_NO_SSE41=1 BLAKE3_NO_AVX2=1 BLAKE3_NO_AVX512=1)
+add_library(sn2_mcp_runtime_package STATIC
+src/runtime_package_writer.cpp src/runtime_iostore_writer.cpp src/runtime_cityhash.cpp
+src/runtime_pak_writer.cpp)
+target_include_directories(sn2_mcp_runtime_package PUBLIC include)
+target_link_libraries(sn2_mcp_runtime_package PRIVATE sn2_mcp_blake3 bcrypt)
+target_compile_options(sn2_mcp_runtime_package PRIVATE /utf-8 /W4 /EHsc)
+target_link_libraries(sn2_mcp_native PRIVATE sn2_mcp_runtime_package)
+add_executable(native_runtime_package_writer_tests tests/runtime_package_writer_tests.cpp)
+target_link_libraries(native_runtime_package_writer_tests PRIVATE sn2_mcp_runtime_package)
+target_compile_options(native_runtime_package_writer_tests PRIVATE /utf-8 /W4 /EHsc)
+add_test(NAME native_runtime_package_writer COMMAND native_runtime_package_writer_tests)
+add_executable(native_runtime_pak_writer_tests tests/runtime_pak_writer_tests.cpp)
+target_link_libraries(native_runtime_pak_writer_tests PRIVATE sn2_mcp_runtime_package)
+target_compile_options(native_runtime_pak_writer_tests PRIVATE /utf-8 /W4 /EHsc)
+add_test(NAME native_runtime_pak_writer COMMAND native_runtime_pak_writer_tests)
+# Portable compiler verification owns this target; runtime binding is separate.
+add_executable(native_runtime_blueprint_compiler_tests
+    tests/runtime_blueprint_compiler_tests.cpp src/runtime_blueprint_compiler.cpp)
+target_include_directories(native_runtime_blueprint_compiler_tests PRIVATE include)
+target_link_libraries(native_runtime_blueprint_compiler_tests PRIVATE nlohmann_json::nlohmann_json)
+target_compile_options(native_runtime_blueprint_compiler_tests PRIVATE /utf-8 /W4 /EHsc)
+add_test(NAME native_runtime_blueprint_compiler COMMAND native_runtime_blueprint_compiler_tests)
 add_executable(native_asset_path_tests tests/asset_path_tests.cpp)
 target_include_directories(native_asset_path_tests PRIVATE include)
 target_link_libraries(native_asset_path_tests PRIVATE nlohmann_json::nlohmann_json)

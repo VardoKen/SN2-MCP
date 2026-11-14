@@ -292,6 +292,18 @@ for _name, _method in {"sn2_authoring_recipe": "recipe", "sn2_author_mod": "auth
         "src/sn2_mcp/content_authoring.py:ContentAuthoring." + _method,
         ("state", "authoring_id", "source_manifest_sha256", "specification_sha256", "outputs", "published", "reports"),
         state_tools=("sn2_authoring_recipe", "sn2_authoring_status", "sn2_authoring_report"))
+for _name, _method in {"sn2_runtime_authoring_recipe": "recipe", "sn2_runtime_compile_blueprint": "compile",
+        "sn2_runtime_save_package": "save", "sn2_runtime_authoring_status": "status",
+        "sn2_runtime_authoring_report": "report", "sn2_runtime_build_status": "build_status"}.items():
+    _CONTRACTS[_name] = _entry("native_runtime_blueprint_authoring", ("configured_workspace", "native_tick_reflection"),
+        "src/sn2_mcp/runtime_authoring.py:RuntimeAuthoring." + _method,
+        ("state", "authoring_id", "build_id", "source_manifest_sha256", "specification_sha256",
+         "native_response", "compiled", "runtime_published", "persisted", "containerized", "outputs"),
+        state_tools=("sn2_runtime_authoring_recipe", "sn2_runtime_authoring_status", "sn2_runtime_build_status"))
+_CONTRACTS["sn2_package_runtime_artifact"] = _entry("verified_runtime_content_package", ("verified_runtime_container_receipt",),
+    "src/sn2_mcp/content_projects.py:ContentProjects.runtime_package",
+    ("kind", "manifest_sha256", "source_revision", "files", "activation"),
+    state_tools=("sn2_runtime_build_status", "sn2_verify_artifact_package"))
 for _name, _method in {"sn2_content_environment": "inspect", "sn2_cook_recipe": "recipe",
         "sn2_cook_mod": "build", "sn2_cook_status": "status", "sn2_cook_report": "read_report"}.items():
     _CONTRACTS[_name] = _entry("content_mod_cooker", ("configured_workspace", "compatible_modkit_custom_engine"),

@@ -24,7 +24,7 @@ struct RuntimeBinding {
 
 struct RuntimeBindings {
     RuntimeBinding tick, object_array, names, process_event, name_construct,
-                   string_construct, free, realloc;
+                   string_construct, free, realloc, create_package;
     bool executor_discovered() const noexcept { return tick.available(); }
     bool reflection_discovered() const noexcept {
         return object_array.available() && names.available();
@@ -34,7 +34,8 @@ struct RuntimeBindings {
                 {"names",names.describe()},{"process_event",process_event.describe()},
                 {"name_construct",name_construct.describe()},
                 {"string_construct",string_construct.describe()},
-                {"free",free.describe()},{"realloc",realloc.describe()}};
+                {"free",free.describe()},{"realloc",realloc.describe()},
+                {"create_package",create_package.describe()}};
     }
 };
 

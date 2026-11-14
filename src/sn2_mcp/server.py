@@ -35,6 +35,7 @@ from .content_cooker import ContentCooker, ContentCookError
 from .content_deployment import ContentDeployment
 from .content_authoring import ContentAuthoring, ContentAuthoringError
 from .service_mod import ServiceMod, ServiceModError
+from .runtime_authoring import RuntimeAuthoring, RuntimeAuthoringError
 
 
 def _tool_failure(error: SnapshotError | DevelopmentError | WorkspaceError | ExportError) -> ToolError:
@@ -85,6 +86,7 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     mods = None
     cooker = None
     authoring = None
+    runtime_authoring = None
     deployment = None
 
     def mod_projects() -> ContentProjects:
@@ -129,6 +131,25 @@ def create_server(workspace_root: Path, native_port: int = 27223,
         except (ContentAuthoringError, ContentProjectError, BuildError, WorkspaceError) as error:
             raise ToolError(json.dumps({"code": error.code, "message": str(error),
                 "receipt": getattr(error, "receipt", None)}, ensure_ascii=False)) from None
+
+    def runtime_authoring_service() -> RuntimeAuthoring:
+        nonlocal runtime_authoring
+        if runtime_authoring is None:
+            runtime_authoring = RuntimeAuthoring(workspace_root, runtime_authoring_request,
+                                                workspace=source_workspace())
+        return runtime_authoring
+
+    def runtime_authoring_call(operation: str, *args, **kwargs) -> dict[str, Any]:
+        try:
+            return getattr(runtime_authoring_service(), operation)(*args, **kwargs)
+        except NativeError as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "may_have_executed": error.may_have_executed, "request_id": error.request_id,
+                "effect": error.details}, ensure_ascii=False)) from None
+        except (RuntimeAuthoringError, ContentProjectError, WorkspaceError) as error:
+            raise ToolError(json.dumps({"code": error.code, "message": str(error),
+                "receipt": getattr(error, "receipt", None), "effect": getattr(error, "details", None)},
+                ensure_ascii=False)) from None
 
     def deployment_service() -> ContentDeployment:
         nonlocal deployment
@@ -275,6 +296,42 @@ def create_server(workspace_root: Path, native_port: int = 27223,
         return authoring_call("read_report", authoring_id, stage, stream)
 
     @server.tool(annotations=read_only)
+    def sn2_runtime_authoring_recipe(project_path: str, spec_path: str, asset_path: str | None = None) -> dict[str, Any]:
+        """Capture one declared Blueprint revision for native runtime compilation without running an Editor or game operation."""
+        return runtime_authoring_call("recipe", project_path, spec_path, asset_path)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_runtime_compile_blueprint(project_path: str, spec_path: str, asset_path: str | None = None,
+                                      timeout_seconds: float | None = None) -> dict[str, Any]:
+        """Compile captured graph definitions into a unique live Unreal class; persistence and actual execution remain separate."""
+        return runtime_authoring_call("compile", project_path, spec_path, asset_path, timeout_seconds)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
+    def sn2_runtime_save_package(authoring_id: str, timeout_seconds: float | None = None) -> dict[str, Any]:
+        """Serialize a confirmed live revision and verify native package/container outputs; no external cooker or installation runs."""
+        return runtime_authoring_call("save", authoring_id, timeout_seconds)
+
+    @server.tool(annotations=read_only)
+    def sn2_runtime_authoring_status(authoring_id: str | None = None, working: bool = False) -> dict[str, Any]:
+        """Read exact runtime compile receipts or the preceding verified working candidate without native calls."""
+        return runtime_authoring_call("status", authoring_id, working=working)
+
+    @server.tool(annotations=read_only)
+    def sn2_runtime_authoring_report(authoring_id: str) -> dict[str, Any]:
+        """Read complete captured native compile diagnostics, identities and uncertainty for one runtime revision."""
+        return runtime_authoring_call("report", authoring_id)
+
+    @server.tool(annotations=read_only)
+    def sn2_runtime_build_status(build_id: str | None = None) -> dict[str, Any]:
+        """Read native serialization and verified container receipts without claiming installation or fresh loading."""
+        return runtime_authoring_call("build_status", build_id)
+
+    @server.tool(annotations=source_write)
+    def sn2_package_runtime_artifact(runtime_build_receipt: str, destination: str) -> dict[str, Any]:
+        """Publish a verified complete runtime Content/Blueprint package from its own producer receipt, without cooking or installation."""
+        return mod_project_call("runtime_package", runtime_build_receipt, destination)
+
+    @server.tool(annotations=read_only)
     def sn2_content_environment(project_path: str | None = None) -> dict[str, Any]:
         """Inspect configured Modkit/custom engine prerequisites; presence does not prove cooker compatibility."""
         return cook_call("inspect", project_path)
@@ -335,6 +392,15 @@ def create_server(workspace_root: Path, native_port: int = 27223,
             raise ToolError(json.dumps({"code": error.code, "message": str(error),
                 "may_have_executed": error.may_have_executed, "request_id": error.request_id,
                 "effect": error.details}, ensure_ascii=False)) from None
+
+    def runtime_authoring_request(operation: str, params: dict[str, Any], timeout: float | None) -> dict[str, Any]:
+        with native_lock:
+            client = native
+            target = None if selected_target is None else dict(selected_target)
+        if target is not None:
+            params = {**params, "expected_process_id": target["pid"],
+                      "expected_creation_filetime": target["creation_time"]}
+        return client.request(operation, params) if timeout is None else client.request(operation, params, timeout=timeout)
 
     def select_target(target_process: dict[str, Any]) -> dict[str, Any]:
         nonlocal selected_target

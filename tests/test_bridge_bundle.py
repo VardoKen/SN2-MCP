@@ -44,7 +44,8 @@ class BridgeBundleTests(unittest.TestCase):
             self.write(name, b"# isolated development helper\n")
         for name in bundle.DOCUMENTS:
             self.write(name, b"# isolated document\n")
-        for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES, *bundle.AUTHORING_FILES, *bundle.SERVICE_SOURCE_FILES):
+        for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES, *bundle.AUTHORING_FILES,
+                     *bundle.SERVICE_SOURCE_FILES, *bundle.VENDOR_FILES):
             self.write(name, b"// isolated development input\n")
         self.write("pyproject.toml", f'[project]\nversion = "{self.version}"\ndependencies=["mcp==2.3.0"]\n'.encode())
         self.write("uv.lock", f'[[package]]\nname="sn2-mcp"\nversion="{self.version.replace("-dev.", ".dev")}"\nsource={{editable="."}}\n[[package]]\nname="mcp"\nversion="2.3.0"\n'.encode())
@@ -216,6 +217,7 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertTrue((self.target / bundle.BINARIES[0]).exists())
         self.assertTrue((self.target / "src/sn2_mcp/content_cooker.py").exists())
         self.assertTrue((self.target / "src/sn2_mcp/content_authoring.py").exists())
+        self.assertTrue((self.target / "src/sn2_mcp/runtime_authoring.py").exists())
         self.assertTrue((self.target / "native/src/game_access_assets.cpp").exists())
         self.assertTrue((self.target / "native/src/game_access_mods.cpp").exists())
         self.assertTrue((self.target / "development/mod_templates/content_plugin/Plugin.uplugin").exists())
@@ -448,6 +450,54 @@ class BridgeBundleTests(unittest.TestCase):
                 (self.target / relative).write_bytes(raw)
                 manifest_path.write_bytes(original_manifest)
 
+    def test_vendored_c_inputs_and_provenance_survive_manifest_rewriting(self):
+        self.write("native/CMakeLists.txt", b"add_library(hash STATIC vendor/blake3/blake3.c vendor/blake3/blake3_dispatch.c vendor/blake3/blake3_portable.c)\n")
+        self.write("native/src/game_access.cpp", b'#include "blake3.h"\n"bindings_source","runtime_image_patterns"\n')
+        self.write("native/vendor/blake3/blake3.c", b'#include "blake3_impl.h"\n')
+        self.write("native/vendor/blake3/blake3_impl.h", b'#include "blake3.h"\n')
+        self.prepare()
+        manifest_path = self.target / "manifest.json"
+        original_manifest = manifest_path.read_bytes()
+        for relative in bundle.VENDOR_FILES:
+            with self.subTest(missing=relative):
+                raw = (self.target / relative).read_bytes()
+                manifest = json.loads(original_manifest)
+                entry = next(item for item in manifest["files"] if item["path"] == relative)
+                manifest["files"].remove(entry)
+                manifest["file_count"] -= 1
+                manifest["total_bytes"] -= entry["bytes"]
+                manifest["includes"].remove("vendored_native_dependencies")
+                (self.target / relative).unlink()
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                with self.assertRaises(bundle.BundleError) as captured:
+                    bundle.verify_bundle(self.target)
+                self.assertEqual(captured.exception.code, "incomplete_bundle")
+                (self.target / relative).write_bytes(raw)
+                manifest_path.write_bytes(original_manifest)
+
+    def test_legacy_frontend_without_runtime_authoring_remains_verifiable(self):
+        self.prepare()
+        manifest_path = self.target / "manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        relative = "src/sn2_mcp/runtime_authoring.py"
+        entry = next(item for item in manifest["files"] if item["path"] == relative)
+        manifest["files"].remove(entry)
+        manifest["file_count"] -= 1
+        manifest["total_bytes"] -= entry["bytes"]
+        manifest["includes"].remove("runtime_authoring_sources")
+        (self.target / relative).unlink()
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertTrue(bundle.verify_bundle(self.target)["verified_files"])
+        server = self.target / "src/sn2_mcp/server.py"
+        server.write_bytes(b"from .runtime_authoring import RuntimeAuthoring\n")
+        entry = next(item for item in manifest["files"] if item["path"] == "src/sn2_mcp/server.py")
+        entry.update(bytes=server.stat().st_size, sha256=bundle._sha(server.read_bytes()))
+        manifest["total_bytes"] = sum(item["bytes"] for item in manifest["files"])
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(bundle.BundleError) as captured:
+            bundle.verify_bundle(self.target)
+        self.assertEqual(captured.exception.code, "incomplete_bundle")
+
     def test_prepared_content_frontend_imports_and_cli_help_use_bundle_sources(self):
         repository = TOOL.parents[1]
         for name in bundle.SOURCE_FILES:
@@ -460,7 +510,7 @@ class BridgeBundleTests(unittest.TestCase):
         script = """import importlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(root / 'src'))
-for name in ('server', 'content_projects', 'content_cooker', 'content_deployment', 'content_authoring'):
+for name in ('server', 'content_projects', 'content_cooker', 'content_deployment', 'content_authoring', 'runtime_authoring'):
     module = importlib.import_module('sn2_mcp.' + name)
     assert pathlib.Path(module.__file__).is_relative_to(root), module.__file__
 from sn2_mcp.server import main
@@ -478,12 +528,17 @@ main()
         self.write("native/build/private.cpp", b"private generated source")
         self.write("native/_deps/dependency/private.hpp", b"private dependency checkout")
         self.write("native/src/nppBackup/backup.cpp", b"editor backup")
+        self.write("native/vendor/blake3/debug.log", b"private dependency log")
+        self.write("native/vendor/blake3/cache/private.h", b"private dependency cache")
+        self.write("native/vendor/unselected/private.c", b"unselected dependency")
         self.write("development/mod_templates/content_plugin/nppBackup/backup.cpp", b"template backup")
         self.write("development/authoring/SN2MCPAuthoring/Binaries/Win64/UnrealEditor-SN2MCPAuthoring.dll", b"external Editor binary")
         self.write("development/authoring/SN2MCPAuthoring/Intermediate/Build/generated.cpp", b"generated Editor source")
         self.write("development/authoring/SN2MCPAuthoring/Source/nppBackup/backup.cpp", b"authoring backup")
         self.prepare()
         for relative in ("native/build", "native/_deps", "native/src/nppBackup",
+                         "native/vendor/blake3/debug.log", "native/vendor/blake3/cache",
+                         "native/vendor/unselected",
                          "development/mod_templates/content_plugin/nppBackup",
                          "development/authoring/SN2MCPAuthoring/Binaries",
                          "development/authoring/SN2MCPAuthoring/Intermediate",
@@ -502,12 +557,14 @@ class BridgeBundleDependencyTests(unittest.TestCase):
         "src/sn2_mcp/content_cooker.py",
         "src/sn2_mcp/content_deployment.py",
         "src/sn2_mcp/content_authoring.py",
+        "src/sn2_mcp/runtime_authoring.py",
         "native/src/game_access_assets.cpp",
         "native/src/game_access_mods.cpp",
         "native/include/sn2_mcp/asset_path.hpp",
         "native/include/sn2_mcp/blueprint_mod_record.hpp",
         "development/mod_templates/content_plugin/Plugin.uplugin",
         *bundle.AUTHORING_FILES,
+        *bundle.VENDOR_FILES,
     )
 
     def test_selected_dependencies_copy_exact_bytes_without_bundle_generation(self):
@@ -538,6 +595,7 @@ class BridgeBundleDependencyTests(unittest.TestCase):
         def verify_with(omitted):
             files = {path: raw for path, raw in contents.items() if path != omitted}
             manifest = {"schema_version": 1, "kind": "internal_bridge_folder",
+                        "includes": ["vendored_native_dependencies", "runtime_authoring_sources"],
                         "files": [{"path": path, "bytes": len(raw), "sha256": bundle._sha(raw)}
                                   for path, raw in sorted(files.items())],
                         "file_count": len(files), "total_bytes": sum(len(raw) for raw in files.values())}

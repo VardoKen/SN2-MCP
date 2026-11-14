@@ -1,7 +1,7 @@
 {
   "FileVersion": 3,
   "Version": 1,
-  "VersionName": "0.6.3",
+  "VersionName": "0.7.0",
   "FriendlyName": "Subnautica 2 MCP Authoring",
   "Description": "Editor commandlet for editable Content and Blueprint assets.",
   "Category": "Modding",

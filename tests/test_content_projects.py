@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from sn2_mcp.content_projects import (
-    COOK_RECEIPT_KIND, ContentProjectError, ContentProjects,
+    COOK_RECEIPT_KIND, RUNTIME_BUILD_RECEIPT_KIND, ContentProjectError, ContentProjects,
     source_manifest_sha256, verify_content_package,
 )
 from sn2_mcp.workspace import SourceWorkspace, WorkspaceError
@@ -85,6 +85,197 @@ class ContentProjectTests(unittest.TestCase):
         receipt_path = self.repository / "build/receipt.json"
         self._write_receipt(receipt_path, receipt)
         return receipt_path, receipt
+
+    def runtime_receipt(self):
+        """Publisher fixtures identify source and containers, not game execution."""
+        path, cooked = self.cook_receipt()
+        captured = Path(cooked["staged_source_root"])
+        (captured / "Content/Blueprints/BP_Entry.uasset").unlink()
+        spec = captured / "Authoring/specification.json"
+        spec.parent.mkdir()
+        spec.write_text('{"schema":1,"plugin_id":"TestMod","assets":[{"path":"/TestMod/Blueprints/BP_Entry.BP_Entry"}]}', encoding="utf-8")
+        inputs = []
+        for item in cooked["inputs"]:
+            if item["role"] != "authored_asset":
+                inputs.append(item)
+        raw = spec.read_bytes()
+        inputs.append({"path": "Authoring/specification.json", "sha256": sha(raw), "bytes": len(raw),
+                       "role": "authoring_source", "source_path": str(spec)})
+        inputs.sort(key=lambda item: item["path"])
+        revision = source_manifest_sha256(inputs)
+        outputs = [{**item, "authoritative_runtime_output": True} for item in cooked["outputs"]]
+        for item in outputs:
+            item.pop("authoritative_cook_output")
+        receipt = {"kind": RUNTIME_BUILD_RECEIPT_KIND, "schema": 1, "method": "runtime_blueprint",
+                   "state": "succeeded", "compiled": True, "persisted": True, "containerized": True,
+                   "exact_source_compiled": True,
+                   "plugin_id": "TestMod", "project_path": "mods/TestMod", "inputs": inputs,
+                   "source_manifest_sha256": revision, "staged_source_root": str(captured),
+                   "specification_sha256": sha(raw),
+                   "compiler_specification": {"source_path": str(spec), "sha256": sha(raw), "bytes": len(raw)},
+                   "output_root": cooked["output_root"], "outputs": outputs,
+                   "generated_class_paths": ["/TestMod/Blueprints/BP_Entry.BP_Entry_C"],
+                   "compiled_asset_paths": ["/TestMod/Blueprints/BP_Entry.BP_Entry"],
+                   "build_identity": {"build_id": "runtime-fixture", "source_manifest_sha256": revision,
+                                      "specification_sha256": sha(raw),
+                                      "target_platform": "Win64", "configuration": "Shipping"},
+                   "runtime_provenance": {"fixture": True, "game_execution_verified": False}}
+        self._write_receipt(path, receipt)
+        return path, receipt
+
+    def test_runtime_package_accepts_json_authored_source_and_retains_actual_producer(self):
+        path, receipt = self.runtime_receipt()
+        result = self.service.runtime_package(str(path), "artifacts/Runtime-A")
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["metadata"]["build"]["method"], "runtime_blueprint")
+        self.assertEqual(result["source_revision"], receipt["source_manifest_sha256"])
+        self.assertEqual(result["container_validation"], "identified_runtime_outputs_not_fresh_load_verification")
+        self.assertFalse(result["installed"])
+        self.assertEqual(result["runtime_validation"], "not_performed")
+        package = Path(result["package_root"])
+        self.assertTrue((package / "runtime-build-receipt.json").is_file())
+        self.assertFalse((package / "cook-receipt.json").exists())
+        self.assertEqual(json.loads((package / "runtime-build-receipt.json").read_text()), receipt)
+        self.assertEqual((package / "compiler-specification.json").read_bytes(),
+                         Path(receipt["compiler_specification"]["source_path"]).read_bytes())
+        self.assertEqual(result["specification_sha256"], receipt["specification_sha256"])
+        self.assertTrue(self.service.verify("artifacts/Runtime-A")["valid"])
+
+    def test_raw_runtime_pair_is_rejected_and_prior_package_survives(self):
+        path, receipt = self.runtime_receipt()
+        prior = self.service.runtime_package(str(path), "artifacts/Runtime-A")
+        manifest = (Path(prior["package_root"]) / "manifest.json").read_bytes()
+        receipt.update(state="serialized_raw_package", containerized=False)
+        self._write_receipt(path, receipt)
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Runtime-B")
+        self.assertEqual(raised.exception.code, "containerization_not_completed")
+        self.assertFalse((self.workspace / "artifacts/Runtime-B").exists())
+        self.assertEqual((Path(prior["package_root"]) / "manifest.json").read_bytes(), manifest)
+
+    def test_runtime_source_or_payload_changes_do_not_publish(self):
+        path, receipt = self.runtime_receipt()
+        output = next(item for item in receipt["outputs"] if item["role"] == "utoc")
+        Path(output["path"]).write_bytes(b"changed native output")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Runtime-changed")
+        self.assertEqual(raised.exception.code, "runtime_output_changed")
+        self.assertFalse((self.workspace / "artifacts/Runtime-changed").exists())
+
+    def test_runtime_build_requires_exact_source_and_matching_compiled_assets(self):
+        path, receipt = self.runtime_receipt()
+        for proof in (False, None):
+            with self.subTest(exact_source_compiled=proof):
+                receipt["exact_source_compiled"] = proof
+                self._write_receipt(path, receipt)
+                with self.assertRaises(ContentProjectError) as raised:
+                    self.service.runtime_package(str(path), "artifacts/Runtime-unverified")
+                self.assertEqual(raised.exception.code, "runtime_build_not_succeeded")
+                self.assertFalse((self.workspace / "artifacts/Runtime-unverified").exists())
+        receipt["exact_source_compiled"] = True
+        receipt["compiled_asset_paths"] = ["/TestMod/Other.Other"]
+        self._write_receipt(path, receipt)
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Runtime-mismatched-assets")
+        self.assertEqual(raised.exception.code, "runtime_build_provenance_mismatch")
+        self.assertFalse((self.workspace / "artifacts/Runtime-mismatched-assets").exists())
+
+    def test_runtime_build_requires_absolute_identified_output_paths(self):
+        path, receipt = self.runtime_receipt()
+        output = receipt["outputs"][0]
+        output["path"] = output["relative_path"]
+        self._write_receipt(path, receipt)
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Runtime-relative-output")
+        self.assertEqual(raised.exception.code, "invalid_runtime_build_receipt")
+        self.assertFalse((self.workspace / "artifacts/Runtime-relative-output").exists())
+
+    def test_runtime_entry_requires_compiled_class_and_complete_triplet(self):
+        path, receipt = self.runtime_receipt()
+        receipt["generated_class_paths"] = ["/TestMod/Other.Other_C"]
+        receipt["compiled_asset_paths"] = ["/TestMod/Other.Other"]
+        self._write_receipt(path, receipt)
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Runtime-wrong-entry")
+        self.assertEqual(raised.exception.code, "source_provenance_mismatch")
+        receipt["generated_class_paths"] = ["/TestMod/Blueprints/BP_Entry.BP_Entry_C"]
+        receipt["compiled_asset_paths"] = ["/TestMod/Blueprints/BP_Entry.BP_Entry"]
+        missing = next(item for item in receipt["outputs"] if item["role"] == "ucas")
+        receipt["outputs"].remove(missing)
+        Path(missing["path"]).unlink()
+        self._write_receipt(path, receipt)
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Runtime-incomplete")
+        self.assertEqual(raised.exception.code, "containerization_not_completed")
+
+    def test_runtime_verifier_rejects_changed_producer_identity(self):
+        path, _ = self.runtime_receipt()
+        result = self.service.runtime_package(str(path), "artifacts/Runtime-A")
+        manifest_path = Path(result["package_root"]) / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["build"]["identity"]["build_id"] = "other-runtime-build"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ContentProjectError) as raised:
+            verify_content_package(Path(result["package_root"]))
+        self.assertEqual(raised.exception.code, "runtime_build_provenance_mismatch")
+
+    def test_external_compiler_specification_is_preserved_and_identifies_graph_revision(self):
+        path, receipt = self.runtime_receipt()
+        captured = Path(receipt["staged_source_root"])
+        original_specification = Path(receipt["compiler_specification"]["source_path"])
+        raw = original_specification.read_bytes()
+        original_specification.unlink()
+        receipt["inputs"] = [item for item in receipt["inputs"] if item["path"] != "Authoring/specification.json"]
+        project_revision = source_manifest_sha256(receipt["inputs"])
+        receipt["source_manifest_sha256"] = project_revision
+        receipt["build_identity"]["source_manifest_sha256"] = project_revision
+        external = self.repository / "build/external-specification.json"
+        external.write_bytes(raw)
+        receipt["compiler_specification"]["source_path"] = str(external)
+        self._write_receipt(path, receipt)
+        first = self.service.runtime_package(str(path), "artifacts/Runtime-external-A")
+        changed = json.loads(raw)
+        changed["assets"][0]["variables"] = [{"name": "Count", "type": "int", "default": 7}]
+        changed_raw = json.dumps(changed).encode("utf-8")
+        external.write_bytes(changed_raw)
+        receipt["compiler_specification"].update(sha256=sha(changed_raw), bytes=len(changed_raw))
+        receipt["specification_sha256"] = sha(changed_raw)
+        receipt["build_identity"]["specification_sha256"] = sha(changed_raw)
+        self._write_receipt(path, receipt)
+        second = self.service.runtime_package(str(path), "artifacts/Runtime-external-B")
+        self.assertEqual(first["source_revision"], second["source_revision"])
+        self.assertNotEqual(first["specification_sha256"], second["specification_sha256"])
+        self.assertEqual((Path(first["package_root"]) / "compiler-specification.json").read_bytes(), raw)
+        self.assertEqual((Path(second["package_root"]) / "compiler-specification.json").read_bytes(), changed_raw)
+        shutil.rmtree(captured)
+        external.unlink()
+        self.assertTrue(self.service.verify("artifacts/Runtime-external-A")["valid"])
+        self.assertTrue(self.service.verify("artifacts/Runtime-external-B")["valid"])
+
+    def test_compiler_specification_changes_and_reidentified_package_bytes_are_rejected(self):
+        path, receipt = self.runtime_receipt()
+        specification = Path(receipt["compiler_specification"]["source_path"])
+        external = self.repository / "build/captured-specification.json"
+        external.write_bytes(specification.read_bytes())
+        receipt["compiler_specification"]["source_path"] = str(external)
+        self._write_receipt(path, receipt)
+        result = self.service.runtime_package(str(path), "artifacts/Runtime-specification-A")
+        external.write_bytes(b'{"schema":1,"plugin_id":"TestMod","assets":[]}')
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Runtime-specification-changed")
+        self.assertEqual(raised.exception.code, "compiler_specification_changed")
+        self.assertFalse((self.workspace / "artifacts/Runtime-specification-changed").exists())
+        package = Path(result["package_root"])
+        modified_raw = external.read_bytes()
+        (package / "compiler-specification.json").write_bytes(modified_raw)
+        manifest_path = package / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(item for item in manifest["files"] if item["path"] == "compiler-specification.json")
+        entry.update(sha256=sha(modified_raw), bytes=len(modified_raw))
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.verify("artifacts/Runtime-specification-A")
+        self.assertEqual(raised.exception.code, "compiler_specification_changed")
 
     def test_new_project_is_editable_content_plugin_and_claims_no_authored_or_compiled_assets(self):
         result = self.service.create("mods/MyContent", "MyContent", 'A title with "quotes"')

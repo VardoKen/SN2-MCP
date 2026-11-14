@@ -129,6 +129,9 @@ private:
     uint64_t next_snapshot_{};
 
     nlohmann::json execute(const nlohmann::json& request);
+    nlohmann::json runtime_create_package(const nlohmann::json& params);
+    nlohmann::json runtime_compile_blueprint(const nlohmann::json& params);
+    nlohmann::json runtime_save_package(const nlohmann::json& params);
     std::string name(uint64_t fname) const;
     std::string object_name(void* object) const;
     std::string object_path(void* object) const;
