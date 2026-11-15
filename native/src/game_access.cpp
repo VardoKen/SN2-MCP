@@ -665,7 +665,7 @@ json GameAccess::status() const {
         target["creation_filetime"]=std::to_string(sn2::loader::creation_filetime(GetCurrentProcess()));
     } catch(const std::exception& error) {target["error"]=error.what();}
     const bool reflection=reflection_validated_.load();
-    return {{"version","0.7.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+    return {{"version","0.8.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
             {"tick_hook_current",tick_hook},
             {"process_id",GetCurrentProcessId()},{"process_creation_filetime",target.at("creation_filetime")},{"target_process",target},
             {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},

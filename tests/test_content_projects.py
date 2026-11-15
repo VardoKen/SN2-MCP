@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from sn2_mcp.content_projects import (
     COOK_RECEIPT_KIND, RUNTIME_BUILD_RECEIPT_KIND, ContentProjectError, ContentProjects,
@@ -37,7 +38,7 @@ class ContentProjectTests(unittest.TestCase):
     def _write_receipt(self, path, receipt):
         path.write_text(json.dumps(receipt), encoding="utf-8")
 
-    def cook_receipt(self):
+    def cook_receipt(self, *, entry_class="/TestMod/Blueprints/BP_Entry.BP_Entry_C"):
         """Prepare structural provenance fixtures without emulating compilation."""
         self.service.create("mods/TestMod", "TestMod", "Testing content")
         project = self.workspace / "mods/TestMod"
@@ -46,7 +47,7 @@ class ContentProjectTests(unittest.TestCase):
         asset.write_bytes(b"authored asset fixture, not a compiled Blueprint")
         metadata_path = project / "mod.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        metadata["entry_class"] = "/TestMod/Blueprints/BP_Entry.BP_Entry_C"
+        metadata["entry_class"] = entry_class
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
         validated = self.service.validate("mods/TestMod")
         self.assertTrue(validated["valid"])
@@ -122,6 +123,110 @@ class ContentProjectTests(unittest.TestCase):
                    "runtime_provenance": {"fixture": True, "game_execution_verified": False}}
         self._write_receipt(path, receipt)
         return path, receipt
+
+    def captured_game_config(self, path, receipt):
+        """Capture configuration as a source input, without inventing cook output."""
+        raw = b"[Mod]\r\nStartupClass=/TestMod/Blueprints/BP_Entry.BP_Entry_C\r\n"
+        config = Path(receipt["staged_source_root"]) / "Config/Game.ini"
+        config.parent.mkdir()
+        config.write_bytes(raw)
+        receipt["inputs"].append({"path": "Config/Game.ini", "sha256": sha(raw), "bytes": len(raw),
+                                  "role": "authoring_source", "source_path": str(config)})
+        receipt["inputs"].sort(key=lambda item: item["path"])
+        revision = source_manifest_sha256(receipt["inputs"])
+        receipt["source_manifest_sha256"] = revision
+        receipt["build_identity"]["source_manifest_sha256"] = revision
+        self._write_receipt(path, receipt)
+        return config, raw
+
+    def test_captured_game_config_is_exact_loose_payload_and_installed_inventory(self):
+        from sn2_mcp.content_deployment import ContentDeployment
+        path, receipt = self.cook_receipt(entry_class=None)
+        config, raw = self.captured_game_config(path, receipt)
+        outputs = json.loads(json.dumps(receipt["outputs"]))
+        result = self.service.package(str(path), "artifacts/Config-A")
+        expected = {"path": "TestMod/Config/Game.ini", "sha256": sha(raw), "bytes": len(raw),
+                    "role": "plugin_config"}
+        self.assertEqual(result["configs"], [expected])
+        self.assertEqual(result["metadata"]["configs"], [expected])
+        self.assertIsNone(result["activation"]["entry_class"])
+        self.assertEqual(result["activation"]["mechanism"], "shipping_plugin_discovery")
+        package = Path(result["package_root"])
+        documentation = (package / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Subnautica2/Mods", documentation)
+        self.assertIn("Captured plugin configuration, when present", documentation)
+        self.assertIn("Discovery alone does not execute arbitrary content", documentation)
+        self.assertNotIn("through the bridge's installation tool", documentation)
+        self.assertNotIn("A generated-class reference identifies intended activation", documentation)
+        self.assertEqual((package / expected["path"]).read_bytes(), raw)
+        self.assertEqual(json.loads((package / "cook-receipt.json").read_text())["outputs"], outputs)
+        self.assertFalse(any(item["path"].endswith("Game.ini") for item in outputs))
+        game = self.base / "game"
+        (game / "Subnautica2").mkdir(parents=True)
+        runtime = SimpleNamespace(repository=self.repository, game=game,
+                                  process_state=lambda: {"source": "native_process_handle_snapshot",
+                                                         "processes": [], "running": False})
+        deployment = ContentDeployment(runtime, verifier=self.service.verify, central_root=self.base)
+        installed = deployment.install("artifacts/Config-A", result["manifest_sha256"])
+        self.assertEqual(installed["state"], "installed")
+        self.assertEqual((game / "Subnautica2/Mods/TestMod/Config/Game.ini").read_bytes(), raw)
+        self.assertIn("Config/Game.ini", {item["path"] for item in installed["installed_inventory"]})
+        config.unlink()
+        self.assertTrue(self.service.verify("artifacts/Config-A")["valid"])
+
+    def test_runtime_package_retains_captured_game_config_without_claiming_native_output(self):
+        path, receipt = self.runtime_receipt()
+        _, raw = self.captured_game_config(path, receipt)
+        result = self.service.runtime_package(str(path), "artifacts/Runtime-config")
+        self.assertEqual(result["configs"][0]["sha256"], sha(raw))
+        package = Path(result["package_root"])
+        self.assertEqual((package / "TestMod/Config/Game.ini").read_bytes(), raw)
+        self.assertEqual(len(receipt["outputs"]), len(result["containers"]) + 1)
+        self.assertFalse(result["installed"])
+
+    def test_changed_captured_game_config_does_not_publish(self):
+        path, receipt = self.cook_receipt()
+        config, _ = self.captured_game_config(path, receipt)
+        config.write_bytes(b"[Mod]\nStartupClass=other\n")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.package(str(path), "artifacts/Config-changed")
+        self.assertEqual(raised.exception.code, "captured_source_changed")
+        self.assertFalse((self.workspace / "artifacts/Config-changed").exists())
+
+    def test_reidentified_game_config_cannot_bypass_source_correlation(self):
+        path, receipt = self.cook_receipt()
+        self.captured_game_config(path, receipt)
+        result = self.service.package(str(path), "artifacts/Config-A")
+        package = Path(result["package_root"])
+        changed = b"[Mod]\nStartupClass=changed\n"
+        (package / "TestMod/Config/Game.ini").write_bytes(changed)
+        manifest_path = package / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(item for item in manifest["files"] if item["path"] == "TestMod/Config/Game.ini")
+        entry.update(sha256=sha(changed), bytes=len(changed))
+        manifest["configs"] = [entry]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.verify("artifacts/Config-A")
+        self.assertEqual(raised.exception.code, "source_provenance_mismatch")
+
+    def test_config_inventory_does_not_admit_arbitrary_plugin_files(self):
+        path, receipt = self.cook_receipt()
+        self.captured_game_config(path, receipt)
+        result = self.service.package(str(path), "artifacts/Config-A")
+        package = Path(result["package_root"])
+        extra = package / "TestMod/Config/Other.ini"
+        extra.write_bytes(b"unidentified configuration")
+        manifest_path = package / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        item = {"path": "TestMod/Config/Other.ini", "sha256": sha(extra.read_bytes()), "bytes": extra.stat().st_size,
+                "role": "plugin_config"}
+        manifest["files"].append(item)
+        manifest["configs"].append(item)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.verify("artifacts/Config-A")
+        self.assertEqual(raised.exception.code, "source_provenance_mismatch")
 
     def test_runtime_package_accepts_json_authored_source_and_retains_actual_producer(self):
         path, receipt = self.runtime_receipt()
@@ -352,8 +457,11 @@ class ContentProjectTests(unittest.TestCase):
         self.assertTrue(result["compiled"])
         self.assertFalse(result["installed"])
         self.assertEqual(result["source_revision"], receipt["source_manifest_sha256"])
+        self.assertNotIn("configs", result)
+        self.assertNotIn("configs", result["metadata"])
         self.assertEqual({item["role"] for item in result["containers"]}, {"pak", "utoc", "ucas"})
         self.assertEqual(result["activation"]["entry_class"], "/TestMod/Blueprints/BP_Entry.BP_Entry_C")
+        self.assertEqual(result["activation"]["mechanism"], "shipping_plugin_discovery_and_native_bridge_asset_activation")
         self.assertFalse(result["activation"]["entry_class_load_verified"])
         self.assertEqual(self.service.verify("artifacts/TestMod-A")["manifest_sha256"], result["manifest_sha256"])
         self.assertFalse(any(Path(item["path"]).suffix == ".dll" for item in result["files"]))

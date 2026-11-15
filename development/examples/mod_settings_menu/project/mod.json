@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "kind": "sn2_content_mod_project",
+  "mod_id": "SN2ModSettingsTest",
+  "plugin_name": "SN2ModSettingsTest",
+  "title": "Mod Settings Test",
+  "entry_class": null
+}

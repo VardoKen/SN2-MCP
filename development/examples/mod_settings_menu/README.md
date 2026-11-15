@@ -1,0 +1,23 @@
+# Mod Settings Test
+
+Source for the assigned test Content/Blueprint mod. The test adds a "Настройки модов" button to the existing main menu and opens an empty settings-style page with a return button. It does not discover mods, persist settings or add gameplay logic.
+
+The source Content plugin is `SN2ModSettingsTest`, version `0.1.0`. Its Editor-only `ModSettingsMenuBuilder` creates three actual Widget Blueprints from the exact game's loaded classes and visual templates in an isolated compatible Modkit project. The builder is development tooling and is excluded from the installed mod.
+
+The plugin's captured loose `Config/Game.ini` selects `WBP_ModMainScreen` through the game's `AutoSN2Settings.MainScreenClass`. This thin child retains the original menu tree and calls inherited behavior. Its Tick loads `WBP_ModMenuExtension` through the class asset's string path after startup, keeping the startup class free of typed references to the extension and page. The extension derives from native `UserWidget`, owns an empty input-transparent viewport tree for ticking, and contains the game's menu-button injection and page-opening logic. `WBP_ModSettingsPage` supplies the empty settings-style page and Back handler. The intended consumer payload remains only the Content plugin's descriptor, loose configuration and cooked containers. Startup activation and visible click/page/back behavior require the separate no-bridge Shipping acceptance; source inspection and cooking alone do not establish them.
+
+From the bridge repository root, use the configured Python environment and the acquired compatible Engine/Modkit/FMOD installation:
+
+```powershell
+.\.venv\Scripts\python.exe .\development\examples\mod_settings_menu\build_mod.py --workspace-root D:\SN2Modding --game-root "E:\Games\Subnautica 2"
+```
+
+`--engine-root` and `--modkit-root` may select explicit compatible roots; their defaults are `D:/SN2Modding/Engine` and `D:/SN2Modding/Modkit`. The helper build uses the precompiled custom Engine, its bundled .NET/UnrealBuildTool and Visual Studio 2022 compiler `14.44.35207`, with `-NoPCH` and one parallel action. The runner creates a unique captured project under `D:/SN2Modding/projects/ModSettingsMenuBuild-<id>` and does not edit the original Modkit or installed game.
+
+The authoring invocation explicitly selects `-BackgroundWidget=DarkFade_1`, `-TitleWidget=SettingTitle` and `-BackWidget=CancelGraphicsButton` from the loaded settings template. After compiling and saving all three assets, a separate contained Editor process invokes `-InspectSaved` on the captured project. The reload gate requires the exact parents, a main-screen child without its own rooted tree, rooted extension/page trees, automatic main-screen and extension ticking, saved graph nodes/connections and nonempty owned function bodies. Main requires `Construct`, `Tick` and `Destruct`; the extension requires `OpenModSettings`, `Tick` and `Destruct`; the page requires `CloseModSettings` and `Construct`. Inspection must preserve all three source asset hashes before cooking. Original-tree initialization, deferred extension loading and visible runtime behavior remain game acceptance criteria.
+
+The authoring report must record the exact extension soft class path, native extension parent, automatic Tick and `HitTestInvisible` root. Both authoring and fresh reload must record the startup wrapper's direct script/property references and confirm that none directly references the extension, page, game lobby or selected stock button Blueprint. This gate preserves deferred loading: the earlier startup class with those game UI dependencies crashed before its first frame, while the same classes loaded successfully after stock-menu startup. The new composition still requires its own Shipping startup and visible interaction acceptance.
+
+Each build/reload/cook stage retains complete process receipts and logs in that unique workspace. `authoring-report.json`, `authored-assets.json` and `reload-report.json` identify the saved assets and fresh reload result; `cook-result.json` and `package-result.json` correlate the captured source with cooked outputs and the verified package. The runner finishes with the verified `SN2ModSettingsTest` Content plugin folder inside the package, excluding the Editor helper, bridge and mod DLLs. Its JSON result reports `plugin_folder` for game installation. It does not install the package or start Shipping. A successful reload/cook/package result remains separate from natural startup and visible button → empty page → Back acceptance in the game.
+
+Detailed plan and evidence owner: [Mod settings test](../../../../docs/bridges/subnautica-2/mod-settings-test.md).

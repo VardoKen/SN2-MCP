@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sn2-mcp"
-version = "0.7.0"
+version = "0.8.0"
 description = "Native Unreal interface research and runtime Content/Blueprint mod development for Subnautica 2"
 readme = {text = """
 # Subnautica 2 MCP

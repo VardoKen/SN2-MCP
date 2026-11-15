@@ -1,0 +1,13 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Mod Settings Test",
+  "Description": "Test main-menu button and empty settings-style page.",
+  "Category": "Modding",
+  "CanContainContent": true,
+  "EnabledByDefault": true,
+  "Installed": false,
+  "IsBetaVersion": false,
+  "IsExperimentalVersion": false
+}

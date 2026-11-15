@@ -366,6 +366,11 @@ def _runtime_specification(receipt: dict, raw: bytes) -> None:
         raise ContentProjectError("runtime_build_provenance_mismatch", "The compiler specification does not identify the runtime build's compiled assets")
 
 
+def _plugin_config_inputs(inputs: list[dict]) -> list[dict]:
+    """Select the game's supported loose plugin configuration from captured source."""
+    return [item for item in inputs if item["path"] == "Config/Game.ini"]
+
+
 def _container_contract(entries: list[dict], plugin: str, *, missing_code: str = "missing_cook_output") -> list[dict]:
     containers = []
     groups = {}
@@ -461,16 +466,28 @@ def verify_content_package(package_root: Path) -> dict:
     if (len(descriptor_inputs) != 1 or descriptor_inputs[0]["sha256"] != _sha(descriptor_raw)
             or descriptor_inputs[0]["bytes"] != len(descriptor_raw)):
         raise ContentProjectError("source_provenance_mismatch", "The packaged descriptor differs from the captured source descriptor")
+    config_inputs = _plugin_config_inputs(inputs)
+    config_paths = {plugin + "/" + item["path"] for item in config_inputs}
+    configs = [item for item in entries if item["path"] in config_paths]
+    if len(configs) != len(config_inputs) or (configs and manifest.get("configs") != configs):
+        raise ContentProjectError("source_provenance_mismatch", "The package must identify every selected captured plugin configuration")
+    if not configs and "configs" in manifest:
+        raise ContentProjectError("source_provenance_mismatch", "The package declares configuration absent from its captured source")
+    for source in config_inputs:
+        config = next(item for item in configs if item["path"] == plugin + "/" + source["path"])
+        if (config["role"] != "plugin_config" or any(config[key] != source[key] for key in ("sha256", "bytes"))):
+            raise ContentProjectError("source_provenance_mismatch", "A loose plugin configuration differs from its captured source input")
     containers = _container_contract(entries, plugin, missing_code="containerization_not_completed" if runtime else "missing_cook_output")
     if manifest.get("containers") != containers:
         raise ContentProjectError(provenance_code, "The package container identities differ from its inventory")
     payload = [item for item in entries if item["path"].startswith(plugin + "/")]
-    if len(payload) != len(containers) + 1 or manifest.get("descriptor") != next(item for item in payload if item["path"] == descriptor_path):
-        raise ContentProjectError("invalid_package", "The selected game payload must contain exactly the plugin descriptor and cooked containers")
-    if expected != required | {item["path"] for item in containers}:
+    if len(payload) != len(containers) + 1 + len(configs) or manifest.get("descriptor") != next(item for item in payload if item["path"] == descriptor_path):
+        raise ContentProjectError("invalid_package", "The selected game payload must contain its descriptor, cooked containers and captured plugin configuration")
+    if expected != required | {item["path"] for item in containers} | config_paths:
         raise ContentProjectError("invalid_package", "The package contains entries outside its complete content/build contract")
     outputs = receipt["outputs"]
-    if len(outputs) != len(payload):
+    build_payload = [item for item in payload if item["path"] not in config_paths]
+    if len(outputs) != len(build_payload):
         raise ContentProjectError(provenance_code, "The package does not account for every identified build output")
     output_root = _absolute_path(receipt.get("output_root"), "output_root", runtime=runtime)
     output_paths = set()
@@ -487,7 +504,7 @@ def verify_content_package(package_root: Path) -> dict:
         if package_path.casefold() in output_paths:
             raise ContentProjectError("duplicate_path", "The build output inventory repeats a Windows path")
         output_paths.add(package_path.casefold())
-        candidate = next((item for item in payload if item["path"] == package_path), None)
+        candidate = next((item for item in build_payload if item["path"] == package_path), None)
         if candidate is None or any(candidate[key] != output.get(key) for key in ("sha256", "bytes", "role")):
             raise ContentProjectError(provenance_code, "A packaged payload differs from its identified build output")
     activation = _json(_read(files["activation.json"], root))
@@ -505,6 +522,7 @@ def verify_content_package(package_root: Path) -> dict:
             "manifest_sha256": _sha(manifest_raw), "metadata": manifest, "plugin_id": plugin,
             "files": entries, "activation": activation, "containers": containers,
             "descriptor": manifest["descriptor"], "source_revision": revision,
+            **({"configs": configs} if configs else {}),
             **({"specification_sha256": receipt["specification_sha256"]} if runtime else {}),
             "file_count": len(entries), "compiled": True, "installed": False,
             "container_validation": ("identified_runtime_outputs_not_fresh_load_verification" if runtime
@@ -672,10 +690,32 @@ class ContentProjects:
         containers = _container_contract(payload, plugin, missing_code="containerization_not_completed" if runtime else "missing_cook_output")
         if len(payload) != len(containers) + 1:
             raise ContentProjectError("invalid_package", "The selected payload must contain only its descriptor and cooked containers")
+        config_files = {}
+        for item in _plugin_config_inputs(inputs):
+            config_path = plugin + "/" + item["path"]
+            files[config_path] = captured_files[item["path"]]
+            config_files[config_path] = files[config_path]
+            roles[config_path] = "plugin_config"
+        configs = _inventory(config_files, roles=roles)
         activation = {"plugin_name": plugin, "mount_root": "/" + plugin + "/", "entry_class": entry,
-                      "mechanism": "shipping_plugin_discovery_and_native_bridge_asset_activation",
+                      "mechanism": ("shipping_plugin_discovery_and_native_bridge_asset_activation" if entry
+                                    else "shipping_plugin_discovery"),
                       "replacement_boundary": "game_restart", "requires_installation": True,
                       "runtime_validation": "not_performed", "entry_class_load_verified": False}
+        activation_description = (
+            "Install the selected plugin subtree through the bridge's installation tool. "
+            "Use a fresh game process to discover the selected revision, inspect plugin/mount "
+            "state, and independently verify content registration and authored Blueprint "
+            "effects. A generated-class reference identifies intended activation; it does "
+            "not prove class loading or BeginPlay. "
+            if entry else
+            "With the game closed, install the selected plugin subtree in Subnautica2/Mods. "
+            "Start a fresh game process to discover the selected revision and independently "
+            "verify plugin/mount state and content registration. No Blueprint entry is declared "
+            "for native bridge activation. Captured plugin configuration, when present, may "
+            "select game-owned startup classes; verify that the game applies it and that the "
+            "intended behavior occurs. Discovery alone does not execute arbitrary content. "
+        )
         files.update({receipt_name: receipt_raw,
                       "source-manifest.json": _json_bytes({"source_manifest_sha256": revision, "inputs": inputs}),
                       "project-metadata.json": metadata_raw,
@@ -686,11 +726,7 @@ class ContentProjects:
                                     + ("The build ran through the native runtime Blueprint backend. " if runtime else "") +
                                     "The descriptor and cooked Pak/IoStore containers are recorded in manifest.json. "
                                     "This package preparation does not install, mount or activate the mod.\n\n"
-                                    "Install the selected plugin subtree through the bridge's installation tool. "
-                                    "Use a fresh game process to discover the selected revision, inspect plugin/mount "
-                                    "state, and independently verify content registration and authored Blueprint "
-                                    "effects. A generated-class reference identifies intended activation; it does "
-                                    "not prove class loading or BeginPlay. Replacement uses confirmed game restart.\n").encode("utf-8")})
+            + activation_description + "Replacement uses confirmed game restart.\n").encode("utf-8")})
         roles.update({receipt_name: receipt_role, "source-manifest.json": "source_inventory",
                       "project-metadata.json": "project_manifest",
                       "activation.json": "activation_manifest", "README.md": "package_documentation"})
@@ -710,6 +746,7 @@ class ContentProjects:
                                  if runtime else {})},
                     "descriptor": next(item for item in payload if item["path"] == descriptor_path),
                     "containers": containers, "files": _inventory(files, roles=roles), "activation": activation,
+                    **({"configs": configs} if configs else {}),
                     "compiled": True, "installed": False, "runtime_validation": "not_performed"}
         files["manifest.json"] = _json_bytes(manifest)
         target = self._publish(destination, files, package=True)

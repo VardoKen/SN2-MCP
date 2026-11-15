@@ -1,0 +1,17 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Mod Settings Menu Builder",
+  "Description": "Editor-only authoring commandlet for the mod settings menu example.",
+  "Category": "Modding",
+  "EnabledByDefault": false,
+  "CanContainContent": false,
+  "Modules": [
+    {
+      "Name": "ModSettingsMenuBuilder",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}
