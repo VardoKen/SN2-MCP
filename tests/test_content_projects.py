@@ -124,13 +124,12 @@ class ContentProjectTests(unittest.TestCase):
         self._write_receipt(path, receipt)
         return path, receipt
 
-    def captured_game_config(self, path, receipt):
+    def captured_config(self, path, receipt, relative_path, raw):
         """Capture configuration as a source input, without inventing cook output."""
-        raw = b"[Mod]\r\nStartupClass=/TestMod/Blueprints/BP_Entry.BP_Entry_C\r\n"
-        config = Path(receipt["staged_source_root"]) / "Config/Game.ini"
-        config.parent.mkdir()
+        config = Path(receipt["staged_source_root"]) / relative_path
+        config.parent.mkdir(exist_ok=True)
         config.write_bytes(raw)
-        receipt["inputs"].append({"path": "Config/Game.ini", "sha256": sha(raw), "bytes": len(raw),
+        receipt["inputs"].append({"path": relative_path, "sha256": sha(raw), "bytes": len(raw),
                                   "role": "authoring_source", "source_path": str(config)})
         receipt["inputs"].sort(key=lambda item: item["path"])
         revision = source_manifest_sha256(receipt["inputs"])
@@ -138,6 +137,15 @@ class ContentProjectTests(unittest.TestCase):
         receipt["build_identity"]["source_manifest_sha256"] = revision
         self._write_receipt(path, receipt)
         return config, raw
+
+    def captured_game_config(self, path, receipt):
+        raw = b"[Mod]\r\nStartupClass=/TestMod/Blueprints/BP_Entry.BP_Entry_C\r\n"
+        return self.captured_config(path, receipt, "Config/Game.ini", raw)
+
+    def captured_engine_config(self, path, receipt):
+        raw = (b"[/Script/EngineSettings.GameMapsSettings]\r\n"
+               b"GameInstanceClass=/TestMod/Blueprints/BP_Entry.BP_Entry_C\r\n")
+        return self.captured_config(path, receipt, "Config/Engine.ini", raw)
 
     def test_captured_game_config_is_exact_loose_payload_and_installed_inventory(self):
         from sn2_mcp.content_deployment import ContentDeployment
@@ -183,6 +191,150 @@ class ContentProjectTests(unittest.TestCase):
         self.assertEqual((package / "TestMod/Config/Game.ini").read_bytes(), raw)
         self.assertEqual(len(receipt["outputs"]), len(result["containers"]) + 1)
         self.assertFalse(result["installed"])
+
+    def test_captured_engine_config_is_exact_loose_payload_and_installed_inventory(self):
+        from sn2_mcp.content_deployment import ContentDeployment
+        path, receipt = self.cook_receipt(entry_class=None)
+        config, raw = self.captured_engine_config(path, receipt)
+        result = self.service.package(str(path), "artifacts/Engine-config")
+        expected = {"path": "TestMod/Config/Engine.ini", "sha256": sha(raw), "bytes": len(raw),
+                    "role": "plugin_config"}
+        self.assertEqual(result["configs"], [expected])
+        self.assertEqual(result["metadata"]["configs"], [expected])
+        package = Path(result["package_root"])
+        self.assertEqual((package / expected["path"]).read_bytes(), raw)
+        packaged_inputs = json.loads((package / "source-manifest.json").read_text())["inputs"]
+        self.assertEqual(next(item for item in packaged_inputs if item["path"] == "Config/Engine.ini"),
+                         next(item for item in receipt["inputs"] if item["path"] == "Config/Engine.ini"))
+        self.assertEqual(json.loads((package / "cook-receipt.json").read_text())["outputs"], receipt["outputs"])
+        self.assertFalse(any(item["path"].endswith("Engine.ini") for item in receipt["outputs"]))
+        game = self.base / "game"
+        (game / "Subnautica2").mkdir(parents=True)
+        runtime = SimpleNamespace(repository=self.repository, game=game,
+                                  process_state=lambda: {"source": "native_process_handle_snapshot",
+                                                         "processes": [], "running": False})
+        deployment = ContentDeployment(runtime, verifier=self.service.verify, central_root=self.base)
+        installed = deployment.install("artifacts/Engine-config", result["manifest_sha256"])
+        self.assertEqual((game / "Subnautica2/Mods/TestMod/Config/Engine.ini").read_bytes(), raw)
+        self.assertIn("Config/Engine.ini", {item["path"] for item in installed["installed_inventory"]})
+        config.unlink()
+        self.assertTrue(self.service.verify("artifacts/Engine-config")["valid"])
+
+    def test_cooker_package_retains_both_captured_configs(self):
+        path, receipt = self.cook_receipt()
+        _, game_raw = self.captured_game_config(path, receipt)
+        _, engine_raw = self.captured_engine_config(path, receipt)
+        result = self.service.package(str(path), "artifacts/Both-configs")
+        expected = [{"path": "TestMod/Config/" + name, "sha256": sha(raw), "bytes": len(raw),
+                     "role": "plugin_config"}
+                    for name, raw in (("Engine.ini", engine_raw), ("Game.ini", game_raw))]
+        self.assertEqual(result["configs"], expected)
+        self.assertEqual(result["metadata"]["configs"], expected)
+        package = Path(result["package_root"])
+        self.assertEqual((package / "TestMod/Config/Engine.ini").read_bytes(), engine_raw)
+        self.assertEqual((package / "TestMod/Config/Game.ini").read_bytes(), game_raw)
+        self.assertEqual(json.loads((package / "cook-receipt.json").read_text())["outputs"], receipt["outputs"])
+        self.assertEqual(len(receipt["outputs"]), len(result["containers"]) + 1)
+        self.assertTrue(self.service.verify("artifacts/Both-configs")["valid"])
+
+    def test_runtime_package_retains_both_configs_without_claiming_native_output(self):
+        path, receipt = self.runtime_receipt()
+        _, game_raw = self.captured_game_config(path, receipt)
+        _, engine_raw = self.captured_engine_config(path, receipt)
+        result = self.service.runtime_package(str(path), "artifacts/Runtime-both-configs")
+        expected = [{"path": "TestMod/Config/" + name, "sha256": sha(raw), "bytes": len(raw),
+                     "role": "plugin_config"}
+                    for name, raw in (("Engine.ini", engine_raw), ("Game.ini", game_raw))]
+        self.assertEqual(result["configs"], expected)
+        package = Path(result["package_root"])
+        self.assertEqual((package / "TestMod/Config/Engine.ini").read_bytes(), engine_raw)
+        self.assertEqual((package / "TestMod/Config/Game.ini").read_bytes(), game_raw)
+        self.assertEqual(json.loads((package / "runtime-build-receipt.json").read_text()), receipt)
+        self.assertEqual(len(receipt["outputs"]), len(result["containers"]) + 1)
+        self.assertTrue(self.service.verify("artifacts/Runtime-both-configs")["valid"])
+
+    def test_changed_captured_engine_config_does_not_publish_runtime_package(self):
+        path, receipt = self.runtime_receipt()
+        config, _ = self.captured_engine_config(path, receipt)
+        config.write_bytes(b"[/Script/EngineSettings.GameMapsSettings]\nGameInstanceClass=changed\n")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.runtime_package(str(path), "artifacts/Engine-changed")
+        self.assertEqual(raised.exception.code, "captured_source_changed")
+        self.assertFalse((self.workspace / "artifacts/Engine-changed").exists())
+
+    def test_reidentified_engine_config_cannot_bypass_source_correlation(self):
+        path, receipt = self.cook_receipt()
+        self.captured_engine_config(path, receipt)
+        result = self.service.package(str(path), "artifacts/Engine-config")
+        package = Path(result["package_root"])
+        changed = b"[/Script/EngineSettings.GameMapsSettings]\nGameInstanceClass=changed\n"
+        (package / "TestMod/Config/Engine.ini").write_bytes(changed)
+        manifest_path = package / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(item for item in manifest["files"] if item["path"] == "TestMod/Config/Engine.ini")
+        entry.update(sha256=sha(changed), bytes=len(changed))
+        manifest["configs"] = [entry]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.verify("artifacts/Engine-config")
+        self.assertEqual(raised.exception.code, "source_provenance_mismatch")
+
+    def test_selected_engine_config_requires_inventory_metadata_and_role(self):
+        path, receipt = self.runtime_receipt()
+        self.captured_engine_config(path, receipt)
+        result = self.service.runtime_package(str(path), "artifacts/Engine-contract")
+        package = Path(result["package_root"])
+        manifest_path = package / "manifest.json"
+        original = manifest_path.read_text()
+        for change in ("missing_metadata", "empty_metadata", "wrong_role", "missing_inventory"):
+            with self.subTest(change=change):
+                manifest = json.loads(original)
+                if change == "missing_metadata":
+                    manifest.pop("configs")
+                elif change == "empty_metadata":
+                    manifest["configs"] = []
+                elif change == "wrong_role":
+                    entry = next(item for item in manifest["files"] if item["path"] == "TestMod/Config/Engine.ini")
+                    entry["role"] = "authoring_source"
+                    manifest["configs"] = [entry]
+                else:
+                    manifest["files"] = [item for item in manifest["files"] if item["path"] != "TestMod/Config/Engine.ini"]
+                    manifest.pop("configs")
+                    (package / "TestMod/Config/Engine.ini").unlink()
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                with self.assertRaises(ContentProjectError) as raised:
+                    self.service.verify("artifacts/Engine-contract")
+                self.assertEqual(raised.exception.code, "source_provenance_mismatch")
+
+    def test_missing_packaged_engine_config_is_rejected(self):
+        path, receipt = self.cook_receipt()
+        self.captured_engine_config(path, receipt)
+        result = self.service.package(str(path), "artifacts/Engine-missing")
+        (Path(result["package_root"]) / "TestMod/Config/Engine.ini").unlink()
+        with self.assertRaises(WorkspaceError):
+            self.service.verify("artifacts/Engine-missing")
+
+    def test_captured_other_ini_is_source_only_and_cannot_be_added_as_config(self):
+        path, receipt = self.cook_receipt()
+        _, raw = self.captured_config(path, receipt, "Config/DefaultEngine.ini", b"[Config]\r\nValue=true\r\n")
+        result = self.service.package(str(path), "artifacts/Other-config")
+        self.assertNotIn("configs", result)
+        self.assertNotIn("configs", result["metadata"])
+        package = Path(result["package_root"])
+        self.assertFalse((package / "TestMod/Config").exists())
+        extra = package / "TestMod/Config/DefaultEngine.ini"
+        extra.parent.mkdir()
+        extra.write_bytes(raw)
+        manifest_path = package / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = {"path": "TestMod/Config/DefaultEngine.ini", "sha256": sha(raw), "bytes": len(raw),
+                 "role": "plugin_config"}
+        manifest["files"].append(entry)
+        manifest["configs"] = [entry]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ContentProjectError) as raised:
+            self.service.verify("artifacts/Other-config")
+        self.assertEqual(raised.exception.code, "source_provenance_mismatch")
 
     def test_changed_captured_game_config_does_not_publish(self):
         path, receipt = self.cook_receipt()

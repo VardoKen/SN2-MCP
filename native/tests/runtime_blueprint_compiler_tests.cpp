@@ -44,7 +44,7 @@ Resolver functions() {
     Resolver resolver;
     resolver.compatible=[](const Type& a,const Type& b){return a==b;};
     resolver.function=[](const std::string& owner,const std::string& name) {
-        FunctionSignature result;result.symbol="reflected:"+owner+"."+name;result.name=name;result.owner_path=owner;result.flags=0x400;
+        FunctionSignature result;result.symbol="reflected:"+owner+"."+name;result.name=name;result.owner_path=owner;result.flags=0x04000400;
         if(name=="SetRenderOpacity")result.parameters={{"InOpacity",result.symbol+"/InOpacity",Type{"float"},Direction::input}};
         else if(name=="GetRenderOpacity"){result.pure=true;result.parameters={{"ReturnValue",result.symbol+"/ReturnValue",Type{"float"},Direction::return_value}};}
         else if(name=="Add_FloatFloat") {
@@ -134,6 +134,23 @@ void graph_and_call() {
         if((*iterator)["to"]["node"]=="setter"&&(*iterator)["to"]["pin"]=="self")iterator=connections.erase(iterator);else ++iterator;
     reject("incompatible_self_receiver",[&]{compile_blueprint(invalid,functions());});
 }
+void ordinary_call_admission() {
+    const auto source=apply_asset();const auto accepted=functions();
+    require(!compile_blueprint(source,accepted).functions.front().bytecode.empty(),"A real BlueprintCallable control must remain compilable");
+    auto denied=accepted;
+    denied.function=[accepted](const std::string& owner,const std::string& name) {
+        auto signature=accepted.function(owner,name);signature.flags&=~0x04000000u;return signature;
+    };
+    reject("function_not_blueprint_callable",[&]{compile_blueprint(source,denied);});
+    denied.function=[accepted](const std::string& owner,const std::string& name) {
+        auto signature=accepted.function(owner,name);signature.flags|=0x00100000u;return signature;
+    };
+    reject("function_not_blueprint_callable",[&]{compile_blueprint(source,denied);});
+    denied.function=[accepted](const std::string& owner,const std::string& name) {
+        auto signature=accepted.function(owner,name);signature.flags|=0x00010000u;return signature;
+    };
+    reject("function_not_blueprint_callable",[&]{compile_blueprint(source,denied);});
+}
 void compound_literals_and_split() {
     auto objects=parameter("Objects","object");objects["class_path"]="/Script/CoreUObject.Object";objects["container"]="array";
     auto e=node("entry","function_entry"),r=node("result","function_result");
@@ -144,7 +161,7 @@ void compound_literals_and_split() {
     require(inner,"EX_ArrayConst requires its real inner FProperty relocation");
     const auto end=std::find(empty.bytecode.begin(),empty.bytecode.end(),0x66);require(end!=empty.bytecode.end(),"Array constant requires EX_EndArrayConst");
     Resolver resolver;resolver.function=[](const std::string& owner,const std::string& name) {
-        FunctionSignature result;result.name=name;result.owner_path=owner;result.symbol="reflected:Trace";result.flags=0x2401;
+        FunctionSignature result;result.name=name;result.owner_path=owner;result.symbol="reflected:Trace";result.flags=0x04002401;
         result.default_object_symbol="object:Default__Trace";
         result.parameters={{"OutHit","reflected:Trace/OutHit",Type{"struct","/Script/Engine.HitResult"},Direction::output},
             {"ReturnValue","reflected:Trace/ReturnValue",Type{"bool"},Direction::return_value}};return result;
@@ -191,7 +208,7 @@ void sequence_flow_and_wildcard() {
     require(compiled.bytecode[sequence_range->begin+5]==0x06&&u32(compiled.bytecode,sequence_range->begin+6)==first->begin,"Sequence must jump to first branch");
     require(compiled.bytecode[first->end-1]==0x4d,"Unconnected first branch must resume the next sequence branch");
     Resolver resolver;resolver.function=[](const std::string& owner,const std::string& name) {
-        FunctionSignature result;result.symbol="reflected:Array_Add";result.owner_path=owner;result.name=name;result.flags=0x2401;
+        FunctionSignature result;result.symbol="reflected:Array_Add";result.owner_path=owner;result.name=name;result.flags=0x04002401;
         result.default_object_symbol="object:Default__KismetArrayLibrary";
         result.parameters={{"TargetArray",result.symbol+"/TargetArray",Type{"int",{},true},Direction::input_output,{},false,true},
             {"NewItem",result.symbol+"/NewItem",Type{"int"},Direction::input,{},false,true},
@@ -214,7 +231,7 @@ void sequence_flow_and_wildcard() {
     auto incorrect=source;incorrect["functions"][0]["inputs"][0]=parameter("Object","int");
     reject("wildcard_type_mismatch",[&]{compile_blueprint(incorrect,resolver);});
     auto get_resolver=resolver;get_resolver.function=[](const std::string& owner,const std::string& name) {
-        FunctionSignature result;result.symbol="reflected:Array_Get";result.owner_path=owner;result.name=name;result.flags=0x2401;result.pure=true;
+        FunctionSignature result;result.symbol="reflected:Array_Get";result.owner_path=owner;result.name=name;result.flags=0x04002401;result.pure=true;
         result.default_object_symbol="object:Default__KismetArrayLibrary";
         result.parameters={{"TargetArray",result.symbol+"/TargetArray",Type{"int",{},true},Direction::input,{},false,true},
             {"Item",result.symbol+"/Item",Type{"int"},Direction::output,{},false,true}};return result;
@@ -235,7 +252,7 @@ void sequence_flow_and_wildcard() {
 }
 void numeric_conversion_contract() {
     Resolver resolver;resolver.function=[](const std::string& owner,const std::string& name) {
-        FunctionSignature result;result.name=name;result.owner_path=owner;result.symbol="reflected:"+name;result.flags=0x2401;result.pure=true;
+        FunctionSignature result;result.name=name;result.owner_path=owner;result.symbol="reflected:"+name;result.flags=0x04002401;result.pure=true;
         result.default_object_symbol="object:Default__Math";
         result.parameters={{"Value",result.symbol+"/Value",Type{"double"},Direction::input},
             {"ReturnValue",result.symbol+"/ReturnValue",Type{"double"},Direction::return_value}};return result;
@@ -257,7 +274,7 @@ void numeric_conversion_contract() {
     auto reference=resolver;reference.function=[&](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.parameters[0].direction=Direction::input_output;return signature;};
     reject("mutable_reference_type_mismatch",[&]{compile_blueprint(asset(function),reference);});
     auto scripted=resolver;scripted.function=[&](const std::string& owner,const std::string& name){
-        auto signature=resolver.function(owner,name);signature.flags=0x2001;
+        auto signature=resolver.function(owner,name);signature.flags=0x04002001;
         signature.parameters[0].const_reference=true;return signature;};
     const auto by_reference=compile_blueprint(literal,scripted).functions.front();
     const auto temporary=std::find_if(by_reference.properties.begin(),by_reference.properties.end(),[](const auto& p){return p.symbol.ends_with(".reference");});
@@ -271,9 +288,170 @@ void numeric_conversion_contract() {
     const auto repeated_compiled=compile_blueprint(repeated,scripted).functions.front();
     require(std::count_if(repeated_compiled.properties.begin(),repeated_compiled.properties.end(),[](const auto& p){return p.symbol.ends_with(".reference");})==1,"Repeated pure uses must not duplicate compiler temporary fields");
 }
+Resolver event_resolver() {
+    auto resolver=functions();const auto reflected=resolver.function;
+    resolver.function=[reflected](const std::string& owner,const std::string& name) {
+        if(name!="ReceiveInit"&&name!="ReceiveShutdown"&&name!="ReceiveTick")return reflected(owner,name);
+        FunctionSignature signature;signature.name=name;signature.owner_path=owner;
+        signature.symbol="reflected:"+owner+"."+name;
+        signature.flags=0x0c020c08; // Native BlueprintEvent; generated override must strip Native.
+        if(name=="ReceiveTick")signature.parameters={{"DeltaSeconds",signature.symbol+"/DeltaSeconds",Type{"float"},Direction::input}};
+        return signature;
+    };
+    return resolver;
+}
+void explicit_self_value() {
+    auto object_output=parameter("Outer","object");object_output["class_path"]="/Script/CoreUObject.Object";
+    auto outer=node("outer","call_function");outer["class"]="/Script/Engine.KismetSystemLibrary";outer["function"]="GetOuterObject";
+    auto current=node("current","self");
+    json function={{"name","GetEngine"},{"inputs",json::array()},{"outputs",json::array({object_output})},
+        {"nodes",json::array({node("entry","function_entry"),current,outer,node("result","function_result")})},
+        {"connections",json::array({edge("entry","then","result","execute"),edge("current","self","outer","Object"),
+            edge("outer","ReturnValue","result","Outer")})}};
+    auto source=asset(function);source["parent_class"]="/Script/Engine.GameInstance";
+    Resolver resolver;
+    resolver.compatible=[](const Type& a,const Type& b) {
+        return a==b||(a.kind=="object"&&b.kind=="object"&&!a.array&&!b.array
+            &&a.path=="/Script/Engine.GameInstance"&&b.path=="/Script/CoreUObject.Object");
+    };
+    resolver.function=[](const std::string& owner,const std::string& name) {
+        FunctionSignature result;result.symbol="reflected:"+owner+"."+name;result.name=name;result.owner_path=owner;
+        result.flags=0x04002401;result.pure=true;
+        result.default_object_symbol="object:/Script/Engine.Default__KismetSystemLibrary";
+        result.parameters={{"Object",result.symbol+"/Object",Type{"object","/Script/CoreUObject.Object",false},Direction::input},
+            {"ReturnValue",result.symbol+"/ReturnValue",Type{"object","/Script/CoreUObject.Object",false},Direction::return_value}};
+        return result;
+    };
+    const auto compiled=compile_blueprint(source,resolver).functions.front();
+    const auto called=std::find_if(compiled.relocations.begin(),compiled.relocations.end(),[](const auto& relocation) {
+        return relocation.symbol=="reflected:/Script/Engine.KismetSystemLibrary.GetOuterObject";
+    });
+    require(called!=compiled.relocations.end()&&compiled.bytecode[called->offset-1]==0x1c,
+        "GetOuterObject must retain its exact final native function reference");
+    require(compiled.bytecode[called->offset+8]==0x17&&compiled.bytecode[called->offset+9]==0x16,
+        "Explicit current-instance argument must emit EX_Self followed by end parameters");
+    require(std::any_of(compiled.properties.begin(),compiled.properties.end(),[](const auto& property) {
+        return property.role==PropertyRole::local&&property.type==Type{"object","/Script/CoreUObject.Object",false};
+    }),"Pure object result must retain exact reflected local storage");
+    const auto bound=bind_script(compiled,binding);
+    require(bound.referenced_identities.contains(called->symbol),"Binding must preserve the reflected outer function identity");
+    auto exact=resolver;exact.compatible=[](const Type& a,const Type& b){return a==b;};
+    reject("connection_invalid",[&]{compile_blueprint(source,exact);});
+    auto unrelated=resolver;unrelated.function=[resolver](const std::string& owner,const std::string& name) {
+        auto signature=resolver.function(owner,name);signature.parameters[0].type.path="/Script/UMG.Widget";return signature;
+    };
+    reject("connection_invalid",[&]{compile_blueprint(source,unrelated);});
+    auto mutable_self=resolver;mutable_self.function=[resolver](const std::string& owner,const std::string& name) {
+        auto signature=resolver.function(owner,name);signature.parameters[0].type.path="/Script/Engine.GameInstance";
+        signature.parameters[0].direction=Direction::input_output;return signature;
+    };
+    reject("mutable_reference_requires_variable",[&]{compile_blueprint(source,mutable_self);});
+    auto incompatible=source;incompatible["functions"][0]["connections"].push_back(edge("current","self","result","execute"));
+    reject("connection_invalid",[&]{compile_blueprint(incompatible,resolver);});
+    auto direct=source;direct["functions"][0]["nodes"].erase(direct["functions"][0]["nodes"].begin()+2);
+    direct["functions"][0]["outputs"][0]["class_path"]="/Script/Engine.GameInstance";
+    direct["functions"][0]["connections"]=json::array({edge("entry","then","result","execute"),edge("current","self","result","Outer")});
+    const auto exact_self=compile_blueprint(direct,exact).functions.front();
+    require(std::count(exact_self.bytecode.begin(),exact_self.bytecode.end(),0x17)==1,
+        "Direct self output must emit the instance once without native helper calls");
+    direct["functions"][0]["outputs"][0]=parameter("Outer","int");
+    reject("connection_invalid",[&]{compile_blueprint(direct,resolver);});
+}
+json event_asset() {
+    auto source=asset(literal_function("retained-function"));source["parent_class"]="/Script/Engine.GameInstance";
+    source["variables"]=json::array({parameter("Initialized","bool"),parameter("LastDelta","float")});
+    auto init=node("init","event");init["function"]="ReceiveInit";
+    auto shutdown=node("shutdown","event");shutdown["function"]="ReceiveShutdown";
+    auto tick=node("tick","event");tick["function"]="ReceiveTick";
+    auto set_init=node("set_init","variable_set");set_init["variable"]="Initialized";set_init["defaults"]={{"Initialized","true"}};
+    auto set_shutdown=node("set_shutdown","variable_set");set_shutdown["variable"]="Initialized";set_shutdown["defaults"]={{"Initialized","false"}};
+    auto set_tick=node("set_tick","variable_set");set_tick["variable"]="LastDelta";
+    source["nodes"]=json::array({init,node("parent_init","call_parent"),set_init,shutdown,set_shutdown,tick,set_tick});
+    source["connections"]=json::array({edge("init","then","parent_init","execute"),edge("parent_init","then","set_init","execute"),
+        edge("shutdown","then","set_shutdown","execute"),edge("tick","then","set_tick","execute"),
+        edge("tick","DeltaSeconds","set_tick","LastDelta")});
+    return source;
+}
+void reflected_event_overrides() {
+    const auto source=event_asset();const auto resolver=event_resolver();const auto compiled=compile_blueprint(source,resolver);
+    require(compiled.functions.size()==4,"Three events and retained named function must each compile");
+    auto find=[&](const char* name)->const CompiledFunction& {
+        const auto found=std::find_if(compiled.functions.begin(),compiled.functions.end(),[&](const auto& function){return function.name==name;});
+        require(found!=compiled.functions.end(),"Expected reflected event body");return *found;
+    };
+    const auto& init=find("ReceiveInit");const auto& tick=find("ReceiveTick");
+    require(init.event_override&&init.super_function_symbol=="reflected:/Script/Engine.GameInstance.ReceiveInit","Event must retain exact inherited identity");
+    require((init.flags&0x08000800u)==0x08000800u&&!(init.flags&0x2401u),"Generated event must inherit Event/BlueprintEvent but not Native/Static/Final");
+    require((init.flags&8u)!=0,"Reflected cosmetic contract must remain inherited");
+    require(tick.properties.size()==1&&tick.properties.front().name=="DeltaSeconds"&&tick.properties.front().role==PropertyRole::input,
+        "Event input must match reflected parameter name/type/order");
+    require(std::any_of(tick.relocations.begin(),tick.relocations.end(),[](const auto& relocation){return relocation.symbol=="function:ReceiveTick/parameter:DeltaSeconds";}),
+        "Event parameter bytecode must use generated FProperty rather than parent property address");
+    const auto parent=std::find_if(init.relocations.begin(),init.relocations.end(),[&](const auto& relocation){return relocation.symbol==init.super_function_symbol;});
+    require(parent!=init.relocations.end()&&init.bytecode[parent->offset-1]==0x1c,"Parent event call must use direct EX_FinalFunction to prevent virtual recursion");
+    require(!find("GetServiceVersion").event_override,"Named function must retain its existing independent contract");
+    const auto bound=bind_script(init,binding);require(bound.referenced_identities.contains(init.super_function_symbol),"Saved event script must retain super function reference identity");
+    auto explicit_self=source;explicit_self["nodes"].push_back(node("current","self"));
+    explicit_self["connections"].push_back(edge("current","self","set_init","self"));
+    explicit_self["connections"].push_back(edge("current","self","set_shutdown","self"));
+    require(compile_blueprint(explicit_self,resolver).functions.size()==4,
+        "Shared pure self value must be included in each dependent event body");
+    auto event_only=source;event_only.erase("functions");require(compile_blueprint(event_only,resolver).functions.size()==3,"Event-only Blueprint must not require synthetic authored function");
+    auto parent_event_only=source;parent_event_only.erase("functions");parent_event_only["nodes"]=json::array({source["nodes"][0],source["nodes"][1]});
+    parent_event_only["connections"]=json::array({source["connections"][0]});
+    auto non_callable_parent=resolver;
+    non_callable_parent.function=[resolver](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.flags&=~0x04000000u;return signature;};
+    require(compile_blueprint(parent_event_only,non_callable_parent).functions.front().event_override,
+        "call_parent must remain permitted by its BlueprintEvent contract without requiring ordinary BlueprintCallable");
+    auto branch_source=source;
+    branch_source["nodes"].push_back(node("init_branch","branch"));
+    branch_source["nodes"].back()["defaults"]={{"Condition","true"}};
+    branch_source["connections"][1]=edge("parent_init","then","init_branch","execute");
+    branch_source["connections"].push_back(edge("init_branch","then","set_init","execute"));
+    const auto branched=compile_blueprint(branch_source,resolver);
+    const auto& branch_function=*std::find_if(branched.functions.begin(),branched.functions.end(),[](const auto& function){return function.name=="ReceiveInit";});
+    const auto branch_range=std::find_if(branch_function.source_ranges.begin(),branch_function.source_ranges.end(),[](const auto& range){return range.node=="ReceiveInit/init_branch";});
+    require(branch_range!=branch_function.source_ranges.end()&&branch_function.bytecode[branch_range->begin]==0x07,"Event branch must emit actual conditional jump");
+    const auto fallthrough=u32(branch_function.bytecode,branch_range->begin+1);
+    require(branch_function.bytecode[fallthrough]==0x06&&u32(branch_function.bytecode,fallthrough+1)==branch_function.bytecode.size()-3,
+        "Unconnected event branch must fall through to real Return/Nothing without a function_result node");
+    auto empty=event_only;empty["nodes"]=json::array();empty["connections"]=json::array();reject("empty_functions",[&]{compile_blueprint(empty,resolver);});
+    auto invalid=source;invalid["nodes"][2]["defaults"]["Initialized"]=17;reject("invalid_pin_default",[&]{compile_blueprint(invalid,resolver);});
+    invalid=source;invalid["connections"].push_back(edge("tick","DeltaSeconds","set_init","Initialized"));
+    reject("cross_event_dependency",[&]{compile_blueprint(invalid,resolver);});
+    invalid=source;invalid["nodes"].push_back(node("unused","variable_set"));invalid["nodes"].back()["variable"]="Initialized";
+    reject("event_node_unreachable",[&]{compile_blueprint(invalid,resolver);});
+    invalid=source;invalid["connections"].push_back(edge("tick","then","set_shutdown","execute"));
+    reject("cross_event_dependency",[&]{compile_blueprint(invalid,resolver);});
+    invalid=source;invalid["connections"].push_back(edge("init","then","missing","execute"));
+    reject("node_unavailable",[&]{compile_blueprint(invalid,resolver);});
+    auto altered=resolver;altered.function=[resolver](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.flags&=~0x08000000u;return signature;};
+    reject("event_not_overridable",[&]{compile_blueprint(source,altered);});
+    altered.function=[resolver](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.flags&=~0x800u;return signature;};
+    reject("event_not_overridable",[&]{compile_blueprint(source,altered);});
+    altered.function=[resolver](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.flags|=1;return signature;};
+    reject("event_not_overridable",[&]{compile_blueprint(source,altered);});
+    altered.function=[resolver](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.flags|=0x40;return signature;};
+    reject("event_contract_unsupported",[&]{compile_blueprint(source,altered);});
+    altered.function=[resolver](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.latent=true;return signature;};
+    reject("latent_event_unsupported",[&]{compile_blueprint(source,altered);});
+    altered.function=[resolver](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);signature.parameters.push_back({"Result",signature.symbol+"/Result",Type{"bool"},Direction::output});return signature;};
+    reject("event_parameter_unsupported",[&]{compile_blueprint(source,altered);});
+    auto receiver_resolver=resolver;
+    receiver_resolver.object=[](const std::string&,const Type&){return "object:AnotherGameInstance";};
+    invalid=source;invalid["nodes"][1]["objects"]={{"self","/CompilerCheck.AnotherGameInstance"}};
+    reject("parent_context_receiver_invalid",[&]{compile_blueprint(invalid,receiver_resolver);});
+    unsigned init_resolutions{};altered=resolver;
+    altered.function=[&](const std::string& owner,const std::string& name){auto signature=resolver.function(owner,name);
+        if(name=="ReceiveInit"&&++init_resolutions>1)signature.parameters.push_back({"Changed",signature.symbol+"/Changed",Type{"float"},Direction::input});
+        return signature;};
+    reject("event_signature_changed",[&]{compile_blueprint(source,altered);});
+    auto outside=asset(literal_function("value"));outside["functions"][0]["nodes"].push_back(node("super","call_parent"));
+    reject("parent_call_outside_event",[&]{compile_blueprint(outside,resolver);});
+}
 }
 int main() {
-    try{literal_and_binding();graph_and_call();compound_literals_and_split();sequence_flow_and_wildcard();numeric_conversion_contract();std::cout<<"runtime_blueprint_compiler: "<<checks<<" meaningful checks passed\n";return 0;}
+    try{literal_and_binding();graph_and_call();ordinary_call_admission();compound_literals_and_split();sequence_flow_and_wildcard();numeric_conversion_contract();explicit_self_value();reflected_event_overrides();std::cout<<"runtime_blueprint_compiler: "<<checks<<" meaningful checks passed\n";return 0;}
     catch(const CompilerError& error){std::cerr<<error.code<<": "<<error.what()<<" ["<<error.node<<"/"<<error.pin<<"]\n";return 1;}
     catch(const std::exception& error){std::cerr<<error.what()<<"\n";return 1;}
 }

@@ -19,14 +19,29 @@ def specification():
     }]}
 
 
+def retirement_response(asset_path, *, state="released", requested=True, released=2, retained=0,
+                        unknown=0, reconciled=False, executed=True):
+    roots = [{"item": 100 + i, "object": 200 + i, "index": i, "serial": 7,
+              "serial_coverage": "object_and_class", "state": root_state}
+             for i, root_state in enumerate(["released"] * released + ["retained"] * retained + ["unknown"] * unknown)]
+    return {"source": "runtime_blueprint_retirement", "state": state, "asset_path": asset_path,
+            "retirement_requested": requested, "released_count": released, "retained_count": retained,
+            "unknown_count": unknown, "failed_item": roots[-1]["item"] if unknown else 0,
+            "roots": roots, "identity_refreshes": [], "reconciled": reconciled,
+            "objects_destroyed": False, "gc_observed": False,
+            "effects": {"executed": executed, "may_have_executed": bool(unknown), "do_not_retry": bool(unknown)}}
+
+
 class NativeFixture:
     def __init__(self):
         self.calls = []
         self.error = None
         self.on_request = None
+        self.retirement_response = None
         self.response = {"source": "runtime_blueprint_compilation", "compiled": True,
                          "runtime_published": True, "persisted": False,
                          "class": {"handle": "class-17"},
+                         "retained_root_items": [100, 101],
                          "functions": [{"handle": "function-18", "script_verified": True}],
                          "effects": {"executed": True, "may_have_executed": False}}
 
@@ -37,8 +52,11 @@ class NativeFixture:
         if self.error is not None:
             raise self.error
         if operation == "runtime_compile_blueprint":
+            self.last_asset_path = params["asset"]["path"]
             return {**self.response, "asset_path": params["asset"]["path"],
                     "class": {**self.response.get("class", {}), "path": params["asset"]["path"] + "_C"}}
+        if operation == "runtime_release_blueprint":
+            return self.retirement_response if self.retirement_response is not None else retirement_response(self.last_asset_path)
         directory = Path(params["output_directory"])
         package = params["package_name"]
         leaf = package.rsplit("/", 1)[-1]
@@ -343,6 +361,13 @@ class RuntimeAuthoringTests(unittest.TestCase):
     def test_recipe_and_invalid_input_have_no_native_effect(self):
         recipe = self.service.recipe(self.project_path, self.spec_path)
         self.assertFalse(recipe["backend_readiness_checked"])
+        boundaries = recipe["capability_boundaries"]
+        self.assertIn("by-value inputs", boundaries["events"]["parameters"])
+        self.assertIn("LatentActionInfo", boundaries["call_function"]["latent_check"])
+        self.assertEqual(boundaries["call_function"]["metadata_not_inspected"],
+                         ["DevelopmentOnly", "BlueprintInternalUseOnly", "WorldContext"])
+        self.assertIn("direct class output", boundaries["compile_invoke_save"]["invoke_excluded"])
+        self.assertFalse(boundaries["widget_ui_authoring"])
         self.assertEqual(self.native.calls, [])
         spec = specification()
         spec["assets"][0]["path"] = "/OtherMod/BP_User.BP_User"
@@ -352,6 +377,230 @@ class RuntimeAuthoringTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "invalid_asset_path")
         self.assertFalse(caught.exception.details["executed"])
         self.assertEqual(self.native.calls, [])
+
+    def test_retiring_old_revision_preserves_latest_working_and_saved_package(self):
+        first = self.compile()
+        saved = self.service.save(first["authoring_id"])
+        second = self.compile()
+        self.native.error = NativeError("invalid_graph", "Controlled compile failure")
+        with self.assertRaises(NativeError):
+            self.compile()
+        latest_id = self.service.status()["authoring_id"]
+        self.native.error = None
+        self.native.retirement_response = retirement_response(first["runtime_asset_path"])
+        source = Path(first["staged_source_root"]) / "authoring.json"
+        source_bytes = source.read_bytes()
+        build_bytes = Path(saved["receipt_path"]).read_bytes()
+        outputs = Path(saved["receipt_path"]).parent / "native-output"
+        output_bytes = {str(outputs / item["path"]): (outputs / item["path"]).read_bytes() for item in saved["intermediate_outputs"]}
+        retirement = self.service.release(first["authoring_id"], timeout_seconds=5)
+        self.assertEqual(retirement["state"], "released")
+        self.assertEqual(self.native.calls[-1], ("runtime_release_blueprint", {"class_handle": "class-17", "reconcile": False}, 5.0))
+        self.assertEqual(self.service.status()["authoring_id"], latest_id)
+        self.assertEqual(self.service.status(working=True)["authoring_id"], second["authoring_id"])
+        recorded = self.service.status(first["authoring_id"])
+        for key, value in first.items():
+            self.assertEqual(recorded[key], value, key)
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertEqual(Path(saved["receipt_path"]).read_bytes(), build_bytes)
+        self.assertEqual({path: Path(path).read_bytes() for path in output_bytes}, output_bytes)
+
+    def test_released_revision_is_durable_idempotent_and_no_longer_working(self):
+        compiled = self.compile()
+        retired = self.service.release(compiled["authoring_id"])
+        calls = len(self.native.calls)
+        resumed = RuntimeAuthoring(self.root, self.native)
+        self.assertEqual(resumed.release(compiled["authoring_id"]), retired)
+        self.assertEqual(resumed.release(compiled["authoring_id"], reconcile=True), retired)
+        self.assertEqual(len(self.native.calls), calls)
+        self.assertEqual(resumed.status(working=True)["state"], "not_compiled")
+        tombstone = json.loads((self.service.receipts_root / "working.json").read_text(encoding="utf-8"))
+        self.assertEqual(tombstone, {"authoring_id": None, "retired_authoring_id": compiled["authoring_id"]})
+        with self.assertRaises(RuntimeAuthoringError) as caught:
+            resumed.save(compiled["authoring_id"])
+        self.assertEqual(caught.exception.code, "runtime_authored_revision_retired")
+        self.assertEqual(len(self.native.calls), calls)
+
+    def test_known_retirement_refusal_preserves_working_and_can_be_saved(self):
+        for failure in (NativeError("stale_handle", "The class handle is stale", False, "retire-17", {"executed": False}),
+                        None):
+            with self.subTest(failure=failure):
+                compiled = self.compile()
+                self.native.error = failure
+                self.native.retirement_response = retirement_response(compiled["runtime_asset_path"], state="identity_changed",
+                                                                      requested=False, released=0, retained=2, executed=False)
+                if failure:
+                    with self.assertRaises(NativeError) as caught:
+                        self.service.release(compiled["authoring_id"])
+                    self.assertIs(caught.exception, failure)
+                    recorded = self.service.status(compiled["authoring_id"])["retirement"]
+                    self.assertEqual(recorded["error"]["details"], failure.details)
+                    self.assertEqual(recorded["error"]["request_id"], "retire-17")
+                    self.assertFalse(recorded["outcome_unknown"])
+                else:
+                    self.assertEqual(self.service.release(compiled["authoring_id"])["state"], "identity_changed")
+                self.assertEqual(self.service.status(working=True)["authoring_id"], compiled["authoring_id"])
+                self.assertTrue(self.service.status(working=True)["compiled"])
+                self.native.error = None
+                self.assertTrue(self.service.save(compiled["authoring_id"])["persisted"])
+
+    def test_lost_retirement_response_requires_explicit_read_only_reconciliation(self):
+        for failure in (NativeError("response_lost", "Retirement outcome unknown", True, "retire-unknown", {"do_not_retry": True}),
+                        RuntimeError("The retirement response was lost")):
+            with self.subTest(failure=failure):
+                compiled = self.compile()
+                self.native.error = failure
+                with self.assertRaises(type(failure)) as caught:
+                    self.service.release(compiled["authoring_id"])
+                self.assertIs(caught.exception, failure)
+                recorded = self.service.status(compiled["authoring_id"])["retirement"]
+                self.assertEqual(recorded["state"], "outcome_unknown")
+                self.assertIsNone(recorded["unknown_count"])
+                self.assertTrue(recorded["effects"]["do_not_retry"])
+                resumed = RuntimeAuthoring(self.root, self.native)
+                calls = len(self.native.calls)
+                for action in (resumed.release, resumed.save):
+                    with self.assertRaises(RuntimeAuthoringError) as rejected:
+                        action(compiled["authoring_id"])
+                    self.assertEqual(rejected.exception.code, "runtime_retirement_outcome_unknown")
+                self.assertEqual(len(self.native.calls), calls)
+                self.assertEqual(resumed.status(working=True)["state"], "retirement_outcome_unknown")
+                self.native.error = None
+                self.native.retirement_response = retirement_response(compiled["runtime_asset_path"], state="retained", requested=False,
+                                                                      released=0, retained=2, reconciled=True, executed=False)
+                reconciled = resumed.release(compiled["authoring_id"], reconcile=True)
+                self.assertEqual(reconciled["state"], "retained")
+                self.assertEqual(len(self.native.calls), calls + 1)
+                self.assertTrue(self.native.calls[-1][1]["reconcile"])
+                self.assertTrue(resumed.status(working=True)["compiled"])
+                self.native.retirement_response = retirement_response(compiled["runtime_asset_path"])
+                self.assertEqual(resumed.release(compiled["authoring_id"])["state"], "released")
+                history = resumed.status(compiled["authoring_id"])["retirement_attempts"]
+                self.assertEqual([attempt["state"] for attempt in history], ["outcome_unknown", "retained", "released"])
+
+    def test_unknown_native_roots_can_be_confirmed_released_without_repeating_clear(self):
+        compiled = self.compile()
+        self.native.retirement_response = retirement_response(compiled["runtime_asset_path"], state="release_unknown",
+                                                              released=1, unknown=1)
+        retired = self.service.release(compiled["authoring_id"])
+        self.assertTrue(retired["retirement_requested"])
+        self.assertTrue(retired["outcome_unknown"])
+        self.native.retirement_response = retirement_response(compiled["runtime_asset_path"], reconciled=True, executed=False)
+        confirmed = self.service.release(compiled["authoring_id"], reconcile=True)
+        self.assertEqual(confirmed["state"], "released")
+        self.assertFalse(confirmed["effects"]["executed"])
+        self.assertEqual(self.service.status(working=True)["state"], "not_compiled")
+
+    def test_reconciled_remaining_roots_require_a_separate_explicit_release(self):
+        compiled = self.compile()
+        self.native.retirement_response = retirement_response(compiled["runtime_asset_path"], state="release_unknown",
+                                                              released=1, unknown=1)
+        self.service.release(compiled["authoring_id"])
+        self.native.retirement_response = retirement_response(compiled["runtime_asset_path"], state="retained",
+                                                              released=1, retained=1, reconciled=True, executed=False)
+        reconciled = self.service.release(compiled["authoring_id"], reconcile=True)
+        self.assertEqual(reconciled["retained_count"], 1)
+        self.assertEqual(len(self.native.calls), 3)
+        self.assertFalse(reconciled["effects"]["executed"])
+        self.assertFalse(reconciled["outcome_unknown"])
+        with self.assertRaises(RuntimeAuthoringError) as caught:
+            self.service.save(compiled["authoring_id"])
+        self.assertEqual(caught.exception.code, "runtime_authored_revision_retired")
+        self.native.retirement_response = retirement_response(compiled["runtime_asset_path"])
+        self.assertEqual(self.service.release(compiled["authoring_id"])["state"], "released")
+        self.assertEqual(len(self.native.calls), 4)
+        self.assertFalse(self.native.calls[-1][1]["reconcile"])
+
+    def test_failed_reconciliation_preserves_prior_unknown_retirement_and_working_pointer(self):
+        compiled = self.compile()
+        self.native.error = NativeError("response_lost", "Release response was lost", True)
+        with self.assertRaises(NativeError):
+            self.service.release(compiled["authoring_id"])
+        previous = self.service.status(compiled["authoring_id"])["retirement"]
+        self.native.error = NativeError("stale_handle", "Reconciliation cannot resolve class", False)
+        with self.assertRaises(NativeError):
+            self.service.release(compiled["authoring_id"], reconcile=True)
+        recorded = self.service.status(compiled["authoring_id"])
+        self.assertEqual(recorded["retirement"], previous)
+        self.assertEqual(recorded["retirement_attempts"][-1]["error"]["code"], "stale_handle")
+        with self.assertRaises(RuntimeAuthoringError):
+            self.service.release(compiled["authoring_id"])
+        self.assertEqual(len(self.native.calls), 3)
+        self.assertEqual(self.service.status(working=True)["state"], "retirement_outcome_unknown")
+
+    def test_malformed_retirement_responses_remain_unknown_until_reconciliation(self):
+        changes = [{"source": "synthetic_retirement"}, {"state": "success"}, {"released_count": -1},
+                   {"released_count": True}, {"roots": []}, {"retirement_requested": False},
+                   {"roots": [], "released_count": 0},
+                   {"roots": retirement_response("ignored", released=1)["roots"], "released_count": 1},
+                   {"retained_count": 2}, {"effects": {"executed": True, "may_have_executed": True, "do_not_retry": False}},
+                   {"asset_path": "/UserMod/Different.Different"}, {"reconciled": True}, {"objects_destroyed": True}]
+        for change in changes:
+            with self.subTest(change=change):
+                compiled = self.compile()
+                raw = {**retirement_response(compiled["runtime_asset_path"]), **change}
+                self.native.retirement_response = raw
+                with self.assertRaises(RuntimeAuthoringError) as caught:
+                    self.service.release(compiled["authoring_id"])
+                self.assertEqual(caught.exception.code, "runtime_retirement_unverified")
+                self.assertTrue(caught.exception.details["may_have_executed"])
+                recorded = self.service.status(compiled["authoring_id"])["retirement"]
+                self.assertEqual(recorded["native_response"], raw)
+                self.assertTrue(recorded["outcome_unknown"])
+                calls = len(self.native.calls)
+                with self.assertRaises(RuntimeAuthoringError):
+                    self.service.release(compiled["authoring_id"])
+                self.assertEqual(len(self.native.calls), calls)
+
+    def test_durable_pending_guard_survives_final_receipt_failure(self):
+        compiled = self.compile()
+        original = self.service._save_retirement
+        def fail_final(directory, receipt):
+            if receipt["retirement"].get("finished_at"):
+                raise OSError("The receipt volume is unavailable")
+            return original(directory, receipt)
+        with patch.object(self.service, "_save_retirement", side_effect=fail_final):
+            with self.assertRaises(OSError):
+                self.service.release(compiled["authoring_id"])
+        resumed = RuntimeAuthoring(self.root, self.native)
+        self.assertEqual(resumed.status(compiled["authoring_id"])["retirement"]["state"], "outcome_unknown")
+        with self.assertRaises(RuntimeAuthoringError):
+            resumed.release(compiled["authoring_id"])
+        self.assertEqual(len(self.native.calls), 2)
+        self.assertEqual(resumed.status(working=True)["state"], "retirement_outcome_unknown")
+
+    def test_retirement_failure_keeps_original_error_when_receipt_finalization_fails(self):
+        compiled = self.compile()
+        failure = NativeError("response_lost", "Retirement may have executed", True, "retire-17", {"do_not_retry": True})
+        self.native.error = failure
+        original = self.service._save_retirement
+        def fail_final(directory, receipt):
+            if receipt["retirement"].get("finished_at"):
+                raise OSError("The receipt volume is unavailable")
+            return original(directory, receipt)
+        with patch.object(self.service, "_save_retirement", side_effect=fail_final):
+            with self.assertRaises(NativeError) as caught:
+                self.service.release(compiled["authoring_id"])
+        self.assertIs(caught.exception, failure)
+        self.assertIn("retirement failure receipt", failure.__notes__[0])
+        self.assertEqual(self.service.status(compiled["authoring_id"])["retirement"]["state"], "outcome_unknown")
+
+    def test_retirement_guard_failure_prevents_native_effects(self):
+        compiled = self.compile()
+        with patch.object(self.service, "_save_retirement", side_effect=OSError("The receipt volume is unavailable")):
+            with self.assertRaises(OSError):
+                self.service.release(compiled["authoring_id"])
+        self.assertEqual(len(self.native.calls), 1)
+        self.assertTrue(self.service.status(working=True)["compiled"])
+        self.assertNotIn("retirement", self.service.status(compiled["authoring_id"]))
+
+    def test_stable_native_revision_identity_is_used_for_save_and_retirement(self):
+        self.native.response["revision_id"] = "runtime-revision-opaque"
+        compiled = self.compile()
+        self.service.save(compiled["authoring_id"])
+        self.assertEqual(self.native.calls[-1][1]["revision_id"], "runtime-revision-opaque")
+        self.service.release(compiled["authoring_id"])
+        self.assertEqual(self.native.calls[-1][1], {"revision_id": "runtime-revision-opaque", "reconcile": False})
 
 
 if __name__ == "__main__":

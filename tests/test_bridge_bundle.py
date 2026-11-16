@@ -1,5 +1,8 @@
-"""Portable internal bundle: explicit inventory and complete file hashes."""
+"""Development and consumer payloads: exact frontend/runtime and provenance."""
 import importlib.util
+import base64
+import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -7,6 +10,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 from sn2_mcp.content_projects import ContentProjects, source_manifest_sha256
 from sn2_mcp.workspace import SourceWorkspace
@@ -65,6 +69,34 @@ class BridgeBundleTests(unittest.TestCase):
     def prepare(self):
         return bundle.prepare_bundle(self.target, repository_root=self.repository)
 
+    def frontend_wheel(self, *, version=None, source_override=None, dependency="mcp==2.3.0"):
+        version = version or self.version
+        prefix = f"sn2_mcp-{version}.dist-info/"
+        files = {path.relative_to(self.repository / "src").as_posix(): path.read_bytes()
+                 for path in (self.repository / "src/sn2_mcp").glob("*.py")}
+        if source_override:
+            files.update(source_override)
+        files[prefix + "METADATA"] = f"Metadata-Version: 2.4\nName: sn2-mcp\nVersion: {version}\nRequires-Dist: {dependency}\n".encode()
+        files[prefix + "WHEEL"] = b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        files[prefix + "entry_points.txt"] = b"[console_scripts]\nsn2-mcp = sn2_mcp.server:main\n"
+        record = []
+        for path, raw in sorted(files.items()):
+            digest = base64.urlsafe_b64encode(hashlib.sha256(raw).digest()).decode("ascii").rstrip("=")
+            record.append(path + ",sha256=" + digest + "," + str(len(raw)))
+        record.append(prefix + "RECORD,,")
+        files[prefix + "RECORD"] = ("\n".join(record) + "\n").encode()
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for path, raw in files.items():
+                archive.writestr(path, raw)
+        return self.write("artifacts/supplied-wheel.whl", stream.getvalue())
+
+    def prepare_consumer(self, *, native_notices=None):
+        self.write("native/src/runtime_cityhash.cpp", b"// Copyright fixture\n// Permission fixture\n#include <cstdint>\n")
+        return bundle.prepare_bundle(self.target, repository_root=self.repository,
+                                     consumer_wheel=self.frontend_wheel(), service_package=self.service_package(),
+                                     native_notices=native_notices)
+
     def service_package(self, plugin=None):
         """Create structural cooker provenance fixtures, not runtime acceptance."""
         plugin = plugin or bundle.SERVICE_ID
@@ -119,6 +151,139 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertFalse(result["service_mod"]["package_included"])
         self.assertEqual(result["complete_service_delivery"], "not_established_by_packager")
         self.assertIn("incomplete development artifact", (self.target / "START.md").read_text(encoding="utf-8"))
+
+    def test_consumer_candidate_contains_exact_wheel_and_runtime_without_developer_checkout(self):
+        json_notice = self.write("artifacts/json-license", b"JSON selected notice\n")
+        minhook_notice = self.write("artifacts/minhook-license", b"MinHook selected notice\n")
+        result = self.prepare_consumer(native_notices={"json": json_notice, "minhook": minhook_notice})
+        self.assertEqual(result["profile"], "consumer")
+        self.assertTrue(result["payload_complete"])
+        self.assertEqual(result["release_readiness"], "not_established_by_packager")
+        self.assertFalse((self.target / "src").exists())
+        self.assertFalse((self.target / "native").exists())
+        self.assertFalse((self.target / "development/authoring").exists())
+        self.assertFalse((self.target / "development/services").exists())
+        self.assertEqual((self.target / result["frontend_wheel"]["path"]).read_bytes(),
+                         (self.repository / "artifacts/supplied-wheel.whl").read_bytes())
+        self.assertEqual((self.target / "notices/json-LICENSE").read_bytes(), json_notice.read_bytes())
+        self.assertEqual((self.target / "notices/minhook-LICENSE").read_bytes(), minhook_notice.read_bytes())
+        self.assertEqual((self.target / "tools/accept_standalone_runtime_mod.py").read_bytes(),
+                         (self.repository / "tools/accept_standalone_runtime_mod.py").read_bytes())
+        self.assertEqual((self.target / "tools/observe_standalone_lifecycle.py").read_bytes(),
+                         (self.repository / "tools/observe_standalone_lifecycle.py").read_bytes())
+        self.assertEqual((self.target / "tools/accept_consumer_transports.py").read_bytes(),
+                         (self.repository / "tools/accept_consumer_transports.py").read_bytes())
+        self.assertEqual((self.target / "tools/accept_runtime_retirement.py").read_bytes(),
+                         (self.repository / "tools/accept_runtime_retirement.py").read_bytes())
+        self.assertTrue(bundle.verify_bundle(self.target)["payload_complete"])
+        manifest = json.loads((self.target / "manifest.json").read_bytes())
+        self.assertEqual(manifest["kind"], bundle.CONSUMER_KIND)
+        self.assertEqual(manifest["native_notices"]["not_supplied"], [])
+        instructions = (self.target / "START.md").read_text(encoding="utf-8")
+        self.assertIn("--frozen --no-dev --no-default-groups --no-editable --no-emit-project", instructions)
+        self.assertIn("--require-hashes", instructions)
+        self.assertIn("--no-deps", instructions)
+        self.assertIn("--transport stdio", instructions)
+        self.assertIn("--transport streamable-http", instructions)
+        self.assertIn("tools\\accept_consumer_transports.py", instructions)
+        self.assertIn("reserved non-listening native endpoint", instructions)
+        self.assertNotIn("uv sync", instructions)
+        self.assertIn("$sn2Runtime =", instructions)
+        self.assertIn("--runtime-root $sn2Runtime", instructions)
+        self.assertIn("packages/SN2MCPDevelopmentServices", instructions)
+        self.assertIn("not the used runtime copy", instructions)
+        self.assertIn(".trash/Subnautica 2 MCP/content-deployment", instructions)
+        self.assertIn("does not require a project-rules directory", instructions)
+        self.assertIn("accept_standalone_runtime_mod.py') author", instructions)
+        self.assertIn("accept_standalone_runtime_mod.py') observe", instructions)
+        self.assertIn("--target-process", instructions)
+        self.assertIn("before attaching an observer", instructions)
+        self.assertIn("--frame-rate-a 30 --frame-rate-b 45", instructions)
+        self.assertIn("allowing the temporary fixed frame rate", instructions)
+        self.assertIn("tools\\observe_standalone_lifecycle.py", instructions)
+        self.assertIn("--layout", instructions)
+        self.assertIn("tools\\accept_runtime_retirement.py", instructions)
+        self.assertIn("--author-summary", instructions)
+        self.assertIn("time dilation 1", instructions)
+        self.assertIn("does not verify these conditions", instructions)
+        self.assertIn("recapture a fresh-start baseline", instructions)
+        self.assertNotIn("--scale-a", instructions)
+        self.assertNotIn("ApplicationScale", instructions)
+
+    def test_consumer_missing_service_is_rejected_before_writing(self):
+        with self.assertRaises(bundle.BundleError) as captured:
+            bundle.prepare_bundle(self.target, repository_root=self.repository, consumer_wheel=self.frontend_wheel())
+        self.assertEqual(captured.exception.code, "service_package_required")
+        self.assertFalse(self.target.exists())
+
+    def test_consumer_source_change_after_wheel_capture_is_not_published(self):
+        package = self.service_package()
+        wheel = self.frontend_wheel()
+        self.write("native/src/runtime_cityhash.cpp", b"// fixture notice\n#include <cstdint>\n")
+        original_notices = bundle._consumer_notices
+
+        def changing_notices(*args, **kwargs):
+            result = original_notices(*args, **kwargs)
+            self.write("src/sn2_mcp/server.py", b"# changed after wheel capture\n")
+            return result
+
+        with patch.object(bundle, "_consumer_notices", side_effect=changing_notices):
+            with self.assertRaises(bundle.BundleError) as captured:
+                bundle.prepare_bundle(self.target, repository_root=self.repository,
+                                      service_package=package, consumer_wheel=wheel)
+        self.assertEqual(captured.exception.code, "source_changed")
+        self.assertFalse(self.target.exists())
+
+    def test_consumer_wheel_must_match_captured_frontend_sources_and_dependency(self):
+        package = self.service_package()
+        self.write("native/src/runtime_cityhash.cpp", b"// fixture notice\n#include <cstdint>\n")
+        candidates = (
+            ({"source_override": {"sn2_mcp/server.py": b"# other revision\n"}}, "wheel_source_mismatch"),
+            ({"source_override": {"sn2_mcp/unexpected.py": b"# foreign module\n"}}, "wheel_source_mismatch"),
+            ({"version": "0.2.0", "source_override": {"sn2_mcp/__init__.py": b'__version__ = "0.2.0"\n'}}, "wheel_version_mismatch"),
+            ({"dependency": "mcp==2.2.0"}, "wheel_dependency_mismatch"),
+        )
+        for arguments, code in candidates:
+            with self.subTest(arguments=arguments), self.assertRaises((bundle.BundleError, bundle.WorkspaceError)) as captured:
+                bundle.prepare_bundle(self.target, repository_root=self.repository, service_package=package,
+                                      consumer_wheel=self.frontend_wheel(**arguments))
+            self.assertEqual(captured.exception.code, code)
+            self.assertFalse(self.target.exists())
+
+    def test_consumer_required_runtime_and_wheel_survive_rewritten_inventory(self):
+        self.prepare_consumer()
+        manifest_path = self.target / "manifest.json"
+        original_manifest = manifest_path.read_bytes()
+        for relative in (f"wheels/sn2_mcp-{self.version}-py3-none-any.whl", bundle.BINARIES[0],
+                         "tools/game_process_common.ps1", "tools/accept_standalone_runtime_mod.py",
+                         "tools/observe_standalone_lifecycle.py",
+                         "tools/accept_consumer_transports.py",
+                         "tools/accept_runtime_retirement.py",
+                         "notices/CityHash.txt"):
+            with self.subTest(missing=relative):
+                original_file = (self.target / relative).read_bytes()
+                manifest = json.loads(original_manifest)
+                manifest["files"] = [entry for entry in manifest["files"] if entry["path"] != relative]
+                manifest["file_count"] = len(manifest["files"])
+                manifest["total_bytes"] = sum(entry["bytes"] for entry in manifest["files"])
+                (self.target / relative).unlink()
+                parent = (self.target / relative).parent
+                while parent != self.target and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                with self.assertRaises(bundle.BundleError) as captured:
+                    bundle.verify_bundle(self.target)
+                self.assertEqual(captured.exception.code, "incomplete_bundle")
+                self.write((self.target / relative).relative_to(self.repository).as_posix(), original_file)
+                manifest_path.write_bytes(original_manifest)
+
+    def test_consumer_omitted_notices_are_recorded_without_invented_terms(self):
+        self.prepare_consumer()
+        manifest = json.loads((self.target / "manifest.json").read_bytes())
+        self.assertEqual(manifest["native_notices"]["not_supplied"], ["json", "minhook"])
+        self.assertFalse(manifest["native_notices"]["license_assigned_to_bridge"])
+        self.assertIn("not supplied to this preparation", (self.target / "NATIVE-NOTICES.md").read_text(encoding="utf-8"))
 
     def test_pre_service_bundle_verifies_without_later_companion_tools_and_sources(self):
         self.prepare()

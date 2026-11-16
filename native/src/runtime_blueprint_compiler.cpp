@@ -17,6 +17,11 @@ CompilerError::CompilerError(std::string c,std::string m,std::string n,std::stri
 namespace {
 constexpr std::uint32_t final_function=1,native_function=0x400,static_function=0x2000;
 constexpr std::uint32_t public_callable_event=0x0c020000,pure_function=0x10000000;
+constexpr std::uint32_t blueprint_callable=0x04000000,delegate_function=0x00110000;
+constexpr std::uint32_t blueprint_event=0x08000000,event_function=0x00000800;
+// UE 5.6.1 Script.h FUNC_FuncInherit plus access and BlueprintPure,
+// matching KismetCompiler.cpp's reflected override inheritance.
+constexpr std::uint32_t override_inherit=0x5c0e0a0c;
 enum Token : std::uint8_t {
     local=0x00,member=0x01,ret=0x04,jump=0x06,jump_if_not=0x07,nothing=0x0b,let=0x0f,
     let_bool=0x14,end_parameters=0x16,self=0x17,context=0x19,virtual_call=0x1b,
@@ -122,6 +127,7 @@ struct Writer {
 };
 class GraphCompiler {
     const Resolver& resolver;Program& program;CompiledFunction& output;Writer writer;
+    const FunctionSignature* event_signature{};
     std::map<std::string,Node> nodes;std::vector<Edge> edges;
     std::map<std::string,Expression> members,inputs,outputs;
     std::map<std::string,std::size_t> labels;
@@ -200,16 +206,40 @@ class GraphCompiler {
         } else if(node.kind=="function_result") {
             if(!result_id.empty())fail("duplicate_terminator","Function result is duplicated",qualified(node.id));result_id=node.id;
             exec_pin(node,"execute",false);for(const auto&[name,expression]:outputs)add_pin(node,name,false,expression.type);
+        } else if(node.kind=="self") {
+            node.pure=true;Expression expression{Expression::Kind::self};expression.producer=node.id;
+            add_pin(node,"self",true,Type{"object",program.parent_path,false},expression);
         } else if(node.kind=="variable_get"||node.kind=="variable_set") {
             node.variable=text(spec,"variable",qualified(node.id));const auto found=members.find(node.variable);
             if(found==members.end())fail("variable_unavailable","Variable is not declared in this Blueprint",qualified(node.id),node.variable);
             add_pin(node,"self",false,Type{"object",program.parent_path,false},Expression{Expression::Kind::self});
             if(node.kind=="variable_get") {node.pure=true;auto expression=found->second;expression.producer=node.id;add_pin(node,node.variable,true,found->second.type,expression);}
             else {exec_pin(node,"execute",false);exec_pin(node,"then",true);add_pin(node,node.variable,false,found->second.type);add_pin(node,"Output_Get",true,found->second.type,found->second);}
-        } else if(node.kind=="call_function") {
+        } else if(node.kind=="call_function"||node.kind=="call_parent") {
             if(!resolver.function)fail("function_resolver_missing","Runtime reflection is required to resolve call_function",qualified(node.id));
-            auto signature=resolver.function(text(spec,"class",qualified(node.id)),text(spec,"function",qualified(node.id)));
+            FunctionSignature signature;
+            if(node.kind=="call_parent") {
+                if(!output.event_override||output.super_function_symbol.empty()||!event_signature)
+                    fail("parent_call_outside_event","A parent call requires the current reflected event override",qualified(node.id));
+                signature=resolver.function(program.parent_path,output.name);
+                bool parameters_match=signature.parameters.size()==event_signature->parameters.size();
+                for(std::size_t i=0;parameters_match&&i<signature.parameters.size();++i) {
+                    const auto& parameter=signature.parameters[i];const auto& expected=event_signature->parameters[i];
+                    parameters_match=parameter.name==expected.name&&parameter.symbol==expected.symbol&&parameter.type==expected.type
+                        &&parameter.direction==expected.direction&&parameter.const_reference==expected.const_reference;
+                }
+                if(signature.symbol!=output.super_function_symbol||signature.name!=output.name
+                    ||signature.owner_path!=event_signature->owner_path||signature.flags!=event_signature->flags
+                    ||signature.latent!=event_signature->latent||signature.editor_only!=event_signature->editor_only
+                    ||signature.pure!=event_signature->pure||!parameters_match)
+                    fail("event_signature_changed","The parent event identity changed during compilation",qualified(node.id));
+                // Force a direct super-function reference. Virtual dispatch by name
+                // would recurse into this generated override on the same instance.
+                signature.flags|=final_function;
+            } else signature=resolver.function(text(spec,"class",qualified(node.id)),text(spec,"function",qualified(node.id)));
             if(signature.symbol.empty()||signature.owner_path.empty()||signature.name.empty())fail("function_unavailable","Resolved function has no exact identity",qualified(node.id));
+            if(node.kind=="call_function"&&(!(signature.flags&blueprint_callable)||(signature.flags&delegate_function)))
+                fail("function_not_blueprint_callable","Ordinary call_function requires a BlueprintCallable function without a delegate signature",qualified(node.id));
             if(signature.latent)fail("latent_function_in_function_graph","Synchronous runtime functions cannot contain latent calls",qualified(node.id));
             if(signature.editor_only)fail("function_not_shipping","Editor-only functions cannot execute in Shipping",qualified(node.id));
             node.pure=signature.pure||(signature.flags&pure_function);
@@ -451,6 +481,8 @@ class GraphCompiler {
             }
         }
         auto receiver=input(node,"self");writer.node=qualified(node.id);writer.pin={};
+        if(node.kind=="call_parent"&&receiver.kind!=Expression::Kind::self)
+            fail("parent_context_receiver_invalid","A parent event call must use the current generated instance",qualified(node.id),"self");
         if(receiver.kind==Expression::Kind::self && !(signature.flags&static_function)
            &&!compatible(Type{"object",program.parent_path,false},Type{"object",signature.owner_path,false}))
             fail("incompatible_self_receiver","The compiled Blueprint instance is incompatible with the called function owner",qualified(node.id),"self");
@@ -503,7 +535,7 @@ class GraphCompiler {
             auto value=input(node,node.variable);auto receiver=input(node,"self");
             if(receiver.kind!=Expression::Kind::self)fail("external_member_receiver_not_supported","Member setters currently require the compiled instance",qualified(node.id),"self");
             emit_assignment(members.at(node.variable),value);continue_at(target(node.id,"then"));
-        } else if(node.kind=="call_function") {call(node);continue_at(target(node.id,"then"));}
+        } else if(node.kind=="call_function"||node.kind=="call_parent") {call(node);continue_at(target(node.id,"then"));}
         else if(node.kind=="branch") {
             auto condition=input(node,"Condition");writer.node=qualified(node.id);writer.pin="Condition";
             goto_label(target(node.id,"else").empty()?"$fallthrough":target(node.id,"else"),jump_if_not);emit_expression(condition);
@@ -519,7 +551,8 @@ class GraphCompiler {
         output.source_ranges.push_back({begin,output.bytecode.size(),qualified(node.id)});
     }
 public:
-    GraphCompiler(const Resolver& r,Program& p,CompiledFunction& f):resolver(r),program(p),output(f),writer{f} {
+    GraphCompiler(const Resolver& r,Program& p,CompiledFunction& f,const FunctionSignature* event=nullptr)
+        :resolver(r),program(p),output(f),writer{f},event_signature(event) {
         for(const auto& definition:program.members)members.emplace(definition.name,property(definition));
         for(const auto& definition:output.properties) {
             if(definition.role==PropertyRole::input)inputs.emplace(definition.name,property(definition));
@@ -528,7 +561,8 @@ public:
     }
     void compile(const json& spec) {
         for(const auto& item:array(spec,"nodes"))parse_node(item);
-        if(entry_id.empty()||result_id.empty())fail("function_terminator_unmapped","Function graph requires exactly one entry and result",output.name);
+        if(entry_id.empty()||(!output.event_override&&result_id.empty()))
+            fail("function_terminator_unmapped","Function graphs require entry/result; event overrides require an entry",output.name);
         connect(spec);
         std::vector<std::string> execution;std::set<std::string> visited;
         std::function<void(const std::string&)> visit=[&](const std::string& id) {
@@ -562,11 +596,106 @@ Program compile_blueprint(const json& asset,const Resolver& resolver) {
         std::string literal;if(declaration.contains("default")) {if(!declaration.at("default").is_string())fail("invalid_variable_default","Member default must be an Unreal property literal",{},name);literal=declaration.at("default").get<std::string>();}
         program.members.push_back({name,"member:"+name,type(declaration),PropertyRole::member,false,literal});
     }
-    // The established asset schema always contains base EventGraph arrays.
-    array(asset,"nodes");array(asset,"connections");
-    if(!array(asset,"nodes").empty())fail("event_graph_compilation_pending","Runtime compiler currently accepts synchronous named functions; EventGraph lowering must be integrated before event-graph publication");
-    if(!asset.contains("functions"))fail("empty_functions","Runtime compilation requires an authored function graph");
-    for(const auto& spec:array(asset,"functions")) {
+    // Each reflected EventGraph root is lowered to its own real override body.
+    // No ubergraph frame or client-side source replay is used for this subset.
+    const auto& event_nodes=array(asset,"nodes");const auto& event_edges=array(asset,"connections");
+    std::map<std::string,json> graph_nodes;
+    std::map<std::string,bool> graph_pure;
+    std::map<std::string,FunctionSignature> event_signatures;
+    for(const auto& spec:event_nodes) {
+        const auto id=text(spec,"id"),kind=text(spec,"kind",id);
+        if(!graph_nodes.emplace(id,spec).second)fail("duplicate_node","EventGraph node identifiers must be unique",id);
+        bool pure=kind=="variable_get"||kind=="self";
+        if(kind=="event") {
+            if(!resolver.function)fail("function_resolver_missing","Event overrides require actual reflected signatures",id);
+            const auto name=text(spec,"function",id);
+            if(!valid_name(name)||!names.insert(name).second)
+                fail("event_name_collision","Event overrides must be unique and distinct from members",id);
+            auto signature=resolver.function(program.parent_path,name);
+            if(signature.symbol.empty()||signature.owner_path.empty()||signature.name!=name)
+                fail("event_signature_unavailable","Event resolver returned an incomplete or different signature",id);
+            if((signature.flags&(blueprint_event|event_function))!=(blueprint_event|event_function)
+                ||(signature.flags&(final_function|static_function|0x40000000u)))
+                fail("event_not_overridable","Event requires a non-final, non-static, non-const BlueprintEvent",id);
+            if(signature.flags&0x813151c0u)
+                fail("event_contract_unsupported","Network and delegate event contracts are outside this synchronous override subset",id);
+            if(signature.latent)fail("latent_event_unsupported","A synchronous event override cannot be latent",id);
+            if(signature.editor_only)fail("function_not_shipping","Editor-only event cannot execute in Shipping",id);
+            std::set<std::string> parameters;
+            for(const auto& parameter:signature.parameters) {
+                if(parameter.direction!=Direction::input||parameter.const_reference)
+                    fail("event_parameter_unsupported","Event overrides currently require by-value input parameters",id,parameter.name);
+                if(!valid_name(parameter.name)||parameter.name=="execute"||parameter.name=="then"||parameter.name=="self"
+                    ||!parameters.insert(parameter.name).second)
+                    fail("event_parameter_collision","Reflected event parameter collides with a control pin",id,parameter.name);
+            }
+            event_signatures.emplace(id,std::move(signature));
+        } else if(kind=="call_function") {
+            if(!resolver.function)fail("function_resolver_missing","Runtime reflection is required to resolve call_function",id);
+            const auto signature=resolver.function(text(spec,"class",id),text(spec,"function",id));
+            pure=signature.pure||(signature.flags&pure_function);
+        }
+        graph_pure.emplace(id,pure);
+    }
+    std::vector<Edge> parsed_event_edges;
+    for(const auto& spec:event_edges) {
+        if(!spec.is_object()||!spec.contains("from")||!spec.contains("to"))fail("invalid_connection","Connections require from and to");
+        Edge edge{text(spec.at("from"),"node"),text(spec.at("from"),"pin"),text(spec.at("to"),"node"),text(spec.at("to"),"pin")};
+        if(!graph_nodes.contains(edge.from_node)||!graph_nodes.contains(edge.to_node))
+            fail("node_unavailable","EventGraph connection refers to a missing node",edge.to_node,edge.to_pin);
+        if(event_signatures.contains(edge.to_node))
+            fail("event_input_connection","Event roots cannot receive graph connections",edge.to_node,edge.to_pin);
+        parsed_event_edges.push_back(std::move(edge));
+    }
+    if(!event_nodes.empty()&&event_signatures.empty())fail("event_root_missing","EventGraph requires a reflected event root");
+    std::set<std::string> owned_event_nodes;
+    for(const auto&[event_id,signature]:event_signatures) {
+        std::set<std::string> selected{event_id};
+        // Follow execution first, then add only pure backward data dependencies.
+        // Impure outputs require the producer to execute in the same event body.
+        auto execution_edge=[](const Edge& edge){return edge.to_pin=="execute";};
+        bool changed=true;
+        while(changed) {
+            changed=false;
+            for(const auto& edge:parsed_event_edges)if(selected.contains(edge.from_node)&&execution_edge(edge)) {
+                if(event_signatures.contains(edge.to_node)&&edge.to_node!=event_id)
+                    fail("cross_event_execution","An event cannot dispatch another event root",edge.to_node,edge.to_pin);
+                changed|=selected.insert(edge.to_node).second;
+            }
+        }
+        changed=true;
+        while(changed) {
+            changed=false;
+            for(const auto& edge:parsed_event_edges)if(selected.contains(edge.to_node)&&!selected.contains(edge.from_node)) {
+                if(execution_edge(edge)||event_signatures.contains(edge.from_node)||!graph_pure.at(edge.from_node))
+                    fail("cross_event_dependency","Event data must come from its own entry or an executed producer",edge.to_node,edge.to_pin);
+                changed|=selected.insert(edge.from_node).second;
+            }
+        }
+        CompiledFunction function;function.name=signature.name;function.symbol="function:"+signature.name;
+        function.flags=signature.flags&override_inherit;
+        function.event_override=true;function.super_function_symbol=signature.symbol;
+        for(const auto& parameter:signature.parameters)
+            function.properties.push_back({parameter.name,function.symbol+"/parameter:"+parameter.name,parameter.type,PropertyRole::input,false,{}});
+        json graph={{"nodes",json::array()},{"connections",json::array()}};
+        for(const auto& spec:event_nodes) {
+            const auto id=text(spec,"id");if(!selected.contains(id))continue;
+            auto node=spec;
+            if(id==event_id)node["kind"]="function_entry";
+            else if(node.at("kind")=="function_entry"||node.at("kind")=="function_result")
+                fail("event_function_terminator","Function entry/result nodes do not belong in EventGraph",id);
+            if(!graph_pure.at(id)&&id!=event_id&&!owned_event_nodes.insert(id).second)
+                fail("shared_event_execution","An impure node cannot be shared by multiple event bodies",id);
+            graph["nodes"].push_back(std::move(node));
+        }
+        for(const auto& spec:event_edges)if(selected.contains(text(spec.at("from"),"node"))&&selected.contains(text(spec.at("to"),"node")))
+            graph["connections"].push_back(spec);
+        GraphCompiler(resolver,program,function,&signature).compile(graph);program.functions.push_back(std::move(function));
+        owned_event_nodes.insert(selected.begin(),selected.end());
+    }
+    for(const auto&[id,spec]:graph_nodes)if(!owned_event_nodes.contains(id))
+        fail("event_node_unreachable","EventGraph node is not part of any event body",id);
+if(asset.contains("functions"))for(const auto& spec:array(asset,"functions")) {
         const auto name=text(spec,"name");
         if(!valid_name(name)||name=="EventGraph"||!names.insert(name).second)fail("function_name_collision","Function names must be valid and distinct from members",name);
         CompiledFunction function;function.name=name;function.symbol="function:"+name;function.flags=public_callable_event;

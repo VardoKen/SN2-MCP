@@ -8,6 +8,7 @@
 #include "sn2_mcp/runtime_package_writer.hpp"
 #include "sn2_mcp/runtime_iostore_writer.hpp"
 #include "sn2_mcp/runtime_pak_writer.hpp"
+#include "sn2_mcp/runtime_authoring_lifecycle.hpp"
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -109,8 +110,8 @@ __try {
     return true;
 }__except(native_exception::capture(GetExceptionInformation(),fault)){return false;}
 }
-bool call_root(std::uintptr_t entry,std::uintptr_t item,native_exception::Diagnostic* fault) noexcept {
-    __try {reinterpret_cast<bool(__fastcall*)(void*,std::uint32_t)>(entry)(reinterpret_cast<void*>(item),0x40000000);return true;}
+bool call_root(std::uintptr_t entry,std::uintptr_t item,native_exception::Diagnostic* fault,bool* changed=nullptr) noexcept {
+    __try {const auto result=reinterpret_cast<bool(__fastcall*)(void*,std::uint32_t)>(entry)(reinterpret_cast<void*>(item),0x40000000);if(changed)*changed=result;return true;}
     __except(native_exception::capture(GetExceptionInformation(),fault)){return false;}
 }
 bool call_link_function(std::uintptr_t entry,void* klass,void* function,const char* name,
@@ -135,6 +136,7 @@ struct RuntimeAuthoredRecord {
     std::string asset_path;
     json specification;
     std::vector<std::uintptr_t> rooted_items;
+    runtime_authoring_lifecycle::RootLedger root_ledger;
     struct MemberDefault {
         std::uintptr_t field{};
         std::int32_t offset{},size{};
@@ -142,8 +144,50 @@ struct RuntimeAuthoredRecord {
         json value;
     };
     std::vector<MemberDefault> scalar_defaults;
+    ObjectSerialIdentity class_identity;
 };
-std::map<std::uintptr_t,RuntimeAuthoredRecord> authored_records;
+std::map<std::string,RuntimeAuthoredRecord> authored_records;
+std::uint64_t next_authored_revision{};
+std::string new_revision_id() {
+    FILETIME created{},exited{},kernel{},user{};
+    if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user))
+        throw HandlerError("runtime_authoring_process_identity_unavailable","The current process creation identity is unavailable");
+    const auto creation=(std::uint64_t(created.dwHighDateTime)<<32)|created.dwLowDateTime;
+    return "revision-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(creation)+"-"+std::to_string(++next_authored_revision);
+}
+template<class Resolve>
+auto authored_record(const json& params,std::uintptr_t module,Resolve&& resolve) {
+    auto found=authored_records.end();
+    if(params.contains("revision_id")) {
+        if(!params.at("revision_id").is_string() || params.at("revision_id").get<std::string>().empty())
+            throw HandlerError("invalid_runtime_authoring_revision","revision_id must be a nonempty string");
+        found=authored_records.find(params.at("revision_id").get<std::string>());
+    }else if(params.contains("class_handle") && params.at("class_handle").is_string()) {
+        const auto pointer=reinterpret_cast<std::uintptr_t>(resolve(params.at("class_handle").get<std::string>()));
+        for(auto candidate=authored_records.begin();candidate!=authored_records.end();++candidate)
+            if(candidate->second.module==module && candidate->second.klass==pointer
+               && !candidate->second.root_ledger.retirement_requested())found=candidate;
+    }else throw HandlerError("invalid_runtime_authoring_revision","revision_id or class_handle is required");
+    if(found==authored_records.end() || found->second.module!=module)
+        throw HandlerError("runtime_authored_class_unavailable","The selected revision has no runtime authoring record");
+    return found;
+}
+template<class Observe>
+void refresh_active_roots(RuntimeAuthoredRecord& record,Observe&& observe) {
+    if(record.root_ledger.retirement_requested())return;
+    std::vector<runtime_authoring_lifecycle::RootIdentityObservation> refresh;
+    for(const auto& root:record.root_ledger.roots()) {
+        auto current=observe(root);
+        if(!current.confirmed_root_set)
+            throw HandlerError("runtime_authoring_root_changed","An active owned authoring root is no longer retained");
+        refresh.push_back(current);
+    }
+    if(!record.root_ledger.refresh_owned_identities(refresh))
+        throw HandlerError("runtime_authoring_root_identity_changed","Rooted object identities changed before the requested operation");
+    for(const auto& root:record.root_ledger.roots())if(root.identity.object==record.klass) {
+        record.class_identity=root.identity;record.class_serial=root.identity.serial;
+    }
+}
 std::string property_kind(const rb::Type& type) {
     if(type.array)return "ArrayProperty";
     static const std::map<std::string,std::string> kinds{{"bool","BoolProperty"},{"int","IntProperty"},
@@ -291,7 +335,7 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
         signature.symbol="external_function:"+object_path(reinterpret_cast<void*>(function));
         signature.name=function_name;signature.owner_path=object_path(reinterpret_cast<void*>(game_memory::read<std::uintptr_t>(function+0x20)));
         signature.flags=game_memory::read<std::uint32_t>(function+0xb0);signature.pure=(signature.flags&0x10000000)!=0;
-        signature.latent=false;signature.editor_only=(signature.flags&0x20000000)!=0;
+        signature.editor_only=(signature.flags&0x20000000)!=0;
         remember(signature.symbol,reinterpret_cast<void*>(function));
         auto* actual_owner=find_class(signature.owner_path);
         if(signature.flags&0x2000) {
@@ -308,6 +352,11 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
             parameter.direction=(flags&0x400)?rb::Direction::return_value:
                 ((flags&0x100) && !(flags&2))?((flags&0x8000000)?rb::Direction::input_output:rb::Direction::output):rb::Direction::input;
             parameter.const_reference=(flags&2) && (flags&(0x100|0x8000000));
+            // LatentInfo is the actual runtime continuation contract. This
+            // resolver does not inspect editor metadata; missing metadata
+            // does not establish a synchronous runtime contract.
+            if(parameter.type.kind=="struct" && parameter.type.path=="/Script/Engine.LatentActionInfo")
+                signature.latent=true;
             parameter.default_to_self=parameter.name=="WorldContextObject";
             parameter.wildcard=parameter.type.array && signature.owner_path=="/Script/Engine.KismetArrayLibrary";
             symbols[parameter.symbol]=field;referenced_fields[parameter.symbol]={field,validate_object(reinterpret_cast<void*>(function))};
@@ -368,6 +417,8 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
     for(const auto* binding:{"construct_parameters","construct_object","field_try_construct","static_link",
         "class_set_super","function_bind","blueprint_class_bind","link_functions","set_root_flags","clear_root_flags","create_default_object",
         "collect_bytecode_references","mark_as_reachable"})entry(binding);
+    if(std::any_of(program.functions.begin(),program.functions.end(),[](const auto& function){return function.event_override;}))
+        entry("reinitialize_struct_base_chain");
     if(!bindings_.realloc.available())throw HandlerError("runtime_authoring_allocator_unavailable","The game allocator is unavailable");
     auto* parent=find_class(program.parent_path);
     auto* meta_class=find_class("/Script/Engine.BlueprintGeneratedClass");
@@ -407,15 +458,24 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
                 "Authored declarations have the same Unreal FName",
                 {{"name",text},{"conflicts_with",found->second},{"kind",kind},{"compiled",false},
                  {"executed",false},{"may_have_executed",false},{"preserved_previous",true}});
-        if(const auto inherited=inherited_names.find(raw);inherited!=inherited_names.end())
+        if(const auto inherited=inherited_names.find(raw);inherited!=inherited_names.end()
+           && kind!="event_override")
             throw HandlerError("runtime_authoring_inherited_name_collision",
-                "An authored declaration masks an inherited field or function; overrides are not supported",
+                "An authored declaration masks an inherited field or function",
                 {{"name",text},{"inherited",inherited->second},{"kind",kind},{"compiled",false},
                  {"executed",false},{"may_have_executed",false},{"preserved_previous",true}});
     };
     for(const auto& member:program.members)declaration_name(member.name,"member");
     for(const auto& function:program.functions) {
-        declaration_name(function.name,"function");
+        declaration_name(function.name,function.event_override?"event_override":"function");
+        if(function.event_override) {
+            const auto super=symbols.find(function.super_function_symbol);
+            if(super==symbols.end() || !super->second)
+                throw HandlerError("runtime_authoring_event_super_unavailable","The reflected event has no bound inherited function");
+            const auto expected=resolver.function(program.parent_path,function.name);
+            if(expected.symbol!=function.super_function_symbol || !(expected.flags&0x08000000u))
+                throw HandlerError("runtime_authoring_event_signature_changed","The inherited Blueprint event changed before construction");
+        }
         std::map<std::uint64_t,std::string> property_names;
         for(const auto& property:function.properties) {
             const auto [found,inserted]=property_names.emplace(make_name(property.name),property.name);
@@ -497,8 +557,11 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
     const auto root_object=[&](void* object) {
         const auto item=item_for(object);
         if(!(game_memory::read<std::uint32_t>(item+8)&0x40000000)) {
-            if(!call_root(entry("set_root_flags"),item,&fault))failed("SetRootFlags");
-            rooted_items.push_back(item);
+bool changed{};
+if(!call_root(entry("set_root_flags"),item,&fault,&changed))failed("SetRootFlags");
+if(changed)rooted_items.push_back(item);
+if(!(game_memory::read<std::uint32_t>(item+8)&0x40000000))
+throw HandlerError("runtime_authoring_root_changed","The authoring object did not retain RootSet after acquisition");
         }
     };
     try {
@@ -585,10 +648,35 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
             stage="function_construction";auto* object=construct(function_class,klass,function.name);
             const auto address=reinterpret_cast<std::uintptr_t>(object);
             write(address+0xb0,function.flags);
+        if(function.event_override) {
+            const auto super=symbols.at(function.super_function_symbol);
+            validate_object(reinterpret_cast<void*>(super));
+            // UStruct::SetSuperStruct assignment plus the same base-chain
+            // operation used by source-correlated UClass::SetSuperStruct.
+            write(address+0x40,super);
+            if(!call_object_method(entry("reinitialize_struct_base_chain"),reinterpret_cast<void*>(address+0x30),&fault))
+                failed("FStructBaseChain::ReinitializeBaseChainArray");
+        }
             write(address+0xba,std::uint32_t{});write(address+0xc0,std::uintptr_t{});
             write(address+0xc8,std::uintptr_t{});write(address+0xd0,std::int32_t{});write(address+0xd8,std::uintptr_t{});
             add_properties(function.properties,object);
             if(!call_static_link(entry("static_link"),object,&fault))failed("UFunction::StaticLink");
+        if(function.event_override) {
+            const auto super=symbols.at(function.super_function_symbol);
+            if(game_memory::read<std::uint8_t>(address+0xb4)!=game_memory::read<std::uint8_t>(super+0xb4)
+               || game_memory::read<std::uint16_t>(address+0xb6)!=game_memory::read<std::uint16_t>(super+0xb6))
+                throw HandlerError("runtime_authoring_event_layout_mismatch","Generated event parameter extent differs from its reflected parent");
+            auto own=game_memory::read<std::uintptr_t>(address+0x50);
+            auto inherited=game_memory::read<std::uintptr_t>(super+0x50);
+            for(;inherited && (game_memory::read<std::uint64_t>(inherited+0x38)&0x80);
+                inherited=game_memory::read<std::uintptr_t>(inherited+0x18)) {
+                if(!own || game_memory::read<std::uint64_t>(own+0x20)!=game_memory::read<std::uint64_t>(inherited+0x20)
+                   || reflected_type(own)!=reflected_type(inherited)
+                   || game_memory::read<std::int32_t>(own+0x44)!=game_memory::read<std::int32_t>(inherited+0x44))
+                    throw HandlerError("runtime_authoring_event_layout_mismatch","Generated event parameters differ from the exact reflected parent");
+                own=game_memory::read<std::uintptr_t>(own+0x18);
+            }
+        }
             if(!call_object_method(entry("function_bind"),object,&fault))failed("UFunction::Bind");
             if(!call_link_function(entry("link_functions"),klass,object,function.name.c_str(),&fault))failed("UClass::CreateLinkAndAddChildFunctionsToMap");
             symbols[function.symbol]=address;generated_functions.emplace_back(&function,object);
@@ -603,7 +691,10 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
                 if(!relocation.symbol.starts_with("name:"))
                     throw HandlerError("runtime_authoring_name_symbol_invalid","The script name relocation has no name prefix");
                 const auto value=make_name(relocation.symbol.substr(5));
-                    symbol.comparison_index=static_cast<std::uint32_t>(value);symbol.display_index=symbol.comparison_index;
+                // This target's FName is the verified non-case-preserving
+                // comparison/number pair. FScriptName still occupies 12 bytes;
+                // NameToScriptName leaves DisplayIndex zero in this ABI.
+                symbol.comparison_index=static_cast<std::uint32_t>(value);symbol.display_index=0;
                     symbol.number=static_cast<std::uint32_t>(value>>32);symbol.identity="name:"+name(value);return symbol;
                 }
                 const auto found=symbols.find(relocation.symbol);
@@ -648,9 +739,13 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
                 if(reference && !call_object_method(entry("mark_as_reachable"),reference,&fault))failed("UE::GC::MarkAsReachable");
             }
             std::vector<std::uint8_t> observed(bound.bytecode.size());
-            if(!game_memory::copy(observed.data(),script,observed.size()) || observed!=bound.bytecode
-               || !game_memory::read<std::uintptr_t>(address+0xd8))
-                throw HandlerError("runtime_authoring_script_publication_failed","The generated script or bound VM entry differs after publication");
+        const bool copied=game_memory::copy(observed.data(),script,observed.size());
+        const auto vm_entry=game_memory::read<std::uintptr_t>(address+0xd8);
+        if(!copied || observed!=bound.bytecode || !vm_entry)
+            throw HandlerError("runtime_authoring_script_publication_failed","The generated script or bound VM entry differs after publication",
+                {{"function",function->name},{"function_pointer",address},{"flags",game_memory::read<std::uint32_t>(address+0xb0)},
+                 {"vm_entry",vm_entry},{"bytecode_copied",copied},{"expected_bytecode",bytecode_hex(bound.bytecode)},
+                 {"observed_bytecode",copied?json(bytecode_hex(observed)):json(nullptr)}});
             const auto identity=validate_object(object);
             function_results.push_back({{"function",object_info(object,identity.index)},
                 {"flags",game_memory::read<std::uint32_t>(address+0xb0)},{"parameter_count",game_memory::read<std::uint8_t>(address+0xb4)},
@@ -701,7 +796,15 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
         }
         RuntimeAuthoredRecord compiled_record{base_,class_address,reinterpret_cast<std::uintptr_t>(package),
             reinterpret_cast<std::uintptr_t>(defaults),class_identity.index,class_identity.serial,
-            parsed.package_name+"."+parsed.asset_name,asset,rooted_items};
+            parsed.package_name+"."+parsed.asset_name,asset,rooted_items,{}};
+        compiled_record.root_ledger.reserve(rooted_items.size());
+        for(const auto item:rooted_items) {
+            auto* rooted=reinterpret_cast<void*>(game_memory::read<std::uintptr_t>(item));
+            const auto identity=serial_identity(validate_object(rooted));
+            if(item_for(rooted)!=item || !(game_memory::read<std::uint32_t>(item+8)&0x40000000u))
+                throw HandlerError("runtime_authoring_root_changed","A newly added authoring root changed before publication");
+            compiled_record.root_ledger.add_owned_root({item,identity});
+        }
         // Persistence describes this compiled revision. Capture all authored
         // scalar defaults, including implicit defaults, before exposing CDO.
         for(const auto& member:program.members) {
@@ -715,16 +818,19 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
             compiled_record.scalar_defaults.push_back({field,offset,size,member.name,kind,
                 property_value(reinterpret_cast<std::uintptr_t>(defaults)+offset,kind,size,field)});
         }
-        authored_records[class_address]=std::move(compiled_record);
+        compiled_record.class_identity=serial_identity(class_identity);
+        const auto revision_id=new_revision_id();
         // A live class is published only after all properties/functions/scripts
         // and its CDO are attributable. Persistent package publication is a
         // separate operation and is never inferred from object creation.
-        return {{"source","runtime_blueprint_compilation"},{"compiled",true},{"runtime_published",true},
+        json response={{"source","runtime_blueprint_compilation"},{"revision_id",revision_id},{"compiled",true},{"runtime_published",true},
             {"package_published",false},{"persisted",false},{"asset_path",parsed.package_name+"."+parsed.asset_name},
             {"class",object_info(klass,class_identity.index)},{"default_object",object_info(defaults,default_identity.index)},
             {"functions",std::move(function_results)},{"member_defaults",std::move(default_values)},{"bindings",bindings.describe()},
             {"thread_id",GetCurrentThreadId()},{"retained_root_items",rooted_items},
             {"effects",{{"executed",true},{"may_have_executed",true},{"do_not_retry",false}}}};
+        authored_records.emplace(revision_id,std::move(compiled_record));
+        return response;
     }catch(const HandlerError& error) {
         for(auto it=rooted_items.rbegin();it!=rooted_items.rend();++it)call_root(entry("clear_root_flags"),*it,&fault);
         throw HandlerError(error.code(),error.what(),{{"compiled",false},{"runtime_published",false},{"persisted",false},
@@ -737,18 +843,87 @@ json GameAccess::runtime_compile_blueprint(const json& params) {
     }
 }
 
+json GameAccess::runtime_release_blueprint(const json& params) {
+    namespace lifetime=runtime_authoring_lifecycle;
+    const auto found=authored_record(params,base_,[&](const auto& handle){return resolve(handle);});
+    auto& ledger=found->second.root_ledger;
+    const auto item_for=[&](const ObjectSerialIdentity& identity) {
+        const auto chunks=game_memory::read<std::uintptr_t>(base_+bindings_.object_array.rva);
+        const auto chunk=game_memory::read<std::uintptr_t>(chunks+static_cast<std::size_t>(identity.index>>16)*8);
+        return chunk+static_cast<std::size_t>(identity.index&65535)*24;
+    };
+    // Initial weak references can allocate a previously zero serial while
+    // RootSet keeps the same UObject alive. Refresh only confirmed roots,
+    // atomically, before starting retirement; preserve before/after evidence.
+    refresh_active_roots(found->second,[&](const auto& root) {
+            const auto current=serial_identity(validate_object(reinterpret_cast<void*>(root.identity.object)));
+            if(item_for(current)!=root.item)
+                throw HandlerError("runtime_authoring_root_identity_changed","The rooted object registry item changed");
+            return lifetime::RootIdentityObservation{root.item,current,(game_memory::read<std::uint32_t>(root.item+8)&0x40000000u)!=0};
+    });
+    if(!ledger.retirement_requested()
+       && !same_serial_identity(found->second.class_identity,
+           serial_identity(validate_object(reinterpret_cast<void*>(found->second.klass)))))
+        throw HandlerError("runtime_authoring_class_identity_changed","The active authored class identity changed before retirement");
+    const auto observer=[&](const lifetime::OwnedRoot& root)->lifetime::RootObservation {
+        try {
+            const auto current=serial_identity(validate_object(reinterpret_cast<void*>(root.identity.object)));
+            if(!same_serial_identity(current,root.identity) || item_for(current)!=root.item)
+                return {lifetime::ObservationState::identity_changed,false};
+            return {lifetime::ObservationState::valid,(game_memory::read<std::uint32_t>(root.item+8)&0x40000000u)!=0};
+        }catch(const HandlerError&){return {lifetime::ObservationState::unavailable,false};}
+    };
+    const bool reconcile=params.value("reconcile",false);
+    native_exception::Diagnostic fault{};
+    lifetime::ReleaseResult result;
+    if(reconcile)result=ledger.reconcile(observer);
+    else if(ledger.snapshot().state==lifetime::ReleaseState::released || ledger.snapshot().unknown_count)
+        result=ledger.snapshot();
+    else {
+        const auto bindings=runtime_authoring::discover(base_);
+        const auto clear=bindings.address(base_,"clear_root_flags");
+        result=ledger.release(observer,[&](const auto& root){return call_root(clear,root.item,&fault);});
+    }
+    const char* state=result.state==lifetime::ReleaseState::released?"released":
+        result.state==lifetime::ReleaseState::identity_changed?"identity_changed":
+        result.state==lifetime::ReleaseState::observation_unavailable?"observation_unavailable":
+        result.state==lifetime::ReleaseState::release_unknown?"release_unknown":"retained";
+    json roots=json::array(),refreshes=json::array();
+    for(const auto& root:ledger.roots())roots.push_back({{"item",root.item},{"object",root.identity.object},
+        {"index",root.identity.index},{"serial",root.identity.serial},{"serial_coverage",serial_coverage(root.identity)},
+        {"state",root.state==lifetime::RootState::released?"released":root.state==lifetime::RootState::unknown?"unknown":"retained"}});
+    for(const auto& refresh:ledger.identity_refreshes())refreshes.push_back({{"item",refresh.item},
+        {"before_serial",refresh.before.serial},{"after_serial",refresh.after.serial},
+        {"before_class_serial",refresh.before.class_serial},{"after_class_serial",refresh.after.class_serial}});
+    return {{"source","runtime_blueprint_retirement"},{"revision_id",found->first},{"state",state},{"asset_path",found->second.asset_path},
+        {"retirement_requested",result.retirement_requested},{"released_count",result.released_count},
+        {"retained_count",result.retained_count},{"unknown_count",result.unknown_count},{"failed_item",result.failed_item},
+        {"roots",std::move(roots)},{"identity_refreshes",std::move(refreshes)},
+        {"reconciled",reconcile},{"objects_destroyed",false},{"gc_observed",false},
+        {"effects",{{"executed",result.attempted},{"may_have_executed",result.unknown_count!=0},{"do_not_retry",result.unknown_count!=0}}}};
+}
+
 json GameAccess::runtime_save_package(const json& params) {
     namespace rp=runtime_package;
     namespace ra=runtime_archive;
-    if(!params.contains("class_handle") || !params.at("class_handle").is_string()
-       || !params.contains("output_directory") || !params.at("output_directory").is_string())
-        throw HandlerError("invalid_runtime_package_request","class_handle and output_directory are required strings");
-    auto* klass=resolve(params.at("class_handle").get<std::string>());
+    if(!params.contains("output_directory") || !params.at("output_directory").is_string())
+        throw HandlerError("invalid_runtime_package_request","output_directory is required");
+    const auto record=authored_record(params,base_,[&](const auto& handle){return resolve(handle);});
+    if(record->second.root_ledger.retirement_requested())
+        throw HandlerError("runtime_authored_revision_retired","Saving requires an active retained compiled revision",
+            {{"serialized",false},{"persisted",false},{"executed",false},{"may_have_executed",false}});
+    refresh_active_roots(record->second,[&](const auto& root) {
+        const auto current=serial_identity(validate_object(reinterpret_cast<void*>(root.identity.object)));
+        const auto chunks=game_memory::read<std::uintptr_t>(base_+bindings_.object_array.rva);
+        const auto chunk=game_memory::read<std::uintptr_t>(chunks+static_cast<std::size_t>(current.index>>16)*8);
+        const auto item=chunk+static_cast<std::size_t>(current.index&65535)*24;
+        if(item!=root.item)throw HandlerError("runtime_authoring_root_identity_changed","The rooted object registry item changed");
+        return runtime_authoring_lifecycle::RootIdentityObservation{item,current,(game_memory::read<std::uint32_t>(item+8)&0x40000000u)!=0};
+    });
+    auto* klass=reinterpret_cast<void*>(record->second.klass);
     const auto class_address=reinterpret_cast<std::uintptr_t>(klass);
     const auto identity=validate_object(klass);
-    const auto record=authored_records.find(class_address);
-    if(record==authored_records.end() || record->second.module!=base_
-       || record->second.class_index!=identity.index || record->second.class_serial!=identity.serial)
+    if(!same_serial_identity(record->second.class_identity,serial_identity(identity)))
         throw HandlerError("runtime_authored_class_unavailable","The selected class has no current runtime authoring record");
     for(const auto& variable:record->second.specification.value("variables",json::array())) {
         if(variable.value("container",std::string{})=="array" || variable.value("type",std::string{})=="struct")

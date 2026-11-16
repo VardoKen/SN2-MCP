@@ -368,7 +368,7 @@ def _runtime_specification(receipt: dict, raw: bytes) -> None:
 
 def _plugin_config_inputs(inputs: list[dict]) -> list[dict]:
     """Select the game's supported loose plugin configuration from captured source."""
-    return [item for item in inputs if item["path"] == "Config/Game.ini"]
+    return [item for item in inputs if item["path"] in {"Config/Game.ini", "Config/Engine.ini"}]
 
 
 def _container_contract(entries: list[dict], plugin: str, *, missing_code: str = "missing_cook_output") -> list[dict]:

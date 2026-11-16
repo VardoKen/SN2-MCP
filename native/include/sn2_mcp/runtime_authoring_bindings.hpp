@@ -56,6 +56,25 @@ inline Bindings discover(std::uintptr_t base) {
     function("static_link",
         "44 0F B6 C3 48 89 44 24 20 48 8D 54 24 20 48 8B 07 48 8B CF FF 90 C8 02 00 00",0x24);
     function("class_set_super","48 8D 4B 30 48 89 7B 40",0x33);
+    {
+        RuntimeBinding binding;
+        try {
+            const auto class_super=result.address(base,"class_set_super")-base;
+            // UClass::SetSuperStruct inlines SuperStruct assignment and calls
+            // FStructBaseChain::ReinitializeBaseChainArray on this+0x30.
+            // Exact instruction/RIP relation is source and binary correlated.
+            if(image.find_unique("class_super_base_chain","48 8D 4B 30 48 89 7B 40 E8 ?? ?? ?? ??")!=class_super+0x33)
+                throw HandlerError("binding_struct_super_mismatch","The class superclass setter has a different base-chain call");
+            const auto target=image.resolve_rip(class_super+0x3b,1,5);
+            DWORD64 owner{};
+            const auto unwind=RtlLookupFunctionEntry(base+target,&owner,nullptr);
+            if(!unwind || owner!=base || unwind->BeginAddress!=target)
+                throw HandlerError("binding_unwind_mismatch","The base-chain target is not a primary function entry");
+            binding.rva=target;binding.discovery={{"method","class_set_super_source_correlated_relative_call"},
+                {"class_set_super_rva",class_super},{"call_rva",class_super+0x3b},{"struct_base_chain_offset",0x30}};
+        }catch(const HandlerError& error){binding.error=error.code()+": "+error.what();}
+        result.entries.emplace("reinitialize_struct_base_chain",std::move(binding));
+    }
     function("function_bind",
         "48 89 5C 24 18 48 89 74 24 20 57 48 83 EC 40 33 F6 48 8B F9 48 8B D9 48 85 C9");
     function("blueprint_class_bind",

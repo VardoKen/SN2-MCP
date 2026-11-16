@@ -310,6 +310,11 @@ def create_server(workspace_root: Path, native_port: int = 27223,
     def sn2_runtime_save_package(authoring_id: str, timeout_seconds: float | None = None) -> dict[str, Any]:
         """Serialize a confirmed live revision and verify native package/container outputs; no external cooker or installation runs."""
         return runtime_authoring_call("save", authoring_id, timeout_seconds)
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
+    def sn2_runtime_release_blueprint(authoring_id: str, timeout_seconds: float | None = None,
+                                     reconcile: bool = False) -> dict[str, Any]:
+        """Release a compiled revision's owned roots; reconcile unknown clearing without repeating it."""
+        return runtime_authoring_call("release", authoring_id, timeout_seconds, reconcile=reconcile)
 
     @server.tool(annotations=read_only)
     def sn2_runtime_authoring_status(authoring_id: str | None = None, working: bool = False) -> dict[str, Any]:

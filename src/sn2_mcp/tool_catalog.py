@@ -293,6 +293,7 @@ for _name, _method in {"sn2_authoring_recipe": "recipe", "sn2_author_mod": "auth
         ("state", "authoring_id", "source_manifest_sha256", "specification_sha256", "outputs", "published", "reports"),
         state_tools=("sn2_authoring_recipe", "sn2_authoring_status", "sn2_authoring_report"))
 for _name, _method in {"sn2_runtime_authoring_recipe": "recipe", "sn2_runtime_compile_blueprint": "compile",
+                      "sn2_runtime_release_blueprint": "release",
         "sn2_runtime_save_package": "save", "sn2_runtime_authoring_status": "status",
         "sn2_runtime_authoring_report": "report", "sn2_runtime_build_status": "build_status"}.items():
     _CONTRACTS[_name] = _entry("native_runtime_blueprint_authoring", ("configured_workspace", "native_tick_reflection"),

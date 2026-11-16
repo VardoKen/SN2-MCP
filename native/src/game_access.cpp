@@ -665,7 +665,7 @@ json GameAccess::status() const {
         target["creation_filetime"]=std::to_string(sn2::loader::creation_filetime(GetCurrentProcess()));
     } catch(const std::exception& error) {target["error"]=error.what();}
     const bool reflection=reflection_validated_.load();
-    return {{"version","0.8.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
+    return {{"version","0.9.0"},{"native_route","standalone_in_process"},{"hook_installed",enabled_.load()},
             {"tick_hook_current",tick_hook},
             {"process_id",GetCurrentProcessId()},{"process_creation_filetime",target.at("creation_filetime")},{"target_process",target},
             {"game_thread_id",game_thread_.load()},{"tick_count",ticks_.load()},
@@ -689,6 +689,7 @@ json GameAccess::status() const {
                 {"typed_invocation","unverified"},{"owned_values","unverified"},
                 {"sparse_containers","unverified"},{"observations",reflection?"available":"unverified"}}},
             {"operations",{"status","enable_game","objects","properties","functions","invoke","load_asset","load_class",
+                "runtime_create_package","runtime_compile_blueprint","runtime_save_package","runtime_release_blueprint",
                 "blueprint_mod_enable","blueprint_mod_status","blueprint_mod_disable","read_array",
                 "read_set","read_map","read_struct","snapshot","watch_start","watch_read","watch_stop",
                 "watch_forget","watch_list","watch_resume"}},
@@ -3543,6 +3544,7 @@ json GameAccess::execute(const json& request) {
 if(op=="runtime_create_package")return runtime_create_package(params);
 if(op=="runtime_compile_blueprint")return runtime_compile_blueprint(params);
 if(op=="runtime_save_package")return runtime_save_package(params);
+if(op=="runtime_release_blueprint")return runtime_release_blueprint(params);
     if(op=="snapshot") {
         if(!params.contains("targets"))throw HandlerError("invalid_snapshot_params","targets is required");
         return snapshot(params.at("targets"));

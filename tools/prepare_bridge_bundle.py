@@ -1,6 +1,8 @@
-"""Prepare a verifiable internal bridge bundle with its layout preserved.
+"""Prepare a verifiable development bundle or installed-wheel runtime candidate.
 
-This is a working folder for another Windows PC, not a public release or installer.
+The development profile retains build sources; the consumer profile requires
+the exact frontend wheel and supplied cooked service without a source checkout.
+Preparation is separate from functional release acceptance and publication.
 The Python environment and game are not included; game launch and installation
 are not performed. Environments, logs, caches, and local settings are excluded.
 """
@@ -8,7 +10,11 @@ are not performed. Environments, logs, caches, and local settings are excluded.
 from __future__ import annotations
 import argparse
 import ast
+import base64
 import contextlib
+import csv
+from email.parser import BytesParser
+import io
 import hashlib
 import json
 import os
@@ -18,6 +24,7 @@ import struct
 import sys
 import tempfile
 import tomllib
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_MARKER = b"SN2_MCP_DEVELOPMENT_PROBES=0"
@@ -26,7 +33,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from sn2_mcp.workspace import WorkspaceError, _checked, _destination_lock, _guard_directories, _read_bytes
 from sn2_mcp.content_projects import ContentProjectError, verify_content_package
 
-TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1", "build_native.ps1", "prepare_bridge_bundle.py", "build_development_services.py", "accept_development_services.py")
+TOOLS = ("start_shared_mcp.ps1", "stop_shared_mcp.ps1", "game_process_common.ps1", "game_process_state.ps1", "load_native.ps1", "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1", "build_native.ps1", "prepare_bridge_bundle.py", "build_development_services.py", "accept_development_services.py", "accept_standalone_runtime_mod.py", "observe_standalone_lifecycle.py", "accept_consumer_transports.py", "accept_runtime_retirement.py")
 FIXTURE_DIRS = ()
 SOURCE_FILES = ("__init__.py", "server.py", "native_client.py", "development.py", "tool_catalog.py", "packages.py", "package_export.py", "patches.py", "sources.py", "source_functions.py", "source_identity.py", "game_environment.py", "workspace.py", "snapshots.py", "session_ownership.py", "compile_diagnostics.py", "process_observer.py", "window_input.py", "build_workflow.py", "runtime_lifecycle.py", "content_projects.py", "content_cooker.py", "content_deployment.py", "content_authoring.py", "service_mod.py", "runtime_authoring.py")
 HELPER_FILES = ()
@@ -60,6 +67,14 @@ LEGACY_NATIVE_FILES = {"native/src/mod_entry.cpp", "native/tools/mod_control.cpp
 VENDOR_FILES = tuple("native/vendor/blake3/" + name for name in
                      ("blake3.c", "blake3_dispatch.c", "blake3_portable.c",
                       "blake3.h", "blake3_impl.h", "LICENSE", "source-lock.json"))
+CONSUMER_TOOLS = ("game_process_common.ps1", "game_process_state.ps1", "load_native.ps1",
+                  "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1",
+                  "prepare_bridge_bundle.py", "accept_standalone_runtime_mod.py", "observe_standalone_lifecycle.py",
+                  "accept_consumer_transports.py", "accept_runtime_retirement.py")
+CONSUMER_DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock", "START.md", "NATIVE-NOTICES.md")
+CONSUMER_NOTICES = ("notices/BLAKE3-LICENSE", "notices/BLAKE3-source-lock.json",
+                    "notices/CityHash.txt")
+CONSUMER_KIND = "consumer_bridge_folder"
 
 
 class BundleError(Exception):
@@ -93,15 +108,161 @@ def _version(repository: Path) -> str:
     metadata = tomllib.loads(_read(repository / "pyproject.toml", repository).decode("utf-8-sig"))
     if metadata.get("project", {}).get("version") != versions[0]:
         raise BundleError("version_mismatch", "The Python source and pyproject.toml versions differ")
+    _metadata_version(repository)
+    return versions[0]
+
+
+def _metadata_version(repository: Path) -> str:
+    metadata = tomllib.loads(_read(repository / "pyproject.toml", repository).decode("utf-8-sig"))
+    version = metadata.get("project", {}).get("version")
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise BundleError("invalid_version", "The package metadata requires a numeric version")
     lock = tomllib.loads(_read(repository / "uv.lock", repository).decode("utf-8-sig"))
     packages = lock.get("package", [])
     local = [item for item in packages if isinstance(item, dict) and item.get("name") == "sn2-mcp"]
     sdk = [item for item in packages if isinstance(item, dict) and item.get("name") == "mcp"]
-    if (len(local) != 1 or local[0].get("version") != versions[0]
+    if (len(local) != 1 or local[0].get("version") != version
             or local[0].get("source") != {"editable": "."} or len(sdk) != 1 or sdk[0].get("version") != "2.3.0"
             or metadata.get("project", {}).get("dependencies") != ["mcp==2.3.0"]):
         raise BundleError("lock_mismatch", "uv.lock does not match the version, editable root, or pinned MCP SDK")
-    return versions[0]
+    return version
+
+
+def _wheel_manifest(raw: bytes) -> dict:
+    """Inspect a supplied wheel without installing or importing its contents."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            members = archive.namelist()
+            if len(set(members)) != len(members) or any(
+                    name.startswith(("/", "\\")) or "\\" in name
+                    or any(part in {"", ".", ".."} for part in name.split("/"))
+                    for name in members if not name.endswith("/")):
+                raise BundleError("invalid_wheel", "The wheel contains duplicate or unsafe paths")
+            metadata_paths = [name for name in members if name.endswith(".dist-info/METADATA")]
+            if len(metadata_paths) != 1:
+                raise BundleError("invalid_wheel", "The wheel requires exactly one package METADATA")
+            prefix = metadata_paths[0].removesuffix("METADATA")
+            metadata = BytesParser().parsebytes(archive.read(metadata_paths[0]))
+            version = metadata.get("Version")
+            package_name = metadata.get("Name")
+            if package_name != "sn2-mcp" or not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+                raise BundleError("invalid_wheel", "The wheel must contain the numeric sn2-mcp package")
+            if metadata.get_all("Requires-Dist", []) != ["mcp==2.3.0"]:
+                raise BundleError("wheel_dependency_mismatch", "The supplied wheel does not match the pinned MCP dependency")
+            for required in ("WHEEL", "RECORD", "entry_points.txt"):
+                if prefix + required not in members:
+                    raise BundleError("invalid_wheel", "The supplied wheel lacks required distribution metadata")
+            wheel = BytesParser().parsebytes(archive.read(prefix + "WHEEL"))
+            if (wheel.get("Root-Is-Purelib") != "true" or wheel.get_all("Tag", []) != ["py3-none-any"]):
+                raise BundleError("invalid_wheel", "The frontend wheel must be pure Python py3-none-any")
+            entries = archive.read(prefix + "entry_points.txt").decode("utf-8")
+            if not re.search(r"^sn2-mcp\s*=\s*sn2_mcp\.server:main\s*$", entries, re.M):
+                raise BundleError("invalid_wheel", "The wheel has no sn2-mcp console entry")
+            record = list(csv.reader(io.StringIO(archive.read(prefix + "RECORD").decode("utf-8"))))
+            if len(record) != len(members) or {row[0] for row in record if len(row) == 3} != set(members):
+                raise BundleError("invalid_wheel", "The wheel RECORD does not inventory all members")
+            for path, digest, size in record:
+                if path == prefix + "RECORD":
+                    if digest or size:
+                        raise BundleError("invalid_wheel", "The wheel RECORD self-entry must omit its hash and size")
+                    continue
+                content = archive.read(path)
+                expected_hash = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode("ascii").rstrip("=")
+                if digest != "sha256=" + expected_hash or size != str(len(content)):
+                    raise BundleError("invalid_wheel", "A wheel RECORD hash or size differs from its member")
+            sources = [name for name in members if name.startswith("sn2_mcp/") and name.endswith(".py")]
+            if not sources or "sn2_mcp/__init__.py" not in sources:
+                raise BundleError("invalid_wheel", "The wheel lacks frontend package sources")
+            if any(not name.startswith(("sn2_mcp/", prefix)) for name in members):
+                raise BundleError("invalid_wheel", "The wheel contains an unexpected payload")
+            init = ast.parse(archive.read("sn2_mcp/__init__.py").decode("utf-8-sig"))
+            source_versions = [node.value.value for node in init.body
+                               if isinstance(node, ast.Assign) and len(node.targets) == 1
+                               and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "__version__"
+                               and isinstance(node.value, ast.Constant)]
+            if source_versions != [version]:
+                raise BundleError("wheel_version_mismatch", "The wheel metadata and frontend versions differ")
+            return {"name": package_name, "version": version, "metadata_path": metadata_paths[0],
+                    "files": [{"path": source, "bytes": len(archive.read(source)),
+                               "sha256": _sha(archive.read(source))} for source in sorted(sources)]}
+    except (zipfile.BadZipFile, KeyError, UnicodeError, SyntaxError, csv.Error) as error:
+        raise BundleError("invalid_wheel", "The supplied wheel metadata could not be inspected") from error
+
+
+def _consumer_wheel(repository: Path, path: Path, version: str) -> tuple[dict, dict[str, bytes]]:
+    selected = _checked(path)
+    raw = _read(selected, selected.parent)
+    inspected = _wheel_manifest(raw)
+    if inspected["version"] != version:
+        raise BundleError("wheel_version_mismatch", "The wheel version differs from the selected frontend source")
+    expected = {path.relative_to(repository / "src").as_posix()
+                for path in (repository / "src/sn2_mcp").glob("*.py")}
+    if expected != {entry["path"] for entry in inspected["files"]}:
+        raise BundleError("wheel_source_mismatch", "The wheel and repository package inventories differ")
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        for entry in inspected["files"]:
+            source = _read(repository / "src" / entry["path"], repository)
+            if source != archive.read(entry["path"]):
+                raise BundleError("wheel_source_mismatch", "A supplied wheel module differs from its current repository source")
+    if raw != _read(selected, selected.parent):
+        raise BundleError("wheel_changed", "The supplied wheel changed during capture")
+    filename = f"wheels/sn2_mcp-{version}-py3-none-any.whl"
+    return {"path": filename, "bytes": len(raw), "sha256": _sha(raw),
+            "version": version, "source_files": inspected["files"],
+            "source_correlation": "exact_repository_bytes", "installed": False}, {filename: raw}
+
+
+def _consumer_notices(repository: Path, native_notices: dict[str, Path] | None) -> tuple[dict, dict[str, bytes]]:
+    raw_files = {
+        "notices/BLAKE3-LICENSE": _read(repository / "native/vendor/blake3/LICENSE", repository),
+        "notices/BLAKE3-source-lock.json": _read(repository / "native/vendor/blake3/source-lock.json", repository),
+    }
+    cityhash = _read(repository / "native/src/runtime_cityhash.cpp", repository).decode("utf-8-sig")
+    header = cityhash.split("#include", 1)[0]
+    if not header.strip():
+        raise BundleError("notice_unavailable", "The CityHash source has no captured attribution header")
+    raw_files["notices/CityHash.txt"] = header.encode("utf-8")
+    selected = native_notices or {}
+    if any(name not in {"json", "minhook"} for name in selected):
+        raise BundleError("invalid_notice", "Only declared json and minhook dependency notices may be selected")
+    supplied = []
+    for name, path in sorted(selected.items()):
+        checked = _checked(path)
+        raw = _read(checked, checked.parent)
+        if not raw:
+            raise BundleError("invalid_notice", "A selected dependency notice is empty")
+        if raw != _read(checked, checked.parent):
+            raise BundleError("notice_changed", "A selected dependency notice changed during capture")
+        destination = "notices/" + name + "-LICENSE"
+        raw_files[destination] = raw
+        supplied.append({"dependency": name, "path": destination, "sha256": _sha(raw), "bytes": len(raw)})
+    observation = {"included": supplied, "not_supplied": sorted({"json", "minhook"} - set(selected)),
+                   "license_assigned_to_bridge": False}
+    lines = [
+        "# Native dependency notices", "",
+        "The runtime DLL reuses the dependencies and adapted algorithms below. Their",
+        "terms apply to the respective material; this file assigns no common license",
+        "to the bridge, Unreal Engine, game assets or supplied cooked component.", "",
+        "- BLAKE3 1.3.1: exact original LICENSE and source-lock.json are included in notices/.",
+        "- CityHash64: retained Google copyright, permission and authorship header",
+        "  from native/src/runtime_cityhash.cpp is included in notices/CityHash.txt.",
+        "- nlohmann JSON v3.12.0: https://github.com/nlohmann/json/tree/v3.12.0",
+        "- MinHook 8af6b4acae5a9388fd742b56fa79ece89d96f823:",
+        "  https://github.com/TsudaKageyu/minhook/tree/8af6b4acae5a9388fd742b56fa79ece89d96f823",
+        "- Runtime archive/package writers adapt algorithms from custom Unreal",
+        "  Engine 5.6.1 V4, sn2-v0.1.2.0, source",
+        "  6a081fc6282cb3bbfb806e3a8bb84fc4eb58acb9. That source carries Epic Games",
+        "  copyright and All Rights Reserved; separate full Engine distribution terms",
+        "  were not established by the bridge source inspection. No Engine distribution",
+        "  is included here. The developer bundle and central mechanism document own",
+        "  detailed source changes and provenance.", "",
+    ]
+    for name in ("json", "minhook"):
+        lines.append(f"The exact selected {name} dependency notice is "
+                     + (f"included at notices/{name}-LICENSE."
+                        if name in selected else "not supplied to this preparation."))
+    raw_files["NATIVE-NOTICES.md"] = ("\n".join(lines) + "\n").encode("utf-8")
+    return observation, raw_files
 
 
 def _compatibility(repository: Path, version: str, dll: bytes, loader: bytes) -> dict:
@@ -473,15 +634,274 @@ results so strict manifest verification remains meaningful.
 """.encode("utf-8")
 
 
+
+def _consumer_instructions(version: str, native_version: str, wheel: dict) -> bytes:
+    return f"""# Subnautica 2 MCP consumer candidate {version}
+
+Frontend {version}; native marker {native_version}. The complete payload includes
+the supplied cooked SN2MCPDevelopmentServices package. File verification is
+separate from functional acceptance and publication; consult the candidate's
+acceptance results before treating this prepared folder as a release.
+
+This runtime path needs Windows x64, an installed compatible Subnautica 2 game,
+an existing Python 3.11+ installation, uv, and Microsoft Visual C++ x64 runtime.
+It does not need a compiler, bridge checkout, Unreal Editor, Engine, Modkit,
+FMOD development files or an Editor helper. Native/developer builds and external
+asset authoring remain separate workflows in the developer source bundle.
+
+## Install the frontend in an isolated environment
+
+Keep this distribution folder immutable. Choose absolute paths for it, a new
+separate writable runtime copy, a workspace, a Python environment, the installed
+game and an existing Python executable. Replace example strings before use. These
+commands create the workspace/environment and install Python packages; they
+do not start or install anything into the game.
+
+```powershell
+$sn2Bundle = 'C:\\SN2MCP\\candidate'
+$sn2Runtime = 'C:\\SN2MCP\\runtime'
+$sn2Workspace = 'C:\\SN2MCP\\workspace'
+$sn2Environment = 'C:\\SN2MCP\\environment'
+$sn2Game = 'C:\\Games\\Subnautica 2'
+$sn2BasePython = 'C:\\Python311\\python.exe'
+New-Item -ItemType Directory -Path $sn2Workspace -Force
+uv venv --no-python-downloads --python $sn2BasePython $sn2Environment
+uv export --frozen --no-dev --no-default-groups --no-editable --no-emit-project --format requirements.txt --project $sn2Bundle --output-file (Join-Path $sn2Workspace 'requirements.lock')
+$sn2Python = Join-Path $sn2Environment 'Scripts\\python.exe'
+uv pip install --python $sn2Python --require-hashes -r (Join-Path $sn2Workspace 'requirements.lock')
+uv pip install --python $sn2Python --no-deps (Join-Path $sn2Bundle '{wheel["path"]}')
+& $sn2Python -I -B (Join-Path $sn2Bundle 'tools\\prepare_bridge_bundle.py') --verify-root $sn2Bundle
+& $sn2Python -I -B -c "import importlib.metadata, pathlib, sn2_mcp; print(importlib.metadata.version('sn2-mcp')); print(pathlib.Path(sn2_mcp.__file__).resolve())"
+Copy-Item -LiteralPath $sn2Bundle -Destination $sn2Runtime -Recurse
+& $sn2Python -I -B (Join-Path $sn2Bundle 'tools\\prepare_bridge_bundle.py') --verify-root $sn2Runtime
+New-Item -ItemType Directory -Path (Join-Path $sn2Workspace 'packages') -Force
+Copy-Item -LiteralPath (Join-Path $sn2Bundle '{SERVICE_DIRECTORY}') -Destination (Join-Path $sn2Workspace 'packages\\SN2MCPDevelopmentServices') -Recurse
+```
+
+The import must point into the chosen environment's site-packages and report
+{version}. This folder deliberately contains no frontend source checkout.
+The verifier uses that installed package and rechecks wheel/runtime/service
+inventories. The dependency export reads frozen uv.lock without changing it,
+excludes the editable project and preserves package hashes. The supplied wheel
+is installed separately without rebuilding the frontend.
+
+Use previously absent runtime/package destinations for these copies. Runtime
+tools write deployment receipts and loader diagnostics under the writable
+runtime root. Its inventory may change during use; reverify the immutable
+distribution folder after the session, not the used runtime copy. Neither
+copy is a frontend source checkout.
+
+Choose a writable parent for the runtime copy. Replacement/removal preserves
+the selected owned plugin inventory under that parent's
+.trash/Subnautica 2 MCP/content-deployment directory, with operation-specific
+paths and the original game-relative location. For the example runtime path,
+this is C:\\SN2MCP\\.trash. Receipts identify each move; the user controls later
+trash deletion. The runtime copy need not be a source checkout or a project-root
+sibling, and consumer setup does not require a project-rules directory.
+
+## Connect an MCP client
+
+For stdio, configure the client to execute the absolute environment Python path
+with these arguments, replacing each absolute-path placeholder:
+
+```text
+-I -B -m sn2_mcp.server --transport stdio --workspace-root <workspace> --runtime-root <writable-runtime> --game-root <game>
+```
+
+For shared localhost HTTP, start the same installed frontend:
+
+```powershell
+& $sn2Python -I -B -m sn2_mcp.server --transport streamable-http --host 127.0.0.1 --port 27224 --native-port 27223 --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game
+```
+
+Connect the client to http://127.0.0.1:27224/mcp. Inspect sn2_status,
+sn2_capabilities and sn2_target_processes. Frontend transport readiness is
+separate from the selected game's executor and actual supported signatures.
+
+Before game checks, the supplied transport harness can validate the installed
+frontend through both real stdio and localhost HTTP sessions. Choose a new
+workspace directory and a new output directory, distinct from the authoring
+workspace. It starts/closes only its own frontend processes, records their
+identities and confirms their exits. Its reserved non-listening native endpoint
+prevents a connection to the game. Catalog/schema/status/capability and
+native_unavailable checks establish frontend behavior, not game readiness.
+
+```powershell
+& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_consumer_transports.py') --runtime-root $sn2Runtime --workspace-root (Join-Path $sn2Workspace 'transport-workspace-{version.replace('.', '')}') --game-root $sn2Game --output (Join-Path $sn2Workspace 'evidence\\transports-{version.replace('.', '')}')
+```
+
+Both selected directories must be absent before this command; the supplied
+runtime and installed game directories must exist. The check requires
+installed site-packages origins and a runtime without src/sn2_mcp or native
+source directories. It records local evidence and does not launch the game or
+change its files. Review summary.json and process-cleanup results.
+
+## Runtime mod workflow
+
+Use bridge source tools to create an editable content project and schema-1
+specification in the writable workspace. Inspect sn2_runtime_authoring_recipe,
+then use sn2_runtime_compile_blueprint and its status/report. Compilation
+creates an in-memory revision, not a package. Use sn2_runtime_save_package and
+sn2_runtime_build_status, then sn2_package_runtime_artifact and
+sn2_verify_artifact_package. Exact game bindings and actual compile/invoke/save
+type coverage determine support; the broader external Editor schema is not
+a runtime promise.
+
+The supplied service package lives at {SERVICE_DIRECTORY}. Its copied workspace
+package is selected by the relative path packages/SN2MCPDevelopmentServices.
+Use that path with sn2_verify_artifact_package and sn2_mod_install at the
+stopped-game boundary before service activation; inspect
+sn2_mod_deployment_status. Package tools take workspace-relative paths rather
+than the immutable distribution's absolute service directory. For the selected game process,
+explicitly load/enable the exact bridge DLL with its manifest hash and inspect
+Tick/reflection readiness. Use sn2_service_status/enable/call/disable for the
+companion's reflected operations. Temporary object holders do not execute a
+user graph on behalf of the compiler.
+
+User package installation, plugin discovery, natural startup and authored game
+effects are separate results. A declared entry Actor may require explicit
+bridge activation; mounting containers alone does not make a package autonomous.
+Use the candidate's verified startup contract and declared runtime dependencies
+for a mod intended to run without MCP. The runtime authoring path does not run
+source replay or an external cooker.
+
+Restart is the saved-package replacement boundary. Actor disable does not
+unload its class/package; bridge DLL residency lasts until game exit. Refresh
+handles after reconnect and resolve unknown effects before retrying. Stop the
+frontend normally when its work ends; game/process lifetime is separate. Use
+sn2_development_stop for an explicitly controlled game and verify exit. Remove
+only selected authorized inventories with sn2_mod_uninstall. Keep user saves
+and unrelated installed mods intact.
+
+See NATIVE-NOTICES.md and notices/ for available native dependency provenance.
+Game files, Python environments, logs and user data are not part of this payload.
+
+## Runtime-created startup example
+
+The supplied tools/accept_standalone_runtime_mod.py harness authors a new
+GameInstance Blueprint with ReceiveInit/ReceiveShutdown overrides and a
+reversible fixed-frame-rate effect. ReceiveInit sets the engine's
+FixedFrameRate and bUseFixedFrameRate; ReceiveShutdown restores the baseline
+values captured during authoring and embedded in the Blueprint. It does not
+recapture a fresh-start baseline. It uses the installed frontend and an
+already selected, ready native executor. It never launches/stops the game,
+installs a package or manually invokes an event. Authoring and independent
+post-start observation are separate stages; authoring does not establish
+ordinary startup acceptance. Installing/starting this example requires an
+explicit instruction allowing the temporary fixed frame rate. Local source
+preparation and authoring do not grant that instruction. The example defaults
+to A at 30 and B at 45 frames per second; it does not change saved user settings.
+
+Save one exact current descriptor from sn2_target_processes as
+evidence/target-author.json under the workspace: integer pid, decimal FILETIME
+string creation_time and absolute Shipping executable. Do not save the whole
+tools response or reuse a descriptor after restart. Choose a new plugin
+identifier/project/package and previously absent output directory. The
+workspace and writable runtime must already exist. UnavailableConsumerModkit
+and UnavailableConsumerEngine under the workspace must remain absent. Both
+frame-rate literals must be finite, positive and different from each other;
+when fixed-frame-rate mode is active, they must also differ from the current
+active baseline frame rate. Authoring records both baseline fields.
+
+```powershell
+& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_standalone_runtime_mod.py') author --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game --target-process (Join-Path $sn2Workspace 'evidence\\target-author.json') --output (Join-Path $sn2Workspace 'evidence\\startup-author-{version.replace('.', '')}') --plugin-id SN2RuntimeStartup --native-port 27223 --frame-rate-a 30 --frame-rate-b 45
+```
+
+A successful author summary reports packages_prepared. It creates
+projects/SN2RuntimeStartup, the schema specification and Config/Engine.ini,
+then compiles/saves/packages A and B at packages/SN2RuntimeStartup-A and -B.
+The deliberate invalid pin checks preservation of working A and its package.
+Authoring must leave both current engine frame-rate settings unchanged.
+Receipts are written as mcp-NNNN.json and summary.json after server setup;
+an earlier preflight failure may leave an empty output directory.
+
+Install the selected verified package at the authorized stopped-game boundary
+and perform an ordinary fresh start without MCP. Record the effect and actual
+startup component inventory before attaching an observer. This startup stage,
+its declared runtime dependencies and installation are separate from the
+harness. Only after that evidence is captured, attach/enable the observer
+bridge and select the fresh process's exact descriptor. For B:
+
+```powershell
+& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_standalone_runtime_mod.py') observe --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game --target-process (Join-Path $sn2Workspace 'evidence\\target-fresh-B.json') --output (Join-Path $sn2Workspace 'evidence\\startup-observe-B-{version.replace('.', '')}') --plugin-id SN2RuntimeStartup --native-port 27223 --frame-rate-a 30 --frame-rate-b 45 --revision B
+```
+
+Use revision A and new target-fresh-A.json/startup-observe-A output paths for A.
+Keep the same plugin identifier and frame-rate literals used for authoring. A
+successful observe summary reports effect_observed: it reads both engine
+settings, initialized state, initialization count of one, shutdown count of
+zero, revision, both overrides and GameEngine ownership. It also calls the
+GetWorldDeltaSeconds getter three times and checks the expected 1/frame-rate
+delta. Record an unpaused world, time dilation 1 and the ordinary engine
+timestep for that comparison; the harness does not verify these conditions.
+This post-start observation does not establish
+pre-attachment module absence, natural shutdown restoration, process exit or
+revision retirement/GC. Capture those required results separately. Consult
+the exact candidate acceptance before claiming autonomous execution.
+
+For natural-shutdown evidence, tools/observe_standalone_lifecycle.py can sample
+the exact process through a retained read-only Win32 handle without MCP calls,
+game writes or UI automation. Supply the current process descriptor and a
+separately captured, source-correlated schema-1 layout for the live instance
+and engine; addresses/property offsets are specific to that exact process.
+The layout requires full object/class identities, the authored initialization
+and shutdown counters, Initialized, FixedFrameRate and bUseFixedFrameRate,
+with expected initial and restored values. Do not invent or reuse addresses.
+Select previously absent JSON/events output files in an existing directory:
+
+```powershell
+& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\observe_standalone_lifecycle.py') --target-process (Join-Path $sn2Workspace 'evidence\\target-fresh-B.json') --layout (Join-Path $sn2Workspace 'evidence\\lifecycle-layout-B.json') --output (Join-Path $sn2Workspace 'evidence\\lifecycle-observation-B.json') --interval-ms 5 --timeout-seconds 60
+```
+
+Wait for observer_ready before separately requesting ordinary game shutdown
+through the authorized method. The observer never requests shutdown. passed
+requires the initial state, the authored shutdown/restored baseline state and
+confirmed process exit. Sequential samples can miss a short transition and
+are not an atomic game-thread snapshot; matching zero serials do not exclude
+object reuse. unverified remains incomplete evidence even if the process exits.
+The JSON summary and sibling .events.jsonl record observations and limits.
+
+## Authored-revision retirement check
+
+tools/accept_runtime_retirement.py exercises owned-root release, live-instance
+preservation, controlled garbage collection and same-process reconnect. Run it
+only under the applicable instruction for these native development checks,
+with the completed A/error/B author summary, its unchanged workspace receipts,
+the same ready target process and the installed cooked companion. It creates
+temporary service-held objects, retires A, requests GC and saves active B;
+these are game mutations rather than an inspection-only check. It does not
+launch/install the game or invoke initialization/shutdown to simulate lifecycle.
+Use a new output directory and an unused latent-control plugin identifier:
+
+```powershell
+& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_runtime_retirement.py') --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game --target-process (Join-Path $sn2Workspace 'evidence\\target-author.json') --author-summary (Join-Path $sn2Workspace 'evidence\\startup-author-{version.replace('.', '')}\\summary.json') --output (Join-Path $sn2Workspace 'evidence\\retirement-{version.replace('.', '')}') --native-port 27223 --latent-plugin-id SN2RetirementLatentControl
+```
+
+Inspect summary.json for retention/release observations, saved-package/history
+preservation, reconnect results and cleanup. GC completion is inferred from
+controlled invalidation and exact-path absence; it is not a universal GC hook.
+Unknown mutation outcomes require explicit read-only reconciliation rather
+than replay. An incomplete cleanup or unverified control remains incomplete
+acceptance, independently of a saved package or frontend exit.
+""".encode("utf-8")
+
+
 def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_version: str | None = None,
-                   service_package: Path | None = None) -> dict:
+                   service_package: Path | None = None, consumer_wheel: Path | None = None,
+                   native_notices: dict[str, Path] | None = None) -> dict:
     repository = _checked(repository_root, directory=True)
     target = _target(destination, repository)
     version = _version(repository)
     native_version = version if native_version is None else native_version
     if not isinstance(native_version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", native_version):
         raise BundleError("invalid_version", "The native version must be a complete numeric version")
-    selected = _enumerate(repository)
+    consumer = consumer_wheel is not None
+    if native_notices and not consumer:
+        raise BundleError("invalid_notice", "Selected native notices require the consumer-wheel profile")
+    if consumer and service_package is None:
+        raise BundleError("service_package_required", "A consumer candidate requires the supplied cooked service package")
+    selected = (sorted({*DOCUMENTS, *BINARIES, *TEMPLATE_FILES,
+                        *("tools/" + name for name in CONSUMER_TOOLS)}) if consumer else _enumerate(repository))
     raw_files = {}
     for relative in selected:
         raw = _read(repository / relative, repository)
@@ -490,16 +910,33 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
     compatibility_source = _sha(_read(repository / "native/src/game_access.cpp", repository))
     service_mod, service_files = _service_package(service_package)
     raw_files.update(service_files)
-    service_source_correlation = _service_source_correlation(service_mod, raw_files)
-    raw_files["README.md"] = _instructions(version, native_version, service_included=service_mod["package_included"])
+    wheel = None
+    notices = None
+    if consumer:
+        wheel, wheel_files = _consumer_wheel(repository, consumer_wheel, version)
+        notices, notice_files = _consumer_notices(repository, native_notices)
+        raw_files.update(wheel_files)
+        raw_files.update(notice_files)
+        service_source_correlation = {"state": "not_bundled", "matches_current_sources": None, "files": []}
+        raw_files["README.md"] = _consumer_instructions(version, native_version, wheel)
+    else:
+        service_source_correlation = _service_source_correlation(service_mod, raw_files)
+        raw_files["README.md"] = _instructions(version, native_version, service_included=service_mod["package_included"])
     raw_files["START.md"] = raw_files["README.md"]
     # Revalidate the source before writing; reject subsequent changes.
-    if selected != _enumerate(repository) or any(_sha(_read(repository / path, repository)) != _sha(raw_files[path]) for path in selected if path != "README.md"):
+    if (not consumer and selected != _enumerate(repository)) or any(_sha(_read(repository / path, repository)) != _sha(raw_files[path]) for path in selected if path != "README.md"):
         raise BundleError("source_changed", "Sources or binaries changed during preparation")
+    if consumer:
+        current_sources = {path.relative_to(repository / "src").as_posix()
+                           for path in (repository / "src/sn2_mcp").glob("*.py")}
+        if current_sources != {entry["path"] for entry in wheel["source_files"]} or any(
+                _sha(_read(repository / "src" / entry["path"], repository)) != entry["sha256"]
+                for entry in wheel["source_files"]):
+            raise BundleError("source_changed", "The frontend sources changed after wheel correlation")
     if _sha(_read(repository / "native/src/game_access.cpp", repository)) != compatibility_source:
         raise BundleError("source_changed", "The native compatibility contract changed during preparation")
     files = [{"path": relative, "bytes": len(raw), "sha256": _sha(raw)} for relative, raw in sorted(raw_files.items())]
-    manifest = {"schema_version": 1, "kind": "internal_bridge_folder", "version": version,
+    manifest = {"schema_version": 1, "kind": CONSUMER_KIND if consumer else "internal_bridge_folder", "version": version,
                 "compatibility": compatibility, "files": files,
                 "file_count": len(files), "total_bytes": sum(item["bytes"] for item in files),
                 "includes": ["python_sources", "locked_dependencies", "runtime_tools", "prebuilt_native_bridge",
@@ -511,6 +948,17 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
                 "runtime_validation": "not_performed_by_packager", "installed": False,
                 "service_mod": service_mod, "service_source_correlation": service_source_correlation,
                 "complete_service_delivery": "not_established_by_packager"}
+    if consumer:
+        manifest["includes"] = ["installed_frontend_wheel", "locked_dependencies", "runtime_tools",
+                                "prebuilt_native_bridge", "content_plugin_template", "native_dependency_notices",
+                                "instructions"]
+        manifest["excludes"].extend(["frontend_source_checkout", "native_build_sources_and_tests",
+                                    "editor_authoring_sources", "development_service_sources"])
+        manifest["frontend_wheel"] = wheel
+        manifest["native_notices"] = notices
+        manifest["payload_complete"] = True
+        manifest["release_readiness"] = "not_established_by_packager"
+        manifest.pop("service_source_correlation")
     if service_mod["package_included"]:
         manifest["includes"].append("cooked_development_service_package")
     manifest["compatibility_source_sha256"] = compatibility_source
@@ -568,10 +1016,56 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
                     "verified_files": True, "installed": False, "game_launched": False,
                     "runtime_validation": "not_performed_by_packager", "service_mod": verified["service_mod"],
                     "service_source_correlation": verified["service_source_correlation"],
+                    "profile": "consumer" if consumer else "development", "frontend_wheel": wheel,
+                    "payload_complete": service_mod["package_included"],
+                    "release_readiness": "not_established_by_packager",
                     "complete_service_delivery": "not_established_by_packager"}
         finally:
             if stage is not None:
                 _cleanup(stage, target.parent, own_files, own_directories)
+
+
+
+def _verify_consumer_frontend(root: Path, manifest: dict, expected: set[str]) -> str:
+    wheel = manifest.get("frontend_wheel")
+    version = _metadata_version(root)
+    required = set(CONSUMER_DOCUMENTS) | set(CONSUMER_NOTICES) | set(TEMPLATE_FILES) | set(BINARIES)
+    required |= {"tools/" + name for name in CONSUMER_TOOLS}
+    if (not isinstance(wheel, dict) or wheel.get("path") != f"wheels/sn2_mcp-{version}-py3-none-any.whl"
+            or wheel.get("version") != version or wheel.get("source_correlation") != "exact_repository_bytes"
+            or wheel.get("installed") is not False or manifest.get("payload_complete") is not True
+            or manifest.get("release_readiness") != "not_established_by_packager"):
+        raise BundleError("invalid_manifest", "The consumer frontend declaration is invalid")
+    required.add(wheel["path"])
+    if not required.issubset(expected):
+        raise BundleError("incomplete_bundle", "The consumer candidate lacks a required runtime file")
+    if any(path.startswith(("src/", "native/", "development/authoring/", "development/services/"))
+           for path in expected):
+        raise BundleError("invalid_manifest", "A consumer candidate must not require or contain the developer source checkout")
+    raw = _read(root / wheel["path"], root)
+    inspected = _wheel_manifest(raw)
+    if (inspected["version"] != version or inspected["files"] != wheel.get("source_files")
+            or wheel.get("bytes") != len(raw) or wheel.get("sha256") != _sha(raw)):
+        raise BundleError("wheel_identity_mismatch", "The consumer wheel differs from its recorded frontend identity")
+    notices = manifest.get("native_notices")
+    if (not isinstance(notices, dict) or not isinstance(notices.get("included"), list)
+            or not isinstance(notices.get("not_supplied"), list)
+            or notices.get("license_assigned_to_bridge") is not False):
+        raise BundleError("invalid_manifest", "The native notice declaration is invalid")
+    names = set()
+    for notice in notices["included"]:
+        if (not isinstance(notice, dict) or notice.get("dependency") not in {"json", "minhook"}
+                or notice.get("dependency") in names
+                or notice.get("path") != "notices/" + notice["dependency"] + "-LICENSE"):
+            raise BundleError("invalid_manifest", "A selected native notice declaration is invalid")
+        names.add(notice["dependency"])
+        notice_raw = _read(root / notice["path"], root)
+        if (notice.get("bytes") != len(notice_raw) or notice.get("sha256") != _sha(notice_raw)
+                or not notice_raw):
+            raise BundleError("integrity_mismatch", "A selected dependency notice differs from its captured identity")
+    if notices["not_supplied"] != sorted({"json", "minhook"} - names):
+        raise BundleError("invalid_manifest", "The missing native notice inventory is inconsistent")
+    return version
 
 
 def verify_bundle(bundle_root: Path) -> dict:
@@ -581,7 +1075,8 @@ def verify_bundle(bundle_root: Path) -> dict:
         manifest = json.loads(raw.decode("utf-8-sig"))
     except (ValueError, UnicodeError):
         raise BundleError("invalid_manifest", "The bundle manifest is not valid JSON") from None
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1 or manifest.get("kind") != "internal_bridge_folder":
+    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1
+            or manifest.get("kind") not in {"internal_bridge_folder", CONSUMER_KIND}):
         raise BundleError("invalid_manifest", "Unsupported bundle manifest")
     files = manifest.get("files")
     if not isinstance(files, list) or not files:
@@ -609,8 +1104,10 @@ def verify_bundle(bundle_root: Path) -> dict:
     if (_file_set(root) != expected or _directory_set(root) != expected_directories
             or manifest.get("file_count") != len(files) or manifest.get("total_bytes") != total):
         raise BundleError("integrity_mismatch", "The complete bundle contents differ from the manifest")
-    required = set(DOCUMENTS) | {"tools/" + name for name in TOOLS} | set(BINARIES) | {"START.md"}
-    required |= {"src/sn2_mcp/" + name for name in SOURCE_FILES}
+    consumer = manifest["kind"] == CONSUMER_KIND
+    required = set() if consumer else set(DOCUMENTS) | {"tools/" + name for name in TOOLS} | set(BINARIES) | {"START.md"}
+    if not consumer:
+        required |= {"src/sn2_mcp/" + name for name in SOURCE_FILES}
     if ("runtime_authoring_sources" not in manifest.get("includes", [])
             and "src/sn2_mcp/server.py" in expected):
         server = ast.parse(_read(root / "src/sn2_mcp/server.py", root).decode("utf-8-sig"))
@@ -623,8 +1120,9 @@ def verify_bundle(bundle_root: Path) -> dict:
     required |= set(HELPER_FILES)
     required |= {f"tests/fixtures/{name}/GothicMod.json" for name in FIXTURE_DIRS}
     required |= {f"tests/fixtures/{name}/Script/{script}" for name, script in FIXTURE_SCRIPTS.items()}
-    required |= set(SDK_FILES) | set(TEMPLATE_FILES) | set(AUTHORING_FILES)
-    if manifest.get("service_mod") is not None:
+    if not consumer:
+        required |= set(SDK_FILES) | set(TEMPLATE_FILES) | set(AUTHORING_FILES)
+    if not consumer and manifest.get("service_mod") is not None:
         required |= set(SERVICE_SOURCE_FILES)
     else:
         # Older development bundles predate companion tooling and sources.
@@ -633,9 +1131,9 @@ def verify_bundle(bundle_root: Path) -> dict:
         required.discard("src/sn2_mcp/service_mod.py")
     if not required.issubset(expected):
         raise BundleError("incomplete_bundle", "The bundle is missing a required runtime or development file")
-    if not _required_native_inputs(root, expected).issubset(expected):
+    if not consumer and not _required_native_inputs(root, expected).issubset(expected):
         raise BundleError("incomplete_bundle", "The bundle is missing a declared native build input")
-    version = _version(root)
+    version = _verify_consumer_frontend(root, manifest, expected) if consumer else _version(root)
     compatibility = manifest.get("compatibility")
     native_version = compatibility.get("native_version_marker") if isinstance(compatibility, dict) else None
     if (manifest.get("version") != version or not isinstance(compatibility, dict)
@@ -665,6 +1163,8 @@ def verify_bundle(bundle_root: Path) -> dict:
         if offset < 64 or offset + 6 > len(content) or content[offset:offset + 4] != b"PE\0\0" or struct.unpack_from("<H", content, offset + 4)[0] != 0x8664:
             raise BundleError("invalid_binary", "The bundle binary is not a PE x64 binary")
     service_mod = _verify_service(root, manifest, expected)
+    if consumer and service_mod.get("package_included") is not True:
+        raise BundleError("incomplete_bundle", "A consumer candidate requires its complete cooked service package")
     if "service_source_correlation" in manifest:
         service_raw = {path: _read(root / path, root) for path in SERVICE_SOURCE_FILES}
         if service_mod.get("package_included"):
@@ -678,24 +1178,36 @@ def verify_bundle(bundle_root: Path) -> dict:
     return {"version": manifest.get("version"), "native_version": native_version, "file_count": len(files), "total_bytes": total,
             "verified_files": True, "runtime_validation": "not_performed_by_packager", "service_mod": service_mod,
             "service_source_correlation": correlation,
+            "profile": "consumer" if consumer else "development", "frontend_wheel": manifest.get("frontend_wheel"),
+            "payload_complete": service_mod.get("package_included") is True,
+            "release_readiness": "not_established_by_packager",
             "complete_service_delivery": "not_established_by_packager"}
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Prepare or verify a portable internal Subnautica 2 MCP bundle")
+    parser = argparse.ArgumentParser(description="Prepare or verify a Subnautica 2 MCP development bundle or consumer candidate")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--destination", type=Path, help="A new directory within artifacts in the current Git workspace")
     group.add_argument("--verify-root", type=Path, help="Verify all unpacked bundle hashes without launching the game")
     parser.add_argument("--native-version", help="Explicit DLL version when it differs from the Python package version")
     parser.add_argument("--service-package", type=Path, help="Verified cooked SN2MCPDevelopmentServices package to include")
+    parser.add_argument("--consumer-wheel", type=Path, help="Exact built wheel; select a complete source-free consumer runtime candidate")
+    parser.add_argument("--json-license", type=Path, help="Exact selected nlohmann JSON dependency notice for a consumer candidate")
+    parser.add_argument("--minhook-license", type=Path, help="Exact selected MinHook dependency notice for a consumer candidate")
     args = parser.parse_args()
     try:
         if args.native_version is not None and args.destination is None:
             parser.error("--native-version requires --destination; verification reads the manifest version")
         if args.service_package is not None and args.destination is None:
             parser.error("--service-package requires --destination; verification reads the packaged service")
+        if args.consumer_wheel is not None and args.destination is None:
+            parser.error("--consumer-wheel requires --destination; verification reads the recorded wheel")
+        if (args.json_license is not None or args.minhook_license is not None) and args.consumer_wheel is None:
+            parser.error("Selected dependency notices require --consumer-wheel")
+        native_notices = {name: path for name, path in (("json", args.json_license), ("minhook", args.minhook_license)) if path is not None}
         result = prepare_bundle(args.destination, native_version=args.native_version,
-                                service_package=args.service_package) if args.destination else verify_bundle(args.verify_root)
+                                service_package=args.service_package, consumer_wheel=args.consumer_wheel,
+                                native_notices=native_notices) if args.destination else verify_bundle(args.verify_root)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (BundleError, ContentProjectError, WorkspaceError, OSError, UnicodeError, ValueError) as error:

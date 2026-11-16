@@ -83,6 +83,8 @@ struct CompiledFunction {
     std::vector<std::uint8_t> bytecode;
     std::vector<Relocation> relocations;
     std::vector<SourceRange> source_ranges;
+    // A reflected event reuses its inherited parameter contract and real
+    // UFunction SuperStruct. Named authored functions leave these empty.
     bool event_override{};
     std::string super_function_symbol;
 };

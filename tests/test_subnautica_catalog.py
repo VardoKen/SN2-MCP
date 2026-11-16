@@ -39,6 +39,7 @@ MOD_TOOLS = {"sn2_create_mod_project", "sn2_validate_mod_project", "sn2_package_
              "sn2_mod_install", "sn2_mod_uninstall", "sn2_mod_deployment_status",
              "sn2_authoring_recipe", "sn2_author_mod", "sn2_authoring_status", "sn2_authoring_report",
              "sn2_runtime_authoring_recipe", "sn2_runtime_compile_blueprint", "sn2_runtime_save_package",
+             "sn2_runtime_release_blueprint",
              "sn2_runtime_authoring_status", "sn2_runtime_authoring_report", "sn2_runtime_build_status",
              "sn2_package_runtime_artifact", "sn2_service_status", "sn2_service_enable", "sn2_service_disable", "sn2_service_call"}
 PUBLIC_TOOLS = RUNTIME_TOOLS | SOURCE_TOOLS | BUILD_TOOLS | LIFECYCLE_TOOLS | MOD_TOOLS
@@ -74,6 +75,7 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                     "sn2_watch_start": {"handle", "properties", "duration_ms", "interval_ms"},
                     "sn2_runtime_compile_blueprint": {"project_path", "spec_path"},
                     "sn2_runtime_save_package": {"authoring_id"},
+            "sn2_runtime_release_blueprint": {"authoring_id"},
                     "sn2_package_runtime_artifact": {"runtime_build_receipt", "destination"},
                 }
                 for name, required in expected_required.items():
@@ -92,6 +94,7 @@ class SubnauticaCatalogTests(unittest.IsolatedAsyncioTestCase):
                     "sn2_author_mod": (False, False, False, False),
                     "sn2_runtime_compile_blueprint": (False, False, False, True),
                     "sn2_runtime_save_package": (False, False, False, True),
+            "sn2_runtime_release_blueprint": (False, False, True, True),
                     "sn2_package_runtime_artifact": (False, False, False, False),
                     "sn2_service_enable": (False, False, False, True),
                     "sn2_service_disable": (False, True, False, True),

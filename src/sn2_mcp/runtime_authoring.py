@@ -40,6 +40,12 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _retirement_unknown(retirement: dict[str, Any]) -> bool:
+    return (retirement.get("outcome_unknown") is True
+            or retirement.get("state") in ("outcome_unknown", "release_unknown")
+            or bool(retirement.get("unknown_count")))
+
+
 class RuntimeAuthoring:
     """Source correlation and receipts for the inherited schema's native backend."""
 
@@ -100,7 +106,23 @@ class RuntimeAuthoring:
         return {"source": "runtime_authoring_recipe", "backend": "native_unreal_runtime",
                 **captured, "compiled": False, "persisted": False,
                 "engine_execution_accepted": False,
-                "backend_readiness_checked": False, "execution_performed": False}
+                "backend_readiness_checked": False, "execution_performed": False,
+                "capability_boundaries": {
+                    "events": {"signature_source": "Exact loaded inherited UFunction",
+                               "required_flags": ["FUNC_BlueprintEvent", "FUNC_Event"],
+                               "parameters": "Synchronous by-value inputs using supported reflected types",
+                               "excluded": ["final", "static", "const", "network", "delegate", "editor_only", "latent", "output", "reference"],
+                               "parent_call": "Exact super function on the current override instance"},
+                    "call_function": {"required_flags": ["FUNC_BlueprintCallable"],
+                                      "rejected_flags": ["FUNC_Delegate", "FUNC_EditorOnly"],
+                                      "latent_check": "Actual /Script/Engine.LatentActionInfo parameter",
+                                      "metadata_not_inspected": ["DevelopmentOnly", "BlueprintInternalUseOnly", "WorldContext"],
+                                      "shipping_behavior": "Established separately for each accepted call"},
+                    "compile_invoke_save": {"coverage": "Separate type and direction contracts",
+                                            "invoke_excluded": ["direct class output"],
+                                            "save_excluded": ["authored struct member defaults", "authored array member defaults"]},
+                    "startup": "Requires a verified target startup composition; compilation alone does not start a mod",
+                    "widget_ui_authoring": False}}
 
     def _directory(self, path: Path) -> Path:
         if not (path.is_relative_to(self.receipts_root) or path.is_relative_to(self.builds_root)):
@@ -231,6 +253,11 @@ class RuntimeAuthoring:
             except ValueError as error:
                 raise RuntimeAuthoringError("invalid_timeout", str(error)) from None
         compiled = self.status(authoring_id)
+        if _retirement_unknown(compiled.get("retirement", {})):
+            raise RuntimeAuthoringError("runtime_retirement_outcome_unknown",
+                                        "Reconcile the recorded root state before saving this revision")
+        if compiled.get("retirement", {}).get("retirement_requested"):
+            raise RuntimeAuthoringError("runtime_authored_revision_retired", "Select an active retained compiled revision")
         if compiled.get("compiled") is not True or compiled.get("runtime_published") is not True:
             raise RuntimeAuthoringError("runtime_compile_unverified", "Select a confirmed in-memory compiled revision")
         source = _checked(Path(compiled["staged_source_root"]), self.root, directory=True)
@@ -260,6 +287,9 @@ class RuntimeAuthoring:
         package_name = asset.rpartition(".")[0]
         params = {"class_handle": compiled["native_response"]["class"]["handle"],
                   "output_directory": str(native_output), "package_name": package_name, "plugin_id": plugin}
+        revision_id = compiled["native_response"].get("revision_id")
+        if isinstance(revision_id, str) and revision_id:
+            params["revision_id"] = revision_id
         receipt = {"kind": BUILD_RECEIPT_KIND, "schema": 1, "method": "runtime_blueprint",
                    "build_id": identifier, "authoring_id": authoring_id, "state": "saving",
                    "started_at": _now(), "receipt_path": str(directory / "receipt.json"),
@@ -396,6 +426,8 @@ class RuntimeAuthoring:
             if not pointer.is_file():
                 return {"state": "not_compiled", "compiled": False, "persisted": False}
             authoring_id = _json(_checked(pointer, self.root).read_bytes())["authoring_id"]
+            if authoring_id is None:
+                return {"state": "not_compiled", "compiled": False, "persisted": False}
         if not isinstance(authoring_id, str) or len(authoring_id) != 32 or any(
                 character not in "0123456789abcdef" for character in authoring_id):
             raise RuntimeAuthoringError("invalid_authoring_id", "Use an actual runtime authoring receipt identity")
@@ -403,7 +435,146 @@ class RuntimeAuthoring:
         receipt = _json(path.read_bytes())
         if receipt.get("kind") != RECEIPT_KIND or receipt.get("authoring_id") != authoring_id:
             raise RuntimeAuthoringError("receipt_identity_mismatch", "The runtime authoring receipt has a different identity")
+        retirement = receipt.get("retirement", {})
+        if working and (_retirement_unknown(retirement) or retirement.get("retirement_requested")):
+            return {"state": "retirement_outcome_unknown" if _retirement_unknown(retirement) else "revision_retired",
+                    "authoring_id": authoring_id, "compiled": False, "persisted": False,
+                    "retirement": retirement}
         return receipt
+
+    def _save_retirement(self, directory: Path, compiled: dict[str, Any]) -> None:
+        # Retirement updates a historical compile receipt, never the latest compile attempt.
+        with _destination_lock(self.receipts_root), _guard_directories(directory, self.root):
+            _write_json(directory / "receipt.json", compiled)
+            retirement = compiled.get("retirement", {})
+            if retirement.get("retirement_requested") and not _retirement_unknown(retirement):
+                pointer = self.receipts_root / "working.json"
+                if pointer.is_file() and _json(_checked(pointer, self.root).read_bytes()).get("authoring_id") == compiled["authoring_id"]:
+                    _write_json(pointer, {"authoring_id": None, "retired_authoring_id": compiled["authoring_id"]})
+
+    @staticmethod
+    def _validate_retirement(response: Any, compiled: dict[str, Any], reconcile: bool) -> None:
+        def require(condition: bool, message: str) -> None:
+            if not condition:
+                raise RuntimeAuthoringError("runtime_retirement_unverified", message, may_have_executed=not reconcile)
+
+        require(isinstance(response, dict), "The native retirement response must be an object")
+        require(response.get("source") == "runtime_blueprint_retirement", "The native response does not identify root retirement")
+        require(response.get("state") in ("released", "retained", "identity_changed", "observation_unavailable", "release_unknown"),
+                "The native retirement state is not recognized")
+        require(response.get("asset_path") == compiled["runtime_asset_path"], "The native retirement identifies a different revision")
+        revision_id = compiled["native_response"].get("revision_id")
+        require(not isinstance(revision_id, str) or not revision_id or response.get("revision_id", revision_id) == revision_id,
+                "The native retirement identifies a different native revision")
+        require(type(response.get("retirement_requested")) is bool, "Retirement ownership must be explicit")
+        require(response.get("reconciled") is reconcile, "The native retirement operation differs from the requested mode")
+        require(response.get("objects_destroyed") is False and response.get("gc_observed") is False,
+                "Root retirement must not claim object destruction or observed garbage collection")
+        counts = [response.get(key) for key in ("released_count", "retained_count", "unknown_count")]
+        require(all(type(value) is int and value >= 0 for value in counts), "Root counts must be nonnegative integers")
+        released, retained, unknown = counts
+        roots = response.get("roots")
+        require(isinstance(roots, list) and len(roots) == sum(counts), "Root inventory does not match the reported counts")
+        require(all(isinstance(root, dict) and root.get("state") in ("released", "retained", "unknown") for root in roots),
+                "The root inventory contains an unrecognized state")
+        require(all(type(root.get(key)) is int and root[key] >= (1 if key in ("item", "object") else 0)
+                    for root in roots for key in ("item", "object", "index", "serial")),
+                "Root inventory identities must be explicit nonnegative registry values")
+        require(len({root["item"] for root in roots}) == len(roots), "Root inventory identities must not be duplicated")
+        owned_items = compiled["native_response"].get("retained_root_items")
+        if owned_items is not None:
+            require(isinstance(owned_items, list) and all(type(item) is int and item > 0 for item in owned_items),
+                    "The captured compilation has no valid owned-root inventory")
+            require(len(owned_items) == len(roots) and set(owned_items) == {root["item"] for root in roots},
+                    "The retirement inventory differs from the roots owned by this compilation")
+        require([sum(root["state"] == state for root in roots) for state in ("released", "retained", "unknown")] == counts,
+                "Root states do not match the reported counts")
+        require(type(response.get("failed_item")) is int and response["failed_item"] >= 0,
+                "The failed root item must be a nonnegative registry identity")
+        require(not response["failed_item"] or response["failed_item"] in {root["item"] for root in roots},
+                "The failed root item is absent from the inventory")
+        require(isinstance(response.get("identity_refreshes"), list), "The root identity refresh audit must be an array")
+        effects = response.get("effects")
+        require(isinstance(effects, dict) and all(type(effects.get(key)) is bool
+                for key in ("executed", "may_have_executed", "do_not_retry")), "Retirement effect semantics must be explicit booleans")
+        require(effects["may_have_executed"] == bool(unknown) and effects["do_not_retry"] == bool(unknown),
+                "Unknown roots must retain non-retryable effect semantics")
+        require(not reconcile or effects["executed"] is False, "Reconciliation must be read-only")
+        require((response["state"] == "release_unknown") == bool(unknown), "The retirement state contradicts unknown roots")
+        require(not (released or unknown or effects["executed"]) or response["retirement_requested"] is True,
+                "Released or attempted roots require retirement ownership")
+        require(response["state"] != "released" or (response["retirement_requested"] and not retained and not unknown),
+                "A completed retirement cannot retain or hide unknown roots")
+        require(response["state"] != "retained" or not response["retirement_requested"] or retained > 0,
+                "A retained retirement requires retained roots")
+        require(response["state"] not in ("identity_changed", "observation_unavailable") or effects["executed"] is False,
+                "A preflight rejection cannot claim executed root clearing")
+        require(not compiled.get("retirement", {}).get("retirement_requested") or response["retirement_requested"],
+                "A revision cannot revert confirmed retirement ownership")
+
+    def release(self, authoring_id: str, timeout_seconds: float | None = None, *, reconcile: bool = False) -> dict[str, Any]:
+        """Retire owned class/package roots; never destroy instances or replay unknown clears."""
+        if type(reconcile) is not bool:
+            raise RuntimeAuthoringError("invalid_reconcile", "reconcile must be a boolean")
+        if timeout_seconds is not None:
+            try:
+                timeout_seconds = _timeout(timeout_seconds)
+            except ValueError as error:
+                raise RuntimeAuthoringError("invalid_timeout", str(error)) from None
+        # Serialize operations on this receipt so an overlapping caller observes the durable pending state.
+        self.status(authoring_id)
+        directory = _checked(self.receipts_root / authoring_id, self.root, directory=True)
+        with _destination_lock(directory):
+            compiled = self.status(authoring_id)
+            previous = compiled.get("retirement", {})
+            if previous.get("state") == "released":
+                return previous
+            if _retirement_unknown(previous) and not reconcile:
+                raise RuntimeAuthoringError("runtime_retirement_outcome_unknown", "Reconcile the recorded root state before another release", previous)
+            native = compiled.get("native_response")
+            klass = native.get("class") if isinstance(native, dict) else None
+            handle = klass.get("handle") if isinstance(klass, dict) else None
+            revision_id = native.get("revision_id") if isinstance(native, dict) else None
+            use_revision = isinstance(revision_id, str) and bool(revision_id)
+            identity_value = revision_id if use_revision else handle
+            identity = {"revision_id" if use_revision else "class_handle": identity_value}
+            if (compiled.get("compiled") is not True or compiled.get("runtime_published") is not True
+                    or not isinstance(identity_value, str) or not identity_value):
+                raise RuntimeAuthoringError("runtime_compile_unverified", "Retirement requires a confirmed compiled class")
+            attempt = {"authoring_id": authoring_id, "recorded_at": _now(), "state": "outcome_unknown",
+                       "outcome_unknown": not reconcile or _retirement_unknown(previous),
+                       "retirement_requested": previous.get("retirement_requested", False),
+                       "released_count": None, "retained_count": None, "unknown_count": None,
+                       "reconciled": reconcile, "native_response": None,
+                       "effects": {"executed": False, "may_have_executed": not reconcile, "do_not_retry": not reconcile}}
+            compiled.setdefault("retirement_attempts", []).append(attempt)
+            compiled["retirement"] = attempt if not reconcile else previous
+            # If writing this guard fails, no native request has been issued.
+            self._save_retirement(directory, compiled)
+            try:
+                response = self.request("runtime_release_blueprint", {**identity, "reconcile": reconcile}, timeout_seconds)
+                attempt["native_response"] = response
+                self._validate_retirement(response, compiled, reconcile)
+            except Exception as error:
+                unknown = not reconcile and (not isinstance(error, NativeError) or error.may_have_executed)
+                reported_unknown = error.may_have_executed if isinstance(error, NativeError) else not reconcile
+                attempt.update(state="outcome_unknown" if unknown else "failed", outcome_unknown=unknown,
+                               finished_at=_now(), error={"code": getattr(error, "code", "runtime_request_failed"),
+                               "message": str(error), "request_id": getattr(error, "request_id", None),
+                               "may_have_executed": reported_unknown, "details": getattr(error, "details", None)},
+                               effects={"executed": False, "may_have_executed": unknown, "do_not_retry": unknown})
+                compiled["retirement"] = previous if reconcile else attempt
+                try:
+                    self._save_retirement(directory, compiled)
+                except Exception as save_error:
+                    error.add_note("The retirement failure receipt could not be persisted: " + str(save_error))
+                raise
+            retirement = {**response, "authoring_id": authoring_id, "recorded_at": attempt["recorded_at"],
+                          "finished_at": _now(), "outcome_unknown": bool(response["unknown_count"])}
+            compiled["retirement_attempts"][-1] = retirement
+            compiled["retirement"] = retirement
+            self._save_retirement(directory, compiled)
+            return retirement
 
     def report(self, authoring_id: str) -> dict[str, Any]:
         receipt = self.status(authoring_id)
