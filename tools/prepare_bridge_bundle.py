@@ -71,7 +71,10 @@ CONSUMER_TOOLS = ("game_process_common.ps1", "game_process_state.ps1", "load_nat
                   "native_load_result.ps1", "start_sn2_development.ps1", "stop_sn2_development.ps1",
                   "prepare_bridge_bundle.py", "accept_standalone_runtime_mod.py", "observe_standalone_lifecycle.py",
                   "accept_consumer_transports.py", "accept_runtime_retirement.py")
-CONSUMER_DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock", "START.md", "NATIVE-NOTICES.md")
+CONSUMER_GUIDES = ("README.md", "INSTALL.md", "AGENTS.md")
+CONSUMER_DOCUMENTS = (*CONSUMER_GUIDES, "pyproject.toml", "uv.lock", "START.md", "NATIVE-NOTICES.md")
+LEGACY_CONSUMER_DOCUMENTS = ("README.md", "pyproject.toml", "uv.lock", "START.md", "NATIVE-NOTICES.md")
+CONSUMER_DOCUMENTATION_PROFILE = "human_and_agent_guides"
 CONSUMER_NOTICES = ("notices/BLAKE3-LICENSE", "notices/BLAKE3-source-lock.json",
                     "notices/CityHash.txt")
 CONSUMER_KIND = "consumer_bridge_folder"
@@ -635,256 +638,15 @@ results so strict manifest verification remains meaningful.
 
 
 
-def _consumer_instructions(version: str, native_version: str, wheel: dict) -> bytes:
-    return f"""# Subnautica 2 MCP consumer candidate {version}
-
-Frontend {version}; native marker {native_version}. The complete payload includes
-the supplied cooked SN2MCPDevelopmentServices package. File verification is
-separate from functional acceptance and publication; consult the candidate's
-acceptance results before treating this prepared folder as a release.
-
-This runtime path needs Windows x64, an installed compatible Subnautica 2 game,
-an existing Python 3.11+ installation, uv, and Microsoft Visual C++ x64 runtime.
-It does not need a compiler, bridge checkout, Unreal Editor, Engine, Modkit,
-FMOD development files or an Editor helper. Native/developer builds and external
-asset authoring remain separate workflows in the developer source bundle.
-
-## Install the frontend in an isolated environment
-
-Keep this distribution folder immutable. Choose absolute paths for it, a new
-separate writable runtime copy, a workspace, a Python environment, the installed
-game and an existing Python executable. Replace example strings before use. These
-commands create the workspace/environment and install Python packages; they
-do not start or install anything into the game.
-
-```powershell
-$sn2Bundle = 'C:\\SN2MCP\\candidate'
-$sn2Runtime = 'C:\\SN2MCP\\runtime'
-$sn2Workspace = 'C:\\SN2MCP\\workspace'
-$sn2Environment = 'C:\\SN2MCP\\environment'
-$sn2Game = 'C:\\Games\\Subnautica 2'
-$sn2BasePython = 'C:\\Python311\\python.exe'
-New-Item -ItemType Directory -Path $sn2Workspace -Force
-uv venv --no-python-downloads --python $sn2BasePython $sn2Environment
-uv export --frozen --no-dev --no-default-groups --no-editable --no-emit-project --format requirements.txt --project $sn2Bundle --output-file (Join-Path $sn2Workspace 'requirements.lock')
-$sn2Python = Join-Path $sn2Environment 'Scripts\\python.exe'
-uv pip install --python $sn2Python --require-hashes -r (Join-Path $sn2Workspace 'requirements.lock')
-uv pip install --python $sn2Python --no-deps (Join-Path $sn2Bundle '{wheel["path"]}')
-& $sn2Python -I -B (Join-Path $sn2Bundle 'tools\\prepare_bridge_bundle.py') --verify-root $sn2Bundle
-& $sn2Python -I -B -c "import importlib.metadata, pathlib, sn2_mcp; print(importlib.metadata.version('sn2-mcp')); print(pathlib.Path(sn2_mcp.__file__).resolve())"
-Copy-Item -LiteralPath $sn2Bundle -Destination $sn2Runtime -Recurse
-& $sn2Python -I -B (Join-Path $sn2Bundle 'tools\\prepare_bridge_bundle.py') --verify-root $sn2Runtime
-New-Item -ItemType Directory -Path (Join-Path $sn2Workspace 'packages') -Force
-Copy-Item -LiteralPath (Join-Path $sn2Bundle '{SERVICE_DIRECTORY}') -Destination (Join-Path $sn2Workspace 'packages\\SN2MCPDevelopmentServices') -Recurse
-```
-
-The import must point into the chosen environment's site-packages and report
-{version}. This folder deliberately contains no frontend source checkout.
-The verifier uses that installed package and rechecks wheel/runtime/service
-inventories. The dependency export reads frozen uv.lock without changing it,
-excludes the editable project and preserves package hashes. The supplied wheel
-is installed separately without rebuilding the frontend.
-
-Use previously absent runtime/package destinations for these copies. Runtime
-tools write deployment receipts and loader diagnostics under the writable
-runtime root. Its inventory may change during use; reverify the immutable
-distribution folder after the session, not the used runtime copy. Neither
-copy is a frontend source checkout.
-
-Choose a writable parent for the runtime copy. Replacement/removal preserves
-the selected owned plugin inventory under that parent's
-.trash/Subnautica 2 MCP/content-deployment directory, with operation-specific
-paths and the original game-relative location. For the example runtime path,
-this is C:\\SN2MCP\\.trash. Receipts identify each move; the user controls later
-trash deletion. The runtime copy need not be a source checkout or a project-root
-sibling, and consumer setup does not require a project-rules directory.
-
-## Connect an MCP client
-
-For stdio, configure the client to execute the absolute environment Python path
-with these arguments, replacing each absolute-path placeholder:
-
-```text
--I -B -m sn2_mcp.server --transport stdio --workspace-root <workspace> --runtime-root <writable-runtime> --game-root <game>
-```
-
-For shared localhost HTTP, start the same installed frontend:
-
-```powershell
-& $sn2Python -I -B -m sn2_mcp.server --transport streamable-http --host 127.0.0.1 --port 27224 --native-port 27223 --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game
-```
-
-Connect the client to http://127.0.0.1:27224/mcp. Inspect sn2_status,
-sn2_capabilities and sn2_target_processes. Frontend transport readiness is
-separate from the selected game's executor and actual supported signatures.
-
-Before game checks, the supplied transport harness can validate the installed
-frontend through both real stdio and localhost HTTP sessions. Choose a new
-workspace directory and a new output directory, distinct from the authoring
-workspace. It starts/closes only its own frontend processes, records their
-identities and confirms their exits. Its reserved non-listening native endpoint
-prevents a connection to the game. Catalog/schema/status/capability and
-native_unavailable checks establish frontend behavior, not game readiness.
-
-```powershell
-& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_consumer_transports.py') --runtime-root $sn2Runtime --workspace-root (Join-Path $sn2Workspace 'transport-workspace-{version.replace('.', '')}') --game-root $sn2Game --output (Join-Path $sn2Workspace 'evidence\\transports-{version.replace('.', '')}')
-```
-
-Both selected directories must be absent before this command; the supplied
-runtime and installed game directories must exist. The check requires
-installed site-packages origins and a runtime without src/sn2_mcp or native
-source directories. It records local evidence and does not launch the game or
-change its files. Review summary.json and process-cleanup results.
-
-## Runtime mod workflow
-
-Use bridge source tools to create an editable content project and schema-1
-specification in the writable workspace. Inspect sn2_runtime_authoring_recipe,
-then use sn2_runtime_compile_blueprint and its status/report. Compilation
-creates an in-memory revision, not a package. Use sn2_runtime_save_package and
-sn2_runtime_build_status, then sn2_package_runtime_artifact and
-sn2_verify_artifact_package. Exact game bindings and actual compile/invoke/save
-type coverage determine support; the broader external Editor schema is not
-a runtime promise.
-
-The supplied service package lives at {SERVICE_DIRECTORY}. Its copied workspace
-package is selected by the relative path packages/SN2MCPDevelopmentServices.
-Use that path with sn2_verify_artifact_package and sn2_mod_install at the
-stopped-game boundary before service activation; inspect
-sn2_mod_deployment_status. Package tools take workspace-relative paths rather
-than the immutable distribution's absolute service directory. For the selected game process,
-explicitly load/enable the exact bridge DLL with its manifest hash and inspect
-Tick/reflection readiness. Use sn2_service_status/enable/call/disable for the
-companion's reflected operations. Temporary object holders do not execute a
-user graph on behalf of the compiler.
-
-User package installation, plugin discovery, natural startup and authored game
-effects are separate results. A declared entry Actor may require explicit
-bridge activation; mounting containers alone does not make a package autonomous.
-Use the candidate's verified startup contract and declared runtime dependencies
-for a mod intended to run without MCP. The runtime authoring path does not run
-source replay or an external cooker.
-
-Restart is the saved-package replacement boundary. Actor disable does not
-unload its class/package; bridge DLL residency lasts until game exit. Refresh
-handles after reconnect and resolve unknown effects before retrying. Stop the
-frontend normally when its work ends; game/process lifetime is separate. Use
-sn2_development_stop for an explicitly controlled game and verify exit. Remove
-only selected authorized inventories with sn2_mod_uninstall. Keep user saves
-and unrelated installed mods intact.
-
-See NATIVE-NOTICES.md and notices/ for available native dependency provenance.
-Game files, Python environments, logs and user data are not part of this payload.
-
-## Runtime-created startup example
-
-The supplied tools/accept_standalone_runtime_mod.py harness authors a new
-GameInstance Blueprint with ReceiveInit/ReceiveShutdown overrides and a
-reversible fixed-frame-rate effect. ReceiveInit sets the engine's
-FixedFrameRate and bUseFixedFrameRate; ReceiveShutdown restores the baseline
-values captured during authoring and embedded in the Blueprint. It does not
-recapture a fresh-start baseline. It uses the installed frontend and an
-already selected, ready native executor. It never launches/stops the game,
-installs a package or manually invokes an event. Authoring and independent
-post-start observation are separate stages; authoring does not establish
-ordinary startup acceptance. Installing/starting this example requires an
-explicit instruction allowing the temporary fixed frame rate. Local source
-preparation and authoring do not grant that instruction. The example defaults
-to A at 30 and B at 45 frames per second; it does not change saved user settings.
-
-Save one exact current descriptor from sn2_target_processes as
-evidence/target-author.json under the workspace: integer pid, decimal FILETIME
-string creation_time and absolute Shipping executable. Do not save the whole
-tools response or reuse a descriptor after restart. Choose a new plugin
-identifier/project/package and previously absent output directory. The
-workspace and writable runtime must already exist. UnavailableConsumerModkit
-and UnavailableConsumerEngine under the workspace must remain absent. Both
-frame-rate literals must be finite, positive and different from each other;
-when fixed-frame-rate mode is active, they must also differ from the current
-active baseline frame rate. Authoring records both baseline fields.
-
-```powershell
-& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_standalone_runtime_mod.py') author --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game --target-process (Join-Path $sn2Workspace 'evidence\\target-author.json') --output (Join-Path $sn2Workspace 'evidence\\startup-author-{version.replace('.', '')}') --plugin-id SN2RuntimeStartup --native-port 27223 --frame-rate-a 30 --frame-rate-b 45
-```
-
-A successful author summary reports packages_prepared. It creates
-projects/SN2RuntimeStartup, the schema specification and Config/Engine.ini,
-then compiles/saves/packages A and B at packages/SN2RuntimeStartup-A and -B.
-The deliberate invalid pin checks preservation of working A and its package.
-Authoring must leave both current engine frame-rate settings unchanged.
-Receipts are written as mcp-NNNN.json and summary.json after server setup;
-an earlier preflight failure may leave an empty output directory.
-
-Install the selected verified package at the authorized stopped-game boundary
-and perform an ordinary fresh start without MCP. Record the effect and actual
-startup component inventory before attaching an observer. This startup stage,
-its declared runtime dependencies and installation are separate from the
-harness. Only after that evidence is captured, attach/enable the observer
-bridge and select the fresh process's exact descriptor. For B:
-
-```powershell
-& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_standalone_runtime_mod.py') observe --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game --target-process (Join-Path $sn2Workspace 'evidence\\target-fresh-B.json') --output (Join-Path $sn2Workspace 'evidence\\startup-observe-B-{version.replace('.', '')}') --plugin-id SN2RuntimeStartup --native-port 27223 --frame-rate-a 30 --frame-rate-b 45 --revision B
-```
-
-Use revision A and new target-fresh-A.json/startup-observe-A output paths for A.
-Keep the same plugin identifier and frame-rate literals used for authoring. A
-successful observe summary reports effect_observed: it reads both engine
-settings, initialized state, initialization count of one, shutdown count of
-zero, revision, both overrides and GameEngine ownership. It also calls the
-GetWorldDeltaSeconds getter three times and checks the expected 1/frame-rate
-delta. Record an unpaused world, time dilation 1 and the ordinary engine
-timestep for that comparison; the harness does not verify these conditions.
-This post-start observation does not establish
-pre-attachment module absence, natural shutdown restoration, process exit or
-revision retirement/GC. Capture those required results separately. Consult
-the exact candidate acceptance before claiming autonomous execution.
-
-For natural-shutdown evidence, tools/observe_standalone_lifecycle.py can sample
-the exact process through a retained read-only Win32 handle without MCP calls,
-game writes or UI automation. Supply the current process descriptor and a
-separately captured, source-correlated schema-1 layout for the live instance
-and engine; addresses/property offsets are specific to that exact process.
-The layout requires full object/class identities, the authored initialization
-and shutdown counters, Initialized, FixedFrameRate and bUseFixedFrameRate,
-with expected initial and restored values. Do not invent or reuse addresses.
-Select previously absent JSON/events output files in an existing directory:
-
-```powershell
-& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\observe_standalone_lifecycle.py') --target-process (Join-Path $sn2Workspace 'evidence\\target-fresh-B.json') --layout (Join-Path $sn2Workspace 'evidence\\lifecycle-layout-B.json') --output (Join-Path $sn2Workspace 'evidence\\lifecycle-observation-B.json') --interval-ms 5 --timeout-seconds 60
-```
-
-Wait for observer_ready before separately requesting ordinary game shutdown
-through the authorized method. The observer never requests shutdown. passed
-requires the initial state, the authored shutdown/restored baseline state and
-confirmed process exit. Sequential samples can miss a short transition and
-are not an atomic game-thread snapshot; matching zero serials do not exclude
-object reuse. unverified remains incomplete evidence even if the process exits.
-The JSON summary and sibling .events.jsonl record observations and limits.
-
-## Authored-revision retirement check
-
-tools/accept_runtime_retirement.py exercises owned-root release, live-instance
-preservation, controlled garbage collection and same-process reconnect. Run it
-only under the applicable instruction for these native development checks,
-with the completed A/error/B author summary, its unchanged workspace receipts,
-the same ready target process and the installed cooked companion. It creates
-temporary service-held objects, retires A, requests GC and saves active B;
-these are game mutations rather than an inspection-only check. It does not
-launch/install the game or invoke initialization/shutdown to simulate lifecycle.
-Use a new output directory and an unused latent-control plugin identifier:
-
-```powershell
-& $sn2Python -I -B (Join-Path $sn2Runtime 'tools\\accept_runtime_retirement.py') --workspace-root $sn2Workspace --runtime-root $sn2Runtime --game-root $sn2Game --target-process (Join-Path $sn2Workspace 'evidence\\target-author.json') --author-summary (Join-Path $sn2Workspace 'evidence\\startup-author-{version.replace('.', '')}\\summary.json') --output (Join-Path $sn2Workspace 'evidence\\retirement-{version.replace('.', '')}') --native-port 27223 --latent-plugin-id SN2RetirementLatentControl
-```
-
-Inspect summary.json for retention/release observations, saved-package/history
-preservation, reconnect results and cleanup. GC completion is inferred from
-controlled invalidation and exact-path absence; it is not a universal GC hook.
-Unknown mutation outcomes require explicit read-only reconciliation rather
-than replay. An incomplete cleanup or unverified control remains incomplete
-acceptance, independently of a saved package or frontend exit.
-""".encode("utf-8")
-
+def _consumer_start(version: str, native_version: str) -> bytes:
+    return ("# Subnautica 2 MCP " + version + "\n\n"
+            + "Frontend " + version + "; native marker " + native_version + ".\n\n"
+            + "Start with [README.md](README.md) for the project overview and "
+            + "[INSTALL.md](INSTALL.md) for manual installation.\n\n"
+            + "AI agents should read [AGENTS.md](AGENTS.md), which covers both "
+            + "prebuilt installation and building the bridge and companion from source.\n\n"
+            + "This archive supplies prebuilt runtime components. Building from source "
+            + "requires the separate source repository and the dependencies listed in the agent guide.\n").encode("utf-8")
 
 def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_version: str | None = None,
                    service_package: Path | None = None, consumer_wheel: Path | None = None,
@@ -900,7 +662,7 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
         raise BundleError("invalid_notice", "Selected native notices require the consumer-wheel profile")
     if consumer and service_package is None:
         raise BundleError("service_package_required", "A consumer candidate requires the supplied cooked service package")
-    selected = (sorted({*DOCUMENTS, *BINARIES, *TEMPLATE_FILES,
+    selected = (sorted({*DOCUMENTS, *CONSUMER_GUIDES, *BINARIES, *TEMPLATE_FILES,
                         *("tools/" + name for name in CONSUMER_TOOLS)}) if consumer else _enumerate(repository))
     raw_files = {}
     for relative in selected:
@@ -918,13 +680,15 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
         raw_files.update(wheel_files)
         raw_files.update(notice_files)
         service_source_correlation = {"state": "not_bundled", "matches_current_sources": None, "files": []}
-        raw_files["README.md"] = _consumer_instructions(version, native_version, wheel)
+        raw_files["START.md"] = _consumer_start(version, native_version)
     else:
         service_source_correlation = _service_source_correlation(service_mod, raw_files)
         raw_files["README.md"] = _instructions(version, native_version, service_included=service_mod["package_included"])
-    raw_files["START.md"] = raw_files["README.md"]
+        raw_files["START.md"] = raw_files["README.md"]
     # Revalidate the source before writing; reject subsequent changes.
-    if (not consumer and selected != _enumerate(repository)) or any(_sha(_read(repository / path, repository)) != _sha(raw_files[path]) for path in selected if path != "README.md"):
+    if (not consumer and selected != _enumerate(repository)) or any(
+            _sha(_read(repository / path, repository)) != _sha(raw_files[path])
+            for path in selected if consumer or path != "README.md"):
         raise BundleError("source_changed", "Sources or binaries changed during preparation")
     if consumer:
         current_sources = {path.relative_to(repository / "src").as_posix()
@@ -956,6 +720,7 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
                                     "editor_authoring_sources", "development_service_sources"])
         manifest["frontend_wheel"] = wheel
         manifest["native_notices"] = notices
+        manifest["documentation_profile"] = CONSUMER_DOCUMENTATION_PROFILE
         manifest["payload_complete"] = True
         manifest["release_readiness"] = "not_established_by_packager"
         manifest.pop("service_source_correlation")
@@ -1029,7 +794,11 @@ def prepare_bundle(destination: Path, *, repository_root: Path = ROOT, native_ve
 def _verify_consumer_frontend(root: Path, manifest: dict, expected: set[str]) -> str:
     wheel = manifest.get("frontend_wheel")
     version = _metadata_version(root)
-    required = set(CONSUMER_DOCUMENTS) | set(CONSUMER_NOTICES) | set(TEMPLATE_FILES) | set(BINARIES)
+    documentation_profile = manifest.get("documentation_profile")
+    if documentation_profile not in (None, CONSUMER_DOCUMENTATION_PROFILE):
+        raise BundleError("invalid_manifest", "The consumer documentation profile is not recognized")
+    documents = CONSUMER_DOCUMENTS if documentation_profile else LEGACY_CONSUMER_DOCUMENTS
+    required = set(documents) | set(CONSUMER_NOTICES) | set(TEMPLATE_FILES) | set(BINARIES)
     required |= {"tools/" + name for name in CONSUMER_TOOLS}
     if (not isinstance(wheel, dict) or wheel.get("path") != f"wheels/sn2_mcp-{version}-py3-none-any.whl"
             or wheel.get("version") != version or wheel.get("source_correlation") != "exact_repository_bytes"

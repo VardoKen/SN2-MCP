@@ -1,30 +1,41 @@
 # Subnautica 2 MCP
 
-Native runtime MCP bridge adapted from the copied G1R implementation. This independent repository owns the Python/MCP frontend, TCP transport, game-Tick dispatch, reflection, typed values, observations, loader, runtime Blueprint compiler, package writers and declared dependencies. Detailed documentation belongs to the central repository.
+Connect an MCP-compatible AI assistant to a running Subnautica 2 game to inspect Unreal objects, research game interfaces, prototype changes, and create Content/Blueprint mods.
 
-Current implementation **0.9.0** registers **77 `sn2_` tools**. The supplied frontend/native bridge and cooked `SN2MCPDevelopmentServices` component support workspace Blueprint specifications, synchronous named functions and exact inherited event overrides in Shipping, node/pin diagnostics, genuine Unreal package/container output and source-correlated Content plugins. Captured `Config/Game.ini` and `Config/Engine.ini` are preserved. Runtime authoring uses the supplied bridge and game without a consumer Engine, Modkit, Editor/cooker or bridge source checkout. The installed-wheel A/error/B/save/package/fresh-load cycle at **0.7.0** remains historical acceptance of the earlier synchronous-function subset; final-candidate autonomous startup and lifecycle evidence are recorded separately in the central documentation.
+**Current version: 0.9.0 · Windows x64 · 77 MCP tools.** The tested game checkpoint is Unreal Engine 5.6.1, changelist 131439, game build 3388. A game update may require new runtime bindings; compatibility with a different build must be checked.
 
-The compiler supports scalar members/defaults, by-value parameters, member get/set, branch/sequence, `self`, supported reflected callable functions and exact `call_parent` within a synchronous inherited override. Final/static/network/delegate/editor-only/latent events, reference/output event signatures, new Widget UI, generated enum/FText properties, struct/nonempty-array literals and persistent authored array/struct defaults remain unsupported. `DevelopmentOnly`, `BlueprintInternalUseOnly` and WorldContext metadata are not inspected; compile, direct invocation and save have distinct type/direction coverage. Compilation or mounting alone does not establish autonomous startup. Restart remains the package-replacement boundary; universal live package replacement is not established. The separate compatible Editor/cook path remains available for broader assets.
+## What it can do
 
-`sn2_runtime_release_blueprint` retires an in-memory authored revision using its recorded identity and root ownership. It preserves saved packages, compile evidence and other working revisions. Unknown outcomes require read-only reconciliation before further release/save actions. Retirement is distinct from cooked-package unload and does not replace natural game lifecycle.
+- Find game objects and inspect properties, classes, and callable functions.
+- Read and modify supported values, invoke reflected functions, and observe changes.
+- Compile supported Blueprint functions and inherited events in the running game, then save and package the result as a mod.
+- Manage mod packages and temporary authored objects, with receipts for the operations performed.
 
-The companion supplies text conversion, trace-result decomposition and strongly retained temporary UObject instances. It is part of the bridge toolset; a newly authored user mod is a separate Content/Blueprint package. Native DLLs provide bridge infrastructure.
+The supplied bridge and its in-game companion support runtime mod authoring without Unreal Editor or Modkit. A packaged mod can run its own authored logic after installation without MCP. This was verified through creation, revision, packaging, a fresh game launch, and natural shutdown.
 
-The [mod settings menu example](development/examples/mod_settings_menu/README.md) uses the external Editor/cook environment to author **SN2ModSettingsTest 0.1.0**. Its Content-only plugin passed standalone menu button → empty page → Back → reopen without bridge/MCP. This example does not add runtime Widget UI authoring. The [central result](../docs/bridges/subnautica-2/mod-settings-test.md) owns its retained operator installation and process observations.
+Supported graphs are a defined subset: scalar members, by-value parameters, member access, branches/sequences, supported reflected calls, `self`, and synchronous inherited Blueprint events with parent calls. New Widget UI, latent graphs, arbitrary custom events/delegates, and universal live replacement of packages are outside this version. Replace installed packages while the game is closed. Mods that replace the GameInstance configuration slot do not automatically compose with other replacements.
 
-Entry points:
+## Install and use
 
-- [Bridge state and runtime entry](../docs/bridges/subnautica-2/README.md).
-- [Tool catalog and contracts](../docs/bridges/subnautica-2/proposed-tool-contract.md).
-- [Runtime authoring inputs, compiler and package receipts](../docs/bridges/subnautica-2/authoring-contract.md).
-- [A/error/B/fresh-process acceptance](../docs/bridges/subnautica-2/content-blueprint-acceptance.md).
-- [Mod settings test](../docs/bridges/subnautica-2/mod-settings-test.md).
-- [Implementation plan and completion criteria](../docs/bridges/subnautica-2/implementation-plan.md).
-- [Companion API and delivery](../docs/bridges/subnautica-2/runtime-services.md).
-- [Target mechanisms and source provenance](../docs/bridges/subnautica-2/mod-mechanisms.md).
-- [G1R reuse map](../docs/bridges/subnautica-2/g1r-reuse-map.md).
-- [Build environment](../docs/bridges/subnautica-2/authoring-environment.md).
+1. Download **`SN2-MCP-0.9.0-windows-x64.zip`** from [Releases](https://github.com/VardoKen/SN2-MCP/releases). GitHub's automatic **Source code** archives do not contain the ready-to-use bridge or cooked companion.
+2. Follow [Manual installation](INSTALL.md). You need Windows x64, the compatible game, Python 3.11 or newer, `uv`, and the Microsoft Visual C++ x64 Runtime. A compiler and Unreal Editor are not needed for this route.
+3. Connect your MCP client using the command and arguments in that guide, or the optional local HTTP endpoint. The guide also explains how to load the bridge for each game session.
 
-Windows x64 target checkpoint: UE **5.6.1**, CL **131439**, build **3388**. Stdio and HTTP `127.0.0.1:27224/mcp` use native TCP **27223**. Transport readiness is separate from target/executor readiness.
+An AI agent can follow [Agent installation and source build instructions](AGENTS.md). Those instructions include building the Python frontend, native DLL/loader, and cooked companion from source. The agent configures its actual MCP application using the supplied command and arguments.
 
-Source provenance: G1R `21274888730c38b5b21e27e6f42137f3963a1a6b`, copied into destination baseline `77a6eb6e184433be27acceccd94d8b4de8b9ffee`. Historical Gothic modules and fixtures remain identifiable source provenance outside active Subnautica composition. This repository builds from its own source and declared dependencies. No public release is claimed.
+## How the pieces fit together
+
+| Component | Purpose |
+| --- | --- |
+| Python MCP frontend | Publishes the tools to your MCP client. |
+| `SN2_MCP.dll` and loader | Connect to the selected game process and execute supported work on its Tick. |
+| `SN2MCPDevelopmentServices` | Cooked in-game companion providing text conversion, trace helpers, and retained temporary objects. It is part of the bridge. |
+| Your mod workspace | Stores the mods you author, specifications, packages, and operation receipts separately from the game. |
+
+The default native connection is local TCP port **27223**. Optional MCP HTTP runs at **`http://127.0.0.1:27224/mcp`**. A working MCP connection alone does not mean the native executor or companion is ready; the installation guide checks each component.
+
+## Source repository
+
+`src/sn2_mcp/` owns the frontend; `native/` owns the native bridge; `development/` contains the companion, authoring helper, templates and examples; `tools/` and `tests/` contain build and verification tooling. Generated builds, environments and local artifacts are excluded from Git. The release ZIP is a separate runtime distribution.
+
+The implementation began from the G1R source base at `21274888730c38b5b21e27e6f42137f3963a1a6b`, copied into the independent Subnautica baseline `77a6eb6e184433be27acceccd94d8b4de8b9ffee`. Historical donor modules and tests remain identifiable in the source tree. BLAKE3/CityHash source attribution and dependency notices are retained; this repository does not declare a separate project-wide license.

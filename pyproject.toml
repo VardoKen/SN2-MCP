@@ -6,35 +6,7 @@ build-backend = "hatchling.build"
 name = "sn2-mcp"
 version = "0.9.0"
 description = "Native Unreal interface research and runtime Content/Blueprint mod development for Subnautica 2"
-readme = {text = """
-# Subnautica 2 MCP
-
-Python MCP frontend for game-interface research and mod development/prototyping
-through the Subnautica 2 native runtime bridge. Tools provide exact editing,
-source/interface evidence, native bridge builds, runtime compilation of synchronous
-Blueprint functions and exact inherited event overrides, genuine package/container
-output, captured plugin configuration, installation receipts and authored-revision
-retirement with explicit unknown-outcome reconciliation. Version 0.9.0 registers
-77 tools. The runtime authoring path uses the supplied bridge and
-game companion without an external Editor/cooker or bridge source checkout.
-Broader editable asset authoring and cooking use the separately configured
-compatible Unreal authoring environment. See the central authoring contract for
-supported graph/property shapes and explicit unsupported diagnostics. New Widget
-UI and latent event execution remain outside this runtime subset. Compilation or
-mounting alone does not establish autonomous startup; consult exact candidate
-startup/lifecycle acceptance and declared runtime dependencies. Compile, direct
-invocation and save have distinct type/direction contracts.
-Configure the workspace, native runtime artifacts and game separately.
-
-    sn2-mcp --transport streamable-http --host 127.0.0.1 --port 27224 --workspace-root <workspace> --runtime-root <runtime> --game-root <game>
-
-Connect to http://127.0.0.1:27224/mcp and inspect sn2_status and
-sn2_capabilities. Transport availability is separate from target ABI and
-executor readiness. Explicit stdio transport is also supported.
-
-Loading a DLL and reflected invocation affect the selected process.
-Investigate uncertain outcomes before submitting another explicit action.
-""", content-type = "text/markdown"}
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["mcp==2.3.0"]
 

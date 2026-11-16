@@ -10,4 +10,4 @@ While enabled, the modification maintains its compiled opacity. A successful fre
 
 The DLL and its Tick trampoline remain resident until the selected game process exits. Disable does not unload code or remove the hook. A newly built revision uses controlled game restart and a fresh process identity; arbitrary DLL hot unload/reload is unsupported. A missing or destroyed target is reported explicitly and cannot be claimed as successfully restored.
 
-Detailed implementation, commands and runtime acceptance are owned by the central documentation at `docs/bridges/subnautica-2/` in the Unreal Game Runtime MCP coordination repository.
+This is a historical native-DLL template, separate from the current Content/Blueprint runtime authoring route. See the repository [overview](../../../README.md) and [agent instructions](../../../AGENTS.md) for the supported bridge and build workflow.

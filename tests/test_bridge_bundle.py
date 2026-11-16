@@ -48,6 +48,9 @@ class BridgeBundleTests(unittest.TestCase):
             self.write(name, b"# isolated development helper\n")
         for name in bundle.DOCUMENTS:
             self.write(name, b"# isolated document\n")
+        self.write("README.md", b"# Human project overview\n\n[Manual installation](INSTALL.md)\n")
+        self.write("INSTALL.md", b"# Manual installation\n\nIsolated public guide fixture.\n")
+        self.write("AGENTS.md", b"# AI agent guide\n\nPrebuilt installation and source build fixture.\n")
         for name in (*bundle.SDK_FILES, *bundle.TEMPLATE_FILES, *bundle.AUTHORING_FILES,
                      *bundle.SERVICE_SOURCE_FILES, *bundle.VENDOR_FILES):
             self.write(name, b"// isolated development input\n")
@@ -178,37 +181,18 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertTrue(bundle.verify_bundle(self.target)["payload_complete"])
         manifest = json.loads((self.target / "manifest.json").read_bytes())
         self.assertEqual(manifest["kind"], bundle.CONSUMER_KIND)
+        self.assertEqual(manifest["documentation_profile"], bundle.CONSUMER_DOCUMENTATION_PROFILE)
         self.assertEqual(manifest["native_notices"]["not_supplied"], [])
+        for relative in bundle.CONSUMER_GUIDES:
+            self.assertEqual((self.target / relative).read_bytes(),
+                             (self.repository / relative).read_bytes())
         instructions = (self.target / "START.md").read_text(encoding="utf-8")
-        self.assertIn("--frozen --no-dev --no-default-groups --no-editable --no-emit-project", instructions)
-        self.assertIn("--require-hashes", instructions)
-        self.assertIn("--no-deps", instructions)
-        self.assertIn("--transport stdio", instructions)
-        self.assertIn("--transport streamable-http", instructions)
-        self.assertIn("tools\\accept_consumer_transports.py", instructions)
-        self.assertIn("reserved non-listening native endpoint", instructions)
-        self.assertNotIn("uv sync", instructions)
-        self.assertIn("$sn2Runtime =", instructions)
-        self.assertIn("--runtime-root $sn2Runtime", instructions)
-        self.assertIn("packages/SN2MCPDevelopmentServices", instructions)
-        self.assertIn("not the used runtime copy", instructions)
-        self.assertIn(".trash/Subnautica 2 MCP/content-deployment", instructions)
-        self.assertIn("does not require a project-rules directory", instructions)
-        self.assertIn("accept_standalone_runtime_mod.py') author", instructions)
-        self.assertIn("accept_standalone_runtime_mod.py') observe", instructions)
-        self.assertIn("--target-process", instructions)
-        self.assertIn("before attaching an observer", instructions)
-        self.assertIn("--frame-rate-a 30 --frame-rate-b 45", instructions)
-        self.assertIn("allowing the temporary fixed frame rate", instructions)
-        self.assertIn("tools\\observe_standalone_lifecycle.py", instructions)
-        self.assertIn("--layout", instructions)
-        self.assertIn("tools\\accept_runtime_retirement.py", instructions)
-        self.assertIn("--author-summary", instructions)
-        self.assertIn("time dilation 1", instructions)
-        self.assertIn("does not verify these conditions", instructions)
-        self.assertIn("recapture a fresh-start baseline", instructions)
-        self.assertNotIn("--scale-a", instructions)
-        self.assertNotIn("ApplicationScale", instructions)
+        self.assertIn("[README.md](README.md)", instructions)
+        self.assertIn("[INSTALL.md](INSTALL.md)", instructions)
+        self.assertIn("[AGENTS.md](AGENTS.md)", instructions)
+        self.assertIn("separate source repository", instructions)
+        self.assertNotIn("--frame-rate-a", instructions)
+        self.assertNotIn("accept_standalone_runtime_mod.py", instructions)
 
     def test_consumer_missing_service_is_rejected_before_writing(self):
         with self.assertRaises(bundle.BundleError) as captured:
@@ -231,6 +215,22 @@ class BridgeBundleTests(unittest.TestCase):
             with self.assertRaises(bundle.BundleError) as captured:
                 bundle.prepare_bundle(self.target, repository_root=self.repository,
                                       service_package=package, consumer_wheel=wheel)
+        self.assertEqual(captured.exception.code, "source_changed")
+        self.assertFalse(self.target.exists())
+
+    def test_consumer_public_guide_change_during_capture_is_not_published(self):
+        package = self.service_package()
+        wheel = self.frontend_wheel()
+        self.write("native/src/runtime_cityhash.cpp", b"// fixture notice\n#include <cstdint>\n")
+        original_notices = bundle._consumer_notices
+        def changing_notices(*args, **kwargs):
+            result = original_notices(*args, **kwargs)
+            self.write("README.md", b"# A later public guide revision\n")
+            return result
+        with patch.object(bundle, "_consumer_notices", side_effect=changing_notices):
+            with self.assertRaises(bundle.BundleError) as captured:
+                bundle.prepare_bundle(self.target, repository_root=self.repository,
+                    service_package=package, consumer_wheel=wheel)
         self.assertEqual(captured.exception.code, "source_changed")
         self.assertFalse(self.target.exists())
 
@@ -259,6 +259,7 @@ class BridgeBundleTests(unittest.TestCase):
                          "tools/observe_standalone_lifecycle.py",
                          "tools/accept_consumer_transports.py",
                          "tools/accept_runtime_retirement.py",
+                         "README.md", "INSTALL.md", "AGENTS.md",
                          "notices/CityHash.txt"):
             with self.subTest(missing=relative):
                 original_file = (self.target / relative).read_bytes()
@@ -284,6 +285,19 @@ class BridgeBundleTests(unittest.TestCase):
         self.assertEqual(manifest["native_notices"]["not_supplied"], ["json", "minhook"])
         self.assertFalse(manifest["native_notices"]["license_assigned_to_bridge"])
         self.assertIn("not supplied to this preparation", (self.target / "NATIVE-NOTICES.md").read_text(encoding="utf-8"))
+
+    def test_legacy_consumer_verifies_without_later_public_guides(self):
+        self.prepare_consumer()
+        manifest_path = self.target / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for relative in ("INSTALL.md", "AGENTS.md"):
+            (self.target / relative).unlink()
+        manifest["files"] = [item for item in manifest["files"] if item["path"] not in {"INSTALL.md", "AGENTS.md"}]
+        manifest["file_count"] = len(manifest["files"])
+        manifest["total_bytes"] = sum(item["bytes"] for item in manifest["files"])
+        manifest.pop("documentation_profile")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertTrue(bundle.verify_bundle(self.target)["payload_complete"])
 
     def test_pre_service_bundle_verifies_without_later_companion_tools_and_sources(self):
         self.prepare()
